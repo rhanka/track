@@ -206,4 +206,17 @@ describe('CLI input validation + review fixes (Lot 7)', () => {
     expect(runCli(['validate', '--commit', 'c1'], io)).toBe(1)
     expect(out.join('')).toContain('no H1')
   })
+
+  it('rejects v2-only/unreachable enum values (linked-accepted rule, n/a acceptance)', () => {
+    runCli(['init'], io)
+    const t = last(['item', 'new', '--kind', 'feature', '--title', 't', '--workspace', 'ws'])
+    const ref = last(['item', 'new', '--kind', 'chore', '--title', 'r', '--workspace', 'ws'])
+    out.length = 0
+    expect(
+      runCli(['blocker', 'raise', '--target', t, '--kind', 'dependency', '--ref', ref, '--rule', 'linked-accepted'], io),
+    ).toBe(1)
+    expect(out.join('')).toContain('--rule must be one of')
+    out.length = 0
+    expect(runCli(['query', '--acceptance', 'n/a'], io)).toBe(1)
+  })
 })

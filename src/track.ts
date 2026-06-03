@@ -274,6 +274,11 @@ export class Track {
     const blockerId = this.newId()
     const resolutionRule: ResolutionRule | undefined =
       input.kind === 'dependency' ? (input.resolutionRule ?? 'linked-done') : undefined
+    if (resolutionRule === 'linked-accepted') {
+      throw new DomainError(
+        "resolutionRule 'linked-accepted' is not implemented in the MVP (SPEC §10, v2+) — it would never resolve",
+      )
+    }
     this.emit('blocker', blockerId, 'blocker.opened', {
       blockerId,
       targetId: input.targetId,

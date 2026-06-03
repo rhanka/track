@@ -191,7 +191,7 @@ Blocker { id, targetId, kind:"decision"|"dependency", ref:ItemId, reason, resolu
 ```
 - Stored as `blocker.opened`/`blocker.resolved` events; the open set is **computed** by fold.
 - `decision` → `ref` is a Decision; resolves **only** when that Decision's `outcome ∈ {go,no-go}`. **Manual `blocker resolve` on a `decision` blocker is rejected** by the validator (single source).
-- `dependency` → `ref` is an Item; `resolutionRule ∈ {"linked-done"|"linked-accepted"|"manual"}` (default `linked-done`); auto-resolves when the rule is met; `manual` allows `blocker resolve`.
+- `dependency` → `ref` is an Item; `resolutionRule ∈ {"linked-done"|"linked-accepted"|"manual"}` (default `linked-done`); auto-resolves when the rule is met; `manual` allows `blocker resolve`. **MVP implements `linked-done` + `manual` only; `linked-accepted` is v2+ (§10) — the MVP rejects it rather than create a never-resolving blocker.**
 - h2a relationship: reuse h2a's `raise/list/resolve` mechanism shape when present (v2+); track owns the product-item semantics. MVP = local.
 
 ### 2.10 Gate disposition — pin 5

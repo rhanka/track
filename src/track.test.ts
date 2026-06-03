@@ -143,6 +143,14 @@ describe('Track — blockers (SPEC §2.9)', () => {
     expect(track.state().blockers.get(blockerId)!.open).toBe(false)
   })
 
+  it('rejects a linked-accepted dependency blocker (v2+, would never resolve)', () => {
+    const target = newItem()
+    const ref = newItem()
+    expect(() =>
+      track.openBlocker({ targetId: target, kind: 'dependency', ref, reason: 'dep', resolutionRule: 'linked-accepted' }),
+    ).toThrow(/linked-accepted/)
+  })
+
   it('rejects manual resolve of a linked-done dependency blocker', () => {
     const target = newItem()
     const ref = newItem()
