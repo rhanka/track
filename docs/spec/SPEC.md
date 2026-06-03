@@ -66,10 +66,10 @@ flowchart LR
   CMD["CLI command"] --> G{"transition legal?"}
   G -->|no| REJ["reject (no append)"]
   G -->|yes| B["atomic cmdId batch"]
-  B --> L["append-only events.jsonl: seq + prevHash + contentHash(payload)"]
+  B --> L["append-only events.jsonl: seq + prevHash + contentHash(core)"]
   L --> F["fold: stream order, per-aggregate seq"]
   F --> ST["materialized state"]
-  L --> V["validate: payload-hash + prevHash + seq"]
+  L --> V["validate: core-hash + prevHash + seq + head"]
 ```
 
 **Entities**:
@@ -140,7 +140,7 @@ Waiver        { criterionId, reason, by, at }     // an EXCEPTION, not a test re
 **criterionStatus(c)** — ordered cascade over c's evidence (latest `TestRun` per evidence):
 1. `fail`    if any evidence's latest run = `fail`  *(a live fail overrides a waiver)*;
 2. `waived`  else if c has a `Waiver`;
-3. `unknown` else if any evidence has no run;
+3. `unknown` else if c has **no evidence**, or any evidence has no run;
 4. `stale`   else if any evidence's latest run `commit ≠ baselineCommit`;
 5. `pass`    else (all evidence latest = `pass` at baseline).
 
@@ -191,7 +191,7 @@ Blocker { id, targetId, kind:"decision"|"dependency", ref:ItemId, reason, resolu
 ```
 - Stored as `blocker.opened`/`blocker.resolved` events; the open set is **computed** by fold.
 - `decision` → `ref` is a Decision; resolves **only** when that Decision's `outcome ∈ {go,no-go}`. **Manual `blocker resolve` on a `decision` blocker is rejected** by the validator (single source).
-- `dependency` → `ref` is an Item; `resolutionRule ∈ {"linked-done"|"linked-accepted"|"manual"}` (default `linked-done`); auto-resolves when the rule is met; `manual` allows `blocker resolve`.
+- `dependency` → `ref` is an Item; `resolutionRule ∈ {"linked-done"|"linked-accepted"|"manual"}` (default `linked-done`); auto-resolves when the rule is met; `manual` allows `blocker resolve`. **MVP implements `linked-done` + `manual` only; `linked-accepted` is v2+ (§10) — the MVP rejects it rather than create a never-resolving blocker.**
 - h2a relationship: reuse h2a's `raise/list/resolve` mechanism shape when present (v2+); track owns the product-item semantics. MVP = local.
 
 ### 2.10 Gate disposition — pin 5
@@ -205,15 +205,18 @@ Each Item records, per gate, a disposition (so skipping is queryable):
 Single append stream `​.track/events.jsonl`. Frame:
 ```
 { id:Ulid, type, aggregate:"item"|"decision"|"blocker", aggregateId,
-  seq:int,                 // per-aggregate monotonic (transition-legality authority — NOT wall-clock)
-  prevHash:"sha256:…"|null,// = contentHash of the immediately preceding stream event
+  seq:int,                 // per-aggregate, 1-based, strictly contiguous (transition-legality authority — NOT wall-clock)
+  prevHash:"sha256:…"|null,// = contentHash of the immediately preceding stream event (null for the first)
   cmdId?:Ulid,             // correlates events emitted by one command (atomic batch)
+  cmd?:{ i:int, n:int },   // batch position {index, size}; present iff cmdId — makes a batch self-describing
   at:ISO(ms), by:ActorId, payload:object,
-  contentHash:"sha256:…" } // = sha256(canonicalJSON(payload)) — PAYLOAD ONLY (excludes seq/prevHash/contentHash)
+  contentHash:"sha256:…" } // = computeHash(EVENT CORE) — the event minus {seq, prevHash, contentHash}
 ```
-**Integrity (`validate`)** — for each event in stream order: (i) recompute `contentHash` from `payload` (tamper of content), (ii) `prevHash === previous event.contentHash` (insertion/reorder), (iii) per-aggregate `seq` strictly increasing (drop/dup). This is the h2a journal model (`computeHash(payload)` + positional `prevHash`/`sequence` chain), faithfully reused.
-**Fold** — replay in stream order; per-aggregate state = fold of its events by `seq`; transition legality checked at append against current folded state. `at` is informational only (ULID-millisecond, consistent with `id`); ordering authority is stream position + per-aggregate `seq`.
-**Atomic commands** — a command that emits several events (e.g. decision `no-go` → `decision.outcome` + `blocker.resolved` + `realization.transition`) writes them as one contiguous batch sharing `cmdId`, appended all-or-nothing. `validate` flags a partial batch (a `cmdId` missing an expected member) for repair.
+`contentHash` covers the **event core** = every field except the integrity frame `{seq, prevHash, contentHash}` (so `id`/`type`/`aggregate`/`aggregateId`/`by`/`at`/`payload`/`cmdId`/`cmd`). This is the h2a journal model (`computeHash(stripFrame(entry))`), faithfully reused: hashing only the nested `payload` would leave `type`/`aggregateId`/`by` untamper-protected and make `contentHash` non-unique (breaking `prevHash` as a reference). `canonicalJSON` accepts exactly the plain-JSON-data domain: it sorts keys (key order is hash-irrelevant — `validate` re-canonicalizes on read), drops `undefined`, inspects **own properties only** (so a polluted `Object.prototype`/`Array.prototype` cannot affect it), and **fail-loud rejects** (before any write) non-finite numbers, non-plain objects (`Date`/`Map`/class — pass a `Date` as an ISO string), own `toJSON`-bearing values, accessor (getter/setter) properties, and sparse-array holes (incl. inherited indices). The store **materializes each event to one inert plain-data snapshot** in a single traversal, then computes `contentHash` **and persists each line with the *same* `canonicalize` serializer** over that snapshot — so the hash domain equals the persisted domain **by identity** (one serializer, one inert snapshot): a live payload (`Proxy`, non-idempotent getter) or prototype pollution cannot make them diverge.
+**Integrity (`validate`)** — for each event in stream order: (i) recompute `contentHash` from the core (content/field tamper), (ii) `prevHash === previous event.contentHash` (insertion/reorder), (iii) per-aggregate `seq` is 1-based and strictly contiguous (drop/dup), (iv) an `aggregateId` keeps one `aggregate` type. Per `cmdId`: `cmd` iff `cmdId`, a consistent positive integer `n`, every index unique in `[0,n)`, count `== n`, contiguous (A5 partial-batch). With the head anchor (§4), suffix **truncation** is detected.
+**Threat model (frozen).** From the log array alone `validate` does **not** detect: suffix truncation (without the head anchor), a full rewrite that re-chains every event, or SHA-256 collisions. Durable anchoring against these is the **docs-git** layer (the committed `events.jsonl`) — consistent with single-writer MVP.
+**Fold** — replay in stream order; per-aggregate state = fold of its events by `seq`; transition legality checked at append against current folded state. Precondition: `fold` consumes a *validated* stream — the store runs `validate` before every append (fail-closed: it refuses to extend a tampered/reordered/truncated log). `at` is informational only (ULID-millisecond, consistent with `id`); ordering authority is stream position + per-aggregate `seq`.
+**Atomic commands** — a command that emits several events (e.g. decision `no-go` → `decision.outcome` + `blocker.resolved` + `realization.transition`) writes them as one contiguous `cmdId`/`cmd:{i,n}` batch in a single `fsync`'d append. `validate` flags a partial batch (a `cmdId` missing a member, by `cmd.{i,n}`) for repair. A mid-write *crash* is not made atomic; a torn trailing line is reported by `validate`/read (fail-closed), not silently skipped.
 **Concurrency** — single-writer in MVP; multi-writer merge = v2+ (h2a lease-lock). No "re-chain on read", no `(at,id)` sort.
 
 Event types: `item.created` · `spec.transition` · `realization.transition`(`cause?`) · `acceptance.criterion.added` · `acceptance.evidence.linked` · `acceptance.run` · `acceptance.waived` · `blocker.opened` · `blocker.resolved` · `decision.created` · `decision.disposition` · `dossier.revised` · `decision.outcome` · `priority.assessed` · `branch.imported`.
@@ -221,7 +224,8 @@ Event types: `item.created` · `spec.transition` · `realization.transition`(`ca
 ## 4. Persistence layout (docs-git)
 ```
 <repo>/.track/events.jsonl        # append-only source of truth (structure)
-<repo>/.track/snapshots/<seq>.json# rebuildable fold caches (never authoritative)
+<repo>/.track/head.json           # anchor { streamLength, lastContentHash } — non-authoritative; enables truncation detection
+<repo>/.track/snapshots/<len>.json# rebuildable fold caches (never authoritative)
 docs/…                            # long prose (spec bodies, dossier context) in markdown
 ```
 Structure lives in the log; long prose in markdown referenced by `body`/`Dossier.context`. **Round-trip / desync rule (`validate`):** a referenced markdown file MUST exist and its H1 title MUST match the Item `title`; mismatch or missing file = a desync finding (MVP reports, does not auto-repair).
@@ -241,8 +245,8 @@ Iterates Items where `kind != "decision"` (unless `--decisions`). Buckets, first
 1. **AWAITED** — any open blocker (`decision`/`dependency`).
 2. **DROPPED** — realization ∈ {`cancelled`,`rejected`}.
 3. **DONE** — realization=`done` (**and** acceptanceStatus=`pass` iff `report.requireAccepted=true`; named toggle, default `false`).
-4. **TO-DO** — otherwise.
-Sorted by the active prioritization scheme when present. `--decisions` lists Decisions by realization + `outcome`.
+4. **TO-DO** — otherwise (this is also where a `done` item lands when `requireAccepted=true` and it is not yet `pass` — the row still shows `realization:done`/`acceptance:<status>`).
+Sorted by the active prioritization scheme when present. `--decisions` lists Decisions by realization + `outcome`. `query` projects the non-decision rows only (filter `kind` excludes `decision`).
 
 ## 8. Acceptance criteria (the MVP's own UAT)
 - **A1** `branch import` on a real `sentropic/plan/NN-BRANCH_*.md` derives Items and leaves the `BRANCH.md` byte-hash **unchanged**; re-import emits only deltas (idempotent under lot reordering).

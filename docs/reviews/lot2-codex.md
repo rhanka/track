@@ -1,0 +1,10 @@
+**Findings**
+- **major** [src/track.ts](/home/antoinefa/src/track/src/track.ts:66): `createItem` accepts `kind:"decision"` and emits only `item.created`, bypassing §2.5 `decision.created`, targets/dossier/outcome, and the required atomic blocker batch. Fix: reject decision kind here, or replace with a Lot 3 `createDecision` batch path.
+- **major** [src/track.ts](/home/antoinefa/src/track/src/track.ts:77): `setRealization(..., "rejected", {decisionId})` accepts any caller-supplied cause, even a nonexistent/non-`no-go` decision; it also allows causes on non-rejected transitions. Fix: keep rejection internal to the Lot 3 no-go outcome batch and validate the decision/outcome.
+- **major** [src/track.ts](/home/antoinefa/src/track/src/track.ts:82): `openBlocker` does not validate `targetId`/`ref` existence or kind. This allows dangling blockers and `decision` blockers pointing at non-decisions. Fix: fold once, require existing target/ref, enforce decision-ref kind and rule/kind combinations before append.
+- **major** [src/state/fold.ts](/home/antoinefa/src/track/src/state/fold.ts:99): fold does not apply the spec default `dependency.resolutionRule = "linked-done"` when the optional field is omitted; [src/state/fold.ts](/home/antoinefa/src/track/src/state/fold.ts:123) then never auto-resolves it. Fix: default in fold and/or `isOpen`.
+- **minor** [src/track.ts](/home/antoinefa/src/track/src/track.ts:111): the facade only has single-event `emit`; Lot 3 needs atomic multi-event command batches. The frozen `EventStore.appendCommand([...], {cmdId})` supports this, but `Track` needs a batch helper before decision commands land.
+
+Confirmed `src/events/*` unchanged by Lot 2 (`git diff --name-only HEAD~1 HEAD -- src/events` empty). `npm run typecheck` passed. `npm test` could not start in this read-only sandbox: Vitest tries to write `node_modules/.vite-temp`, and the runner fallback also needs a writable `/tmp` cache.
+
+**VERDICT: CHANGES-REQUIRED**

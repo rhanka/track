@@ -5,3 +5,6 @@ dist/
 
 # Handover notes are session-local and must NOT be committed
 HANDOVER.md
+
+# Harness session artifacts
+.claude/scheduled_tasks.lock

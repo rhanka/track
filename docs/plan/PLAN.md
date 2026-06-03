@@ -20,7 +20,7 @@ TypeScript (ESM), Node ≥ 20, `vitest`, `tsx` CLI entry, minimal deps (ULID + a
 - **Gate:** `build && test` green on a placeholder.
 
 ### Lot 1 — Event core (single-writer) + fold + integrity
-- **Deliver:** the `Event` frame (SPEC §3: `id,type,aggregate,aggregateId,seq,prevHash,cmdId?,at,by,payload,contentHash`); append-only store (`.track/events.jsonl`); `contentHash=sha256(canonicalJSON(payload))` (payload only); positional chain (`prevHash` + per-aggregate `seq`); `fold(events)→State`; rebuildable snapshots; **atomic command batch** (`cmdId`, all-or-nothing append); `validate` integrity (tamper + reorder + seq).
+- **Deliver:** the `Event` frame (SPEC §3: `id,type,aggregate,aggregateId,seq,prevHash,cmdId?,cmd?{i,n},at,by,payload,contentHash`); append-only store (`.track/events.jsonl`) + non-authoritative `head.json` anchor; `contentHash=computeHash(event core)` (everything but `{seq,prevHash,contentHash}`, faithful to h2a `stripFrame`); hardened `canonicalJSON` (rejects non-finite + non-plain objects); positional chain (`prevHash` + per-aggregate 1-based contiguous `seq`); `fold(events)→State` (validated-stream precondition); rebuildable snapshots; **atomic command batch** (`cmdId`+`cmd{i,n}`, single `fsync`'d append, fail-closed validate-before-append); `validate` integrity (tamper + reorder + seq + aggregate-type + batch frame + head truncation).
 - **Tests:** append→read round-trip; **A4** (payload-hash tamper *and* prevHash/seq break detected); **fold determinism by single-stream replay**; partial-batch (`cmdId`) detection. *(No concurrent-merge test — v2+.)*
 - **Gate:** integrity + fold + batch tests green. **(This is the contract everything folds over — freeze it here.)**
 
