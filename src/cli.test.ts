@@ -43,7 +43,8 @@ describe('CLI smoke (Milestone 1): init -> branch import -> report', () => {
     const hashBefore = sha256File(branchFile)
 
     expect(runCli(['init'], io)).toBe(0)
-    expect(runCli(['branch', 'import', branchFile, '--commit', 'c1'], io)).toBe(0)
+    // relative path is resolved against io.cwd, not process.cwd
+    expect(runCli(['branch', 'import', 'BRANCH.md', '--commit', 'c1'], io)).toBe(0)
     expect(runCli(['report', '--format', 'text', '--commit', 'c1'], io)).toBe(0)
 
     const text = out.join('')

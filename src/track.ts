@@ -3,7 +3,7 @@ import { ulid } from 'ulid'
 import { EventStore } from './events/store.js'
 import type { ActorId, Aggregate, CommandEvent, EventType, Ulid } from './events/types.js'
 import { parseRunReport, type RunReportFormat } from './accept/ingest.js'
-import { parseBranch } from './branch/parse.js'
+import { parseBranch, slugify } from './branch/parse.js'
 import { computeHash } from './events/canonical.js'
 import {
   buildReport,
@@ -465,12 +465,32 @@ export class Track {
         }
       }
 
-      // nested UAT -> acceptance criterion (+ a manual pass run when checked)
+      // nested UAT -> acceptance criterion (resolved by stable uatSlug; + a manual pass run when [x])
       for (const uat of lot.uat) {
-        const exists = [...this.state().criteria.values()].some(
-          (c) => c.itemId === lotId && c.statement === uat.statement,
+        const existing = [...this.state().criteria.values()].find(
+          (c) => c.itemId === lotId && slugify(c.statement) === uat.uatSlug,
         )
-        if (exists) continue
+        if (existing) {
+          // delta: a UAT newly checked [x] records a manual pass run if not already passing
+          if (uat.passed) {
+            const evidence = [...this.state().evidence.values()].find(
+              (e) => e.criterionId === existing.id,
+            )
+            if (evidence?.latestRun?.result !== 'pass') {
+              const evidenceId =
+                evidence?.id ??
+                this.linkEvidence(existing.id, 'manual', `${opts.locator}#${uat.uatSlug}`)
+              this.recordRun(evidenceId, {
+                commit: opts.commit ?? 'HEAD',
+                env: 'uat',
+                runner: 'manual',
+                result: 'pass',
+              })
+              updated++
+            }
+          }
+          continue
+        }
         const criterionId = this.addCriterion(lotId, uat.statement)
         const evidenceId = this.linkEvidence(criterionId, 'manual', `${opts.locator}#${uat.uatSlug}`)
         if (uat.passed) {

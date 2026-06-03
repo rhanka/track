@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import { execFileSync } from 'node:child_process'
 import { mkdirSync, readFileSync } from 'node:fs'
-import { basename, join } from 'node:path'
+import { basename, isAbsolute, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 import { EventStore } from '../events/store.js'
@@ -72,7 +72,7 @@ export function runCli(argv: string[], io: CliIO): number {
       io.err('usage: track branch import <BRANCH.md> [--commit <sha>]\n')
       return 2
     }
-    const content = readFileSync(file, 'utf8')
+    const content = readFileSync(isAbsolute(file) ? file : join(io.cwd, file), 'utf8')
     const commit = typeof flags['commit'] === 'string' ? flags['commit'] : gitHead(io.cwd)
     const track = new Track(store(io.cwd))
     const result = track.importBranch(content, {

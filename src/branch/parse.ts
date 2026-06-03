@@ -28,13 +28,27 @@ export function slugify(s: string): string {
 
 const FEATURE = /^#\s*Feature:\s*(.+?)\s*$/
 const HEADING = /^##\s+(.+?)\s*$/
-// A top-level lot: `- [x] **Lot 0 — Restart from zero**` (em/en dash or hyphen separator).
-const LOT = /^-\s*\[([ xX])\]\s*\*\*Lot\s+\S+\s*[—–-]\s*(.+?)\s*\*\*/
+// A top-level lot line: `- [x] **<bold>** <trailing>` — marker is any single char (incl. `~`/space).
+const LOT = /^-\s*\[([^\]])\]\s*\*\*(.+?)\*\*\s*(.*)$/
+// The bold label: `Lot <id>` with an OPTIONAL spaced-dash title (so the hyphen in `N-2` is NOT
+// taken as the separator). `**Lot N-2** UAT` → id `N-2`, title falls back to the trailing `UAT`.
+const LOT_LABEL = /^Lot\s+(\S+)(?:\s+[—–-]\s+(.+))?$/
 // A nested checkbox (gate or UAT): leading indentation required.
-const NESTED = /^\s+-\s*\[([ xX])\]\s*(.+?)\s*$/
+const NESTED = /^\s+-\s*\[([^\]])\]\s*(.+?)\s*$/
+// A BR id: `BR` + optional hyphen + a DIGIT (so "BRANCH" is not mistaken for an id).
+const BR_ID = /\bBR-?\d[A-Za-z0-9]*/
 
-function brSlug(title: string, fileSlug: string | undefined): string {
-  const brId = /\bBR-?[A-Za-z0-9]+/.exec(title)?.[0]
+function lotTitle(boldText: string, trailing: string): string | undefined {
+  const m = LOT_LABEL.exec(boldText.trim())
+  if (!m) return undefined
+  const dashTitle = m[2]?.trim()
+  if (dashTitle) return dashTitle
+  const tail = trailing.trim()
+  return tail.length > 0 ? tail : m[1]! // fall back to trailing text, else the id
+}
+
+function deriveBranchSlug(content: string, title: string, fileSlug: string | undefined): string {
+  const brId = BR_ID.exec(content)?.[0]
   if (brId) return slugify(brId)
   if (fileSlug) return slugify(fileSlug)
   return slugify(title)
@@ -42,9 +56,9 @@ function brSlug(title: string, fileSlug: string | undefined): string {
 
 /**
  * Parse the stable `BRANCH_TEMPLATE` sections (SPEC §5): `# Feature:` → title; `## Objective` +
- * `## Scope` → body; `## Plan / Todo (lot-based)` → lots (`- [x] **Lot N — slug**`); UAT
- * checkboxes nested under a lot (text contains "UAT") → criteria. Gate sub-checkboxes are ignored.
- * Tolerant: unknown sections are skipped; never throws on extra prose.
+ * `## Scope` → body; `## Plan / Todo (lot-based)` → lots (`- [x] **Lot N — slug**`, any checkbox
+ * marker); UAT checkboxes nested under a lot (text contains "UAT") → criteria. Gate sub-checkboxes
+ * are ignored. Tolerant: unknown sections are skipped; never throws on extra prose.
  */
 export function parseBranch(content: string, opts: { fileSlug?: string } = {}): ParsedBranch {
   const lines = content.split('\n')
@@ -90,14 +104,16 @@ export function parseBranch(content: string, opts: { fileSlug?: string } = {}): 
     if (section === 'plan') {
       const lot = LOT.exec(line)
       if (lot) {
-        const lotTitle = lot[2]!
-        currentLot = {
-          lotSlug: slugify(lotTitle),
-          title: lotTitle,
-          done: lot[1]!.toLowerCase() === 'x',
-          uat: [],
+        const derived = lotTitle(lot[2]!, lot[3] ?? '')
+        if (derived !== undefined) {
+          currentLot = {
+            lotSlug: slugify(derived),
+            title: derived,
+            done: lot[1]!.toLowerCase() === 'x',
+            uat: [],
+          }
+          lots.push(currentLot)
         }
-        lots.push(currentLot)
         continue
       }
       const nested = NESTED.exec(line)
@@ -115,7 +131,7 @@ export function parseBranch(content: string, opts: { fileSlug?: string } = {}): 
 
   const body = [objective.join('\n'), scope.join('\n')].filter(Boolean).join('\n\n')
   return {
-    branchSlug: brSlug(title, opts.fileSlug),
+    branchSlug: deriveBranchSlug(content, title, opts.fileSlug),
     feature: { title, body },
     lots,
   }
