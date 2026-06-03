@@ -3,6 +3,42 @@ import type { Report, ReportRow } from './build.js'
 
 export type Format = 'json' | 'text' | 'md'
 
+const BACKSLASH = String.fromCharCode(92)
+// Markdown metacharacters escaped in `md` titles so a user title can't inject formatting.
+const MD_META = new Set([
+  BACKSLASH, '`', '*', '_', '[', ']', '{', '}', '(', ')', '#', '+', '|', '<', '>', '!', '~', '-',
+])
+
+/** Collapse control characters (newlines, tabs, line separators) to single spaces. */
+function clean(s: string): string {
+  let out = ''
+  let prevSpace = false
+  for (const ch of s) {
+    const code = ch.codePointAt(0) ?? 0
+    const isControlOrSpace =
+      code < 0x20 || code === 0x7f || code === 0x2028 || code === 0x2029 || ch === ' '
+    if (isControlOrSpace) {
+      if (!prevSpace) {
+        out += ' '
+        prevSpace = true
+      }
+    } else {
+      out += ch
+      prevSpace = false
+    }
+  }
+  return out.trim()
+}
+
+/** A display-safe title: control-normalized for text, plus markdown-metacharacter-escaped for md. */
+function title(s: string, format: Format): string {
+  const t = clean(s)
+  if (format !== 'md') return t
+  let out = ''
+  for (const ch of t) out += MD_META.has(ch) ? BACKSLASH + ch : ch
+  return out
+}
+
 function heading(label: string, count: number, format: Format): string {
   return format === 'md' ? `## ${label} (${count})` : `${label} (${count})`
 }
@@ -12,7 +48,9 @@ function meta(r: ReportRow): string {
 }
 
 function rowLine(r: ReportRow, format: Format): string {
-  return format === 'md' ? `- **${r.title}** — ${meta(r)}` : `  - ${r.title} [${meta(r)}]`
+  return format === 'md'
+    ? `- **${title(r.title, format)}** — ${meta(r)}`
+    : `  - ${title(r.title, format)} [${meta(r)}]`
 }
 
 export function formatReport(report: Report, format: Format): string {
@@ -27,10 +65,11 @@ export function formatReport(report: Report, format: Format): string {
   if (report.decisions !== undefined) {
     lines.push(heading('DECISIONS', report.decisions.length, format))
     for (const d of report.decisions) {
+      const t = title(d.title, format)
       lines.push(
         format === 'md'
-          ? `- **${d.title}** — ${d.decisionKind} · ${d.realization} · outcome:${d.outcome}`
-          : `  - ${d.title} [${d.decisionKind}, ${d.realization}, outcome:${d.outcome}]`,
+          ? `- **${t}** — ${d.decisionKind} · ${d.realization} · outcome:${d.outcome}`
+          : `  - ${t} [${d.decisionKind}, ${d.realization}, outcome:${d.outcome}]`,
       )
     }
   }
@@ -44,8 +83,8 @@ export function formatRows(rows: ReportRow[], format: Format): string {
     rows
       .map((r) =>
         format === 'md'
-          ? `- **${r.title}** — ${r.bucket} · ${r.realization} · ${r.acceptance}`
-          : `  - ${r.title} [${r.bucket}, ${r.realization}, ${r.acceptance}]`,
+          ? `- **${title(r.title, format)}** — ${r.bucket} · ${r.realization} · ${r.acceptance}`
+          : `  - ${title(r.title, format)} [${r.bucket}, ${r.realization}, ${r.acceptance}]`,
       )
       .join('\n') + '\n'
   )

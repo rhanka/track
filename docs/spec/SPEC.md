@@ -245,8 +245,8 @@ Iterates Items where `kind != "decision"` (unless `--decisions`). Buckets, first
 1. **AWAITED** — any open blocker (`decision`/`dependency`).
 2. **DROPPED** — realization ∈ {`cancelled`,`rejected`}.
 3. **DONE** — realization=`done` (**and** acceptanceStatus=`pass` iff `report.requireAccepted=true`; named toggle, default `false`).
-4. **TO-DO** — otherwise.
-Sorted by the active prioritization scheme when present. `--decisions` lists Decisions by realization + `outcome`.
+4. **TO-DO** — otherwise (this is also where a `done` item lands when `requireAccepted=true` and it is not yet `pass` — the row still shows `realization:done`/`acceptance:<status>`).
+Sorted by the active prioritization scheme when present. `--decisions` lists Decisions by realization + `outcome`. `query` projects the non-decision rows only (filter `kind` excludes `decision`).
 
 ## 8. Acceptance criteria (the MVP's own UAT)
 - **A1** `branch import` on a real `sentropic/plan/NN-BRANCH_*.md` derives Items and leaves the `BRANCH.md` byte-hash **unchanged**; re-import emits only deltas (idempotent under lot reordering).

@@ -152,4 +152,13 @@ describe('formatting', () => {
     expect(md).toContain('## TO-DO')
     expect(md).toContain('**My Title**')
   })
+
+  it('sanitizes user titles: no newline/heading injection, md metacharacters escaped', () => {
+    track.createItem({ kind: 'feature', title: 'evil\n## INJECTED *x*', workspace: 'ws' })
+    const text = formatReport(track.report(base), 'text')
+    expect(text.split('\n').some((l) => l.startsWith('## INJECTED'))).toBe(false)
+    const md = formatReport(track.report(base), 'md')
+    expect(md.split('\n').some((l) => l.startsWith('## INJECTED'))).toBe(false)
+    expect(md).toContain('\\*x\\*') // markdown metacharacters escaped
+  })
 })

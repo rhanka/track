@@ -87,7 +87,9 @@ export function buildReport(state: State, options: ReportOptions): Report {
 }
 
 export interface QueryFilter {
-  kind?: ItemKind
+  // `query` projects the non-decision report rows; filtering by `'decision'` is a compile error
+  // (use `report({decisions:true})` for the decision view).
+  kind?: Exclude<ItemKind, 'decision'>
   workspace?: string
   bucket?: Bucket
   realization?: Realization
