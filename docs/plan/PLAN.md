@@ -61,6 +61,19 @@ TypeScript (ESM), Node ≥ 20, `vitest`, `tsx` CLI entry, minimal deps (ULID + a
 ## Dependency order
 `0 → 1 → 2 → 3 → {4a, 4b} → 5 → 6 → 7`. Lot 1's event/fold/batch contract is the freeze point; 4a/4b are independent and parallelizable behind their own gates; Lot 6 depends on 1–5; Lot 7 wraps all.
 
+```mermaid
+flowchart LR
+  L0["Lot 0 scaffold"] --> L1["Lot 1 event core (FROZEN)"]
+  L1 --> L2["Lot 2 axes + blockers"]
+  L2 --> L3["Lot 3 decisions"]
+  L3 --> L4a["Lot 4a acceptance"]
+  L3 --> L4b["Lot 4b priority"]
+  L4a --> L5["Lot 5 report + query"]
+  L4b --> L5
+  L5 --> L6["Lot 6 BRANCH import + CLI = Milestone 1"]
+  L6 --> L7["Lot 7 full CLI + docs"]
+```
+
 ## Test strategy
 Unit per lot. Integration: a golden `.track/events.jsonl` exercising the full lifecycle (create → orientation decision → go → specified → in-progress → acceptance runs → done; plus a parallel no-go path → DROPPED), asserting **fold determinism on single-stream replay**. E2E: CLI smoke (Lot 6/7). Acceptance A1–A7 are the Milestone-1 merge gate.
 

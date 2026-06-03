@@ -8,6 +8,98 @@
 
 `track` is the **system of record** for a typed product backlog and its specification / realization / acceptance state. It records; it does not execute work or coordinate agents. The MVP makes the existing `BRANCH.md`-driven flow **queryable** without taking ownership from it.
 
+## Diagrams (model overview)
+
+**Realization state machine** (axis 2):
+```mermaid
+stateDiagram-v2
+  state "to-do" as to_do
+  state "in-progress" as in_progress
+  [*] --> to_do
+  to_do --> in_progress
+  in_progress --> done
+  to_do --> cancelled
+  in_progress --> cancelled
+  to_do --> rejected: no-go decision
+  in_progress --> rejected: no-go decision
+  note right of rejected
+    set only by a no-go decision (cause = decisionId)
+  end note
+```
+
+**Decision `outcome` machine + effect on targets** (§2.6):
+```mermaid
+stateDiagram-v2
+  state "no-go" as no_go
+  [*] --> pending
+  pending --> go
+  pending --> no_go
+  pending --> deferred
+  deferred --> go
+  deferred --> no_go
+  note right of deferred
+    blocker stays OPEN, target AWAITED
+  end note
+  note right of go
+    resolve target blocker(s)
+  end note
+  note right of no_go
+    resolve blocker(s) + target to rejected
+  end note
+```
+
+**`report` bucket precedence** (§7, first match wins):
+```mermaid
+flowchart TD
+  I["Item (kind != decision)"] --> Q1{"open blocker?"}
+  Q1 -->|yes| AW["AWAITED"]
+  Q1 -->|no| Q2{"realization cancelled or rejected?"}
+  Q2 -->|yes| DRP["DROPPED"]
+  Q2 -->|no| Q3{"done (and accepted if required)?"}
+  Q3 -->|yes| DON["DONE"]
+  Q3 -->|no| TDO["TO-DO"]
+```
+
+**Event flow + integrity** (§3):
+```mermaid
+flowchart LR
+  CMD["CLI command"] --> G{"transition legal?"}
+  G -->|no| REJ["reject (no append)"]
+  G -->|yes| B["atomic cmdId batch"]
+  B --> L["append-only events.jsonl: seq + prevHash + contentHash(payload)"]
+  L --> F["fold: stream order, per-aggregate seq"]
+  F --> ST["materialized state"]
+  L --> V["validate: payload-hash + prevHash + seq"]
+```
+
+**Entities**:
+```mermaid
+classDiagram
+  class Item {
+    Ulid id
+    kind
+    specStatus
+    realization
+  }
+  class Decision {
+    decisionKind
+    outcome
+    Dossier dossier
+  }
+  class Blocker {
+    kind
+    resolutionRule
+  }
+  class AcceptanceCriterion
+  class PriorityAssessment
+  Item <|-- Decision : kind = decision
+  Decision --> Item : targets (non-decision only)
+  Blocker --> Item : target
+  Blocker --> Item : ref
+  Item --> AcceptanceCriterion : has
+  Item --> PriorityAssessment : latest = priority
+```
+
 ## 2. Domain model
 
 ### 2.1 Item

@@ -23,6 +23,45 @@ The real need is a **typed product backlog** (feature/bug/chore requests) whose 
 
 **Rule:** track runs **standalone**. When h2a is available, track delegates coordination/transport to it, never the model.
 
+## Diagrams
+
+**Ecosystem boundary** (who drives, who records, who coordinates, who executes):
+```mermaid
+flowchart TB
+  subgraph Process["Process — skills (workflow)"]
+    BS["superpowers: brainstorming, writing-plans"]
+    BR["sentropic BR-25: branch-init, scope-check, lot-gate, branch-close"]
+  end
+  subgraph Record["track — system of record"]
+    TRK["Items, Decisions, Blockers, Acceptance, Priority"]
+  end
+  subgraph Coord["h2a — coordination (v2+)"]
+    H2A["identity, signed journal, blockers, negotiation"]
+  end
+  subgraph Exec["execution"]
+    ENG["h2a ENGAGEMENT / coordinate Task"]
+  end
+  Process -->|drive| Record
+  Record -.->|optional sidecar| Coord
+  Record -.->|engagementRef / taskRef| Exec
+```
+
+**Item lifecycle** (request → optional orientation study → spec → optional commitment → realization → report):
+```mermaid
+flowchart LR
+  R(["request"]) --> O{"orientation decision?"}
+  O -->|"skip (clear intent)"| S["specified"]
+  O -->|required| OD["orientation Decision: study / dossier"]
+  OD -->|go| S
+  OD -->|no-go| DR1["DROPPED"]
+  S --> C{"commitment decision?"}
+  C -->|skip| RZ["realization: to-do, in-progress, done"]
+  C -->|required| CD["commitment Decision: go / no-go"]
+  CD -->|go| RZ
+  CD -->|no-go| DR2["DROPPED: rejected"]
+  RZ --> DN["DONE"]
+```
+
 ## Canonical model
 
 A regular `Item` carries **three orthogonal state axes**, plus **blockers** (relations, not an axis), plus **priority assessments**. **Decisions are themselves items** (`kind: decision`), linked to their targets.
