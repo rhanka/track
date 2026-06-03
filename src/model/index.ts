@@ -4,6 +4,8 @@ export {
   assertRealizationTransition,
   assertSpecTransition,
   type BlockerId,
+  type Disposition,
+  type Gate,
   type ItemCreatedPayload,
   type ItemId,
   type ItemKind,
@@ -20,3 +22,14 @@ export {
   type BlockerState,
   type ResolutionRule,
 } from './blocker.js'
+export {
+  assertOutcomeTransition,
+  isSettled,
+  type DecisionCreatedPayload,
+  type DecisionKind,
+  type DecisionState,
+  type Dossier,
+  type Option,
+  type Outcome,
+  type QAEntry,
+} from './decision.js'

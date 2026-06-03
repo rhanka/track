@@ -7,6 +7,10 @@ export type ItemKind = 'feature' | 'bug' | 'chore' | 'decision'
 export type SpecStatus = 'to-specify' | 'specified'
 export type Realization = 'to-do' | 'in-progress' | 'done' | 'cancelled' | 'rejected'
 
+// Decision gates an Item passes (SPEC §2.10). `Gate` doubles as a Decision's `decisionKind`.
+export type Gate = 'orientation' | 'commitment'
+export type Disposition = 'required' | 'skipped' | 'not-applicable' | 'completed'
+
 export interface Link {
   kind: string
   locator: string
@@ -24,6 +28,7 @@ export interface ItemState {
   workspace: string
   specStatus: SpecStatus | 'n/a' // `n/a` for kind:"decision" (SPEC §2.2)
   realization: Realization
+  disposition: Record<Gate, Disposition> // per-gate disposition (SPEC §2.10)
   parentId?: ItemId
   sourceKey?: string
   body?: string
@@ -71,7 +76,7 @@ export function assertSpecTransition(item: ItemState, to: SpecStatus): void {
 }
 
 export function assertRealizationTransition(
-  item: ItemState,
+  item: { id: ItemId; realization: Realization }, // ItemState or DecisionState — both have realization
   to: Realization,
   hasCause: boolean,
 ): void {

@@ -3,6 +3,7 @@ import { join } from 'node:path'
 
 import type { TrackEvent } from '../events/types.js'
 import type { BlockerState } from '../model/blocker.js'
+import type { DecisionState } from '../model/decision.js'
 import type { ItemState } from '../model/item.js'
 import { fold, type State } from './fold.js'
 
@@ -13,6 +14,7 @@ import { fold, type State } from './fold.js'
  */
 export interface SerializedState {
   items: ItemState[]
+  decisions: DecisionState[]
   blockers: BlockerState[]
 }
 
@@ -25,6 +27,7 @@ export function serializeState(state: State): SerializedState {
   // Structured-clone so a caller mutating the serialized form cannot corrupt a live fold.
   return {
     items: [...state.items.values()].map((i) => structuredClone(i)),
+    decisions: [...state.decisions.values()].map((d) => structuredClone(d)),
     blockers: [...state.blockers.values()].map((b) => structuredClone(b)),
   }
 }
@@ -32,6 +35,7 @@ export function serializeState(state: State): SerializedState {
 export function deserializeState(serialized: SerializedState): State {
   return {
     items: new Map(serialized.items.map((i) => [i.id, i])),
+    decisions: new Map(serialized.decisions.map((d) => [d.id, d])),
     blockers: new Map(serialized.blockers.map((b) => [b.id, b])),
   }
 }

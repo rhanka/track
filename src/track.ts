@@ -8,10 +8,18 @@ import {
   type ResolutionRule,
 } from './model/blocker.js'
 import {
+  assertOutcomeTransition,
+  type DecisionCreatedPayload,
+  type Dossier,
+  type Outcome,
+} from './model/decision.js'
+import {
   assertRealizationTransition,
   assertSpecTransition,
   DomainError,
   type BlockerId,
+  type Disposition,
+  type Gate,
   type ItemCreatedPayload,
   type ItemId,
   type ItemState,
@@ -19,6 +27,13 @@ import {
   type SpecStatus,
 } from './model/item.js'
 import { fold, type State } from './state/fold.js'
+
+interface EventPart {
+  aggregate: Aggregate
+  aggregateId: Ulid
+  type: EventType
+  payload: Record<string, unknown>
+}
 
 export interface TrackOptions {
   /** Injectable clock (ISO-8601 ms). Defaults to wall clock. */
@@ -83,8 +98,131 @@ export class Track {
    * rejects a direct `→rejected` here.
    */
   setRealization(itemId: ItemId, to: Realization): void {
-    assertRealizationTransition(this.requireItem(itemId), to, false)
-    this.emit('item', itemId, 'realization.transition', { to })
+    const state = this.state()
+    const item = state.items.get(itemId)
+    if (item) {
+      assertRealizationTransition(item, to, false)
+      this.emit('item', itemId, 'realization.transition', { to })
+      return
+    }
+    const decision = state.decisions.get(itemId)
+    if (decision) {
+      assertRealizationTransition(decision, to, false)
+      this.emit('decision', itemId, 'realization.transition', { to })
+      return
+    }
+    throw new DomainError(`unknown item ${itemId}`)
+  }
+
+  /**
+   * Create a Decision (SPEC §2.5): emits `decision.created` + one `blocker.opened` (kind:decision)
+   * per target as ONE atomic batch (A7). Targets must be existing non-decision items (A3 recursion
+   * guard). The decision starts `outcome:"pending"`, leaving every target AWAITED until it settles.
+   */
+  createDecision(input: DecisionCreatedPayload): ItemId {
+    if (input.targets.length === 0) {
+      throw new DomainError('a decision needs at least one target (SPEC §2.5)')
+    }
+    const state = this.state()
+    for (const targetId of input.targets) {
+      if (state.decisions.has(targetId)) {
+        throw new DomainError(`a decision cannot target another decision (${targetId}) [A3]`)
+      }
+      if (!state.items.has(targetId)) {
+        throw new DomainError(`unknown target item ${targetId}`)
+      }
+    }
+    const decisionId = this.newId()
+    const parts: EventPart[] = [
+      { aggregate: 'decision', aggregateId: decisionId, type: 'decision.created', payload: { ...input } },
+    ]
+    for (const targetId of input.targets) {
+      const blockerId = this.newId()
+      parts.push({
+        aggregate: 'blocker',
+        aggregateId: blockerId,
+        type: 'blocker.opened',
+        payload: {
+          blockerId,
+          targetId,
+          kind: 'decision',
+          ref: decisionId,
+          reason: `awaiting ${input.decisionKind} decision`,
+        },
+      })
+    }
+    this.emitBatch(parts)
+    return decisionId
+  }
+
+  /**
+   * Settle (or defer) a Decision's outcome (SPEC §2.6). Legal: pending→{go,no-go,deferred};
+   * deferred→{go,no-go}; go/no-go terminal. Emits the effect as ONE atomic batch (A5):
+   * `go` resolves each target's decision blocker; `no-go` also rejects each non-terminal target
+   * (cause:{decisionId}); `deferred` emits only the outcome (target stays AWAITED).
+   */
+  setOutcome(decisionId: ItemId, to: Outcome): void {
+    const state = this.state()
+    const decision = state.decisions.get(decisionId)
+    if (!decision) throw new DomainError(`unknown decision ${decisionId}`)
+    assertOutcomeTransition(decision.outcome, to)
+
+    const parts: EventPart[] = [
+      { aggregate: 'decision', aggregateId: decisionId, type: 'decision.outcome', payload: { to } },
+    ]
+    if (to === 'go' || to === 'no-go') {
+      for (const targetId of decision.targets) {
+        const blocker = [...state.blockers.values()].find(
+          (b) => b.kind === 'decision' && b.ref === decisionId && b.targetId === targetId && b.open,
+        )
+        if (blocker) {
+          parts.push({
+            aggregate: 'blocker',
+            aggregateId: blocker.id,
+            type: 'blocker.resolved',
+            payload: { blockerId: blocker.id, decisionId },
+          })
+        }
+        if (to === 'no-go') {
+          const target = state.items.get(targetId)
+          if (target && (target.realization === 'to-do' || target.realization === 'in-progress')) {
+            parts.push({
+              aggregate: 'item',
+              aggregateId: targetId,
+              type: 'realization.transition',
+              payload: { to: 'rejected', cause: { decisionId } },
+            })
+          }
+        }
+      }
+    }
+    this.emitBatch(parts)
+  }
+
+  reviseDossier(decisionId: ItemId, dossier: Dossier): void {
+    if (!this.state().decisions.has(decisionId)) {
+      throw new DomainError(`unknown decision ${decisionId}`)
+    }
+    this.emit('decision', decisionId, 'dossier.revised', { dossier })
+  }
+
+  /**
+   * Set a gate disposition explicitly (SPEC §2.10). `completed` is NOT settable here — it is set
+   * automatically when a Decision of that gate targeting the item settles.
+   */
+  setDisposition(itemId: ItemId, gate: Gate, disposition: Disposition, reason?: string): void {
+    if (disposition === 'completed') {
+      throw new DomainError(
+        'disposition "completed" is set automatically when a decision settles (SPEC §2.10)',
+      )
+    }
+    if (!this.state().items.has(itemId)) throw new DomainError(`unknown item ${itemId}`)
+    this.emit('item', itemId, 'decision.disposition', {
+      itemId,
+      gate,
+      disposition,
+      ...(reason !== undefined ? { reason } : {}),
+    })
   }
 
   openBlocker(input: OpenBlockerInput): BlockerId {
@@ -134,15 +272,25 @@ export class Track {
     type: EventType,
     payload: Record<string, unknown>,
   ): void {
-    const event: CommandEvent = {
+    this.emitBatch([{ aggregate, aggregateId, type, payload }])
+  }
+
+  /** Append a command's events; a multi-event command is one atomic `cmdId` batch (SPEC §3). */
+  private emitBatch(parts: EventPart[]): void {
+    const at = this.clock()
+    const events: CommandEvent[] = parts.map((part) => ({
       id: this.newId(),
-      type,
-      aggregate,
-      aggregateId,
-      at: this.clock(),
+      type: part.type,
+      aggregate: part.aggregate,
+      aggregateId: part.aggregateId,
+      at,
       by: this.actor,
-      payload,
+      payload: part.payload,
+    }))
+    if (events.length > 1) {
+      this.store.appendCommand(events, { cmdId: this.newId() })
+    } else {
+      this.store.appendCommand(events)
     }
-    this.store.appendCommand([event])
   }
 }

@@ -10,6 +10,7 @@ function item(over: Partial<ItemState> = {}): ItemState {
     workspace: 'ws',
     specStatus: 'to-specify',
     realization: 'to-do',
+    disposition: { orientation: 'required', commitment: 'required' },
     ...over,
   }
 }
