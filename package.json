@@ -1,10 +1,30 @@
 {
   "name": "@sentropic/track",
-  "version": "0.0.0",
-  "private": true,
+  "version": "0.1.0",
   "description": "Typed product-backlog and spec/plan/UAT system of record for the sentropic ecosystem (record-only MVP).",
-  "license": "UNLICENSED",
+  "license": "MIT",
+  "author": "Fabien Antoine",
+  "homepage": "https://github.com/rhanka/track#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/rhanka/track.git"
+  },
+  "bugs": {
+    "url": "https://github.com/rhanka/track/issues"
+  },
+  "keywords": [
+    "backlog",
+    "spec",
+    "acceptance",
+    "event-sourcing",
+    "system-of-record",
+    "wsjf",
+    "cli"
+  ],
   "type": "module",
+  "publishConfig": {
+    "access": "public"
+  },
   "engines": {
     "node": ">=20"
   },
@@ -23,7 +43,8 @@
     "lint": "tsc -p tsconfig.json --noEmit",
     "test": "vitest run",
     "test:watch": "vitest",
-    "dev": "tsx src/cli/index.ts"
+    "dev": "tsx src/cli/index.ts",
+    "prepublishOnly": "npm run build"
   },
   "dependencies": {
     "ulid": "^3.0.2"

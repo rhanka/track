@@ -78,3 +78,7 @@ console.log(track.report({ baselineCommit: 'HEAD' }).buckets)
 ```
 
 See [`INTENTION.md`](./INTENTION.md) for the full model, boundaries, and rationale; [`docs/plan/PLAN.md`](./docs/plan/PLAN.md) for the build lots; [`docs/reviews/`](./docs/reviews) for the per-lot double reviews.
+
+## License
+
+MIT — see [`LICENSE`](./LICENSE).
