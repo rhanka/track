@@ -3,6 +3,14 @@ import { ulid } from 'ulid'
 import { EventStore } from './events/store.js'
 import type { ActorId, Aggregate, CommandEvent, EventType, Ulid } from './events/types.js'
 import { parseRunReport, type RunReportFormat } from './accept/ingest.js'
+import {
+  buildReport,
+  query as runQuery,
+  type QueryFilter,
+  type Report,
+  type ReportOptions,
+  type ReportRow,
+} from './report/build.js'
 import type { EvidenceKind, RunResult } from './model/acceptance.js'
 import {
   WSJF_SCHEME_VERSION,
@@ -371,6 +379,18 @@ export class Track {
     }
     this.emit('item', itemId, 'priority.assessed', { ...assessment })
     return assessment
+  }
+
+  // ---- Reporting (read-only, SPEC §6/§7) ----
+
+  /** Bucketed backlog report over non-decision items (SPEC §7). */
+  report(options: ReportOptions): Report {
+    return buildReport(this.state(), options)
+  }
+
+  /** Flat, filtered query over the report rows (SPEC §6). */
+  query(filter: QueryFilter, options: ReportOptions): ReportRow[] {
+    return runQuery(this.state(), filter, options)
   }
 
   private evidenceOwner(evidenceId: string): ItemId {
