@@ -26,7 +26,10 @@ export function desyncFindings(state: State, cwd: string): DesyncFinding[] {
       continue
     }
     const h1 = /^#\s+(.+?)\s*$/m.exec(readFileSync(path, 'utf8'))?.[1]
-    if (h1 !== undefined && h1 !== item.title) {
+    if (h1 === undefined) {
+      // SPEC §4 requires the H1 to MATCH the title; a file with no H1 cannot match.
+      findings.push({ kind: 'desync', itemId: item.id, reason: `referenced markdown has no H1: ${ref}` })
+    } else if (h1 !== item.title) {
       findings.push({
         kind: 'desync',
         itemId: item.id,

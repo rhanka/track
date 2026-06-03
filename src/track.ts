@@ -264,12 +264,12 @@ export class Track {
     if (!state.items.has(input.targetId)) {
       throw new DomainError(`unknown target item ${input.targetId}`)
     }
-    const ref = state.items.get(input.ref)
-    if (!ref) {
+    if (input.kind === 'decision') {
+      if (!state.decisions.has(input.ref)) {
+        throw new DomainError(`a decision blocker's ref must be an existing decision (${input.ref})`)
+      }
+    } else if (!state.items.has(input.ref)) {
       throw new DomainError(`unknown ref item ${input.ref}`)
-    }
-    if (input.kind === 'decision' && ref.kind !== 'decision') {
-      throw new DomainError(`a decision blocker's ref must be a decision item (${input.ref})`)
     }
     const blockerId = this.newId()
     const resolutionRule: ResolutionRule | undefined =

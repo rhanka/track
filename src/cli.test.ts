@@ -5,6 +5,8 @@ import { join } from 'node:path'
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 
+import { EventStore } from './events/store.js'
+import { Track } from './track.js'
 import { runCli, type CliIO } from './cli/index.js'
 
 const FIXTURE = `# Feature: BR-99 — Demo Feature
@@ -136,5 +138,72 @@ describe('CLI full verb surface (Lot 7) end-to-end', () => {
     const text = out.join('')
     expect(text).toContain('desync')
     expect(text).toContain('missing')
+  })
+})
+
+describe('CLI input validation + review fixes (Lot 7)', () => {
+  function last(args: string[]): string {
+    out.length = 0
+    runCli(args, io)
+    return out.join('').trim()
+  }
+
+  it('rejects invalid enum inputs and a missing required flag (exit 1)', () => {
+    runCli(['init'], io)
+    out.length = 0
+    expect(runCli(['item', 'new', '--kind', 'bogus', '--title', 't', '--workspace', 'ws'], io)).toBe(1)
+    expect(out.join('')).toContain('--kind must be one of')
+    out.length = 0
+    expect(runCli(['query', '--bucket', 'NOPE'], io)).toBe(1)
+    out.length = 0
+    expect(runCli(['item', 'new', '--kind', 'feature', '--title', 't'], io)).toBe(1) // no --workspace
+    expect(out.join('')).toContain('--workspace')
+  })
+
+  it('rejects an invalid --result (no silent pass)', () => {
+    runCli(['init'], io)
+    const id = last(['item', 'new', '--kind', 'feature', '--title', 't', '--workspace', 'ws'])
+    const c = last(['accept', 'criterion', id, '--statement', 's'])
+    const e = last(['accept', 'link', c, '--kind', 'unit', '--locator', 'l'])
+    out.length = 0
+    expect(runCli(['accept', 'run', e, '--result', 'maybe'], io)).toBe(1)
+    expect(out.join('')).toContain('--result must be one of')
+  })
+
+  it('blocker raise --kind decision resolves a real decision ref', () => {
+    runCli(['init'], io)
+    const t = last(['item', 'new', '--kind', 'feature', '--title', 't', '--workspace', 'ws'])
+    const d = last(['decision', 'new', '--kind', 'orientation', '--title', 'x', '--workspace', 'ws', '--targets', t])
+    out.length = 0
+    expect(runCli(['blocker', 'raise', '--target', t, '--kind', 'decision', '--ref', d], io)).toBe(0)
+    expect(out.join('').trim().length).toBeGreaterThan(0) // a blockerId
+  })
+
+  it('decision dossier --context merges, preserving existing options', () => {
+    runCli(['init'], io)
+    const store = new EventStore(join(dir, '.track', 'events.jsonl'))
+    const track = new Track(store)
+    const t = track.createItem({ kind: 'feature', title: 't', workspace: 'ws' })
+    const d = track.createDecision({
+      decisionKind: 'orientation',
+      title: 'x',
+      workspace: 'ws',
+      targets: [t],
+      dossier: { context: 'old', options: [{ id: 'o1', title: 'A', summary: 's' }], qa: [] },
+    })
+    out.length = 0
+    expect(runCli(['decision', 'dossier', d, '--context', 'new'], io)).toBe(0)
+    const dossier = new Track(store).state().decisions.get(d)!.dossier
+    expect(dossier.context).toBe('new')
+    expect(dossier.options).toHaveLength(1) // preserved, not erased
+  })
+
+  it('validate flags a referenced markdown with no H1', () => {
+    runCli(['init'], io)
+    writeFileSync(join(dir, 'prose.md'), 'no heading here\n')
+    runCli(['item', 'new', '--kind', 'feature', '--title', 'Spec', '--workspace', 'ws', '--body', 'prose.md'], io)
+    out.length = 0
+    expect(runCli(['validate', '--commit', 'c1'], io)).toBe(1)
+    expect(out.join('')).toContain('no H1')
   })
 })
