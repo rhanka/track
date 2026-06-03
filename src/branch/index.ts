@@ -1,3 +1,8 @@
 // BRANCH.md import/annotate: parse BRANCH_TEMPLATE sections, derive Items, read-only on BRANCH.md (SPEC §5).
-// Implemented in Lot 6.
-export {}
+export {
+  parseBranch,
+  slugify,
+  type ParsedBranch,
+  type ParsedLot,
+  type ParsedUat,
+} from './parse.js'

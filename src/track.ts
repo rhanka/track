@@ -3,6 +3,8 @@ import { ulid } from 'ulid'
 import { EventStore } from './events/store.js'
 import type { ActorId, Aggregate, CommandEvent, EventType, Ulid } from './events/types.js'
 import { parseRunReport, type RunReportFormat } from './accept/ingest.js'
+import { parseBranch } from './branch/parse.js'
+import { computeHash } from './events/canonical.js'
 import {
   buildReport,
   query as runQuery,
@@ -39,6 +41,7 @@ import {
   type ItemCreatedPayload,
   type ItemId,
   type ItemState,
+  type Link,
   type Realization,
   type SpecStatus,
 } from './model/item.js'
@@ -49,6 +52,13 @@ interface EventPart {
   aggregateId: Ulid
   type: EventType
   payload: Record<string, unknown>
+}
+
+export interface ImportResult {
+  branchSlug: string
+  featureId: ItemId
+  created: number
+  updated: number
 }
 
 export interface TrackOptions {
@@ -391,6 +401,100 @@ export class Track {
   /** Flat, filtered query over the report rows (SPEC §6). */
   query(filter: QueryFilter, options: ReportOptions): ReportRow[] {
     return runQuery(this.state(), filter, options)
+  }
+
+  // ---- BRANCH.md import (SPEC §5) ----
+
+  /**
+   * Idempotent, read-only import of a `BRANCH.md` file: derive a parent `feature` Item + one
+   * `chore` Item per lot (resolved by stable `sourceKey = branchSlug/lotSlug`), map lot `[x]`→done
+   * and nested UAT checkboxes → acceptance criteria (`[x]` → a manual pass run). Re-import emits
+   * ONLY deltas (survives lot reordering) and NEVER writes the file. Returns the change counts.
+   */
+  importBranch(
+    content: string,
+    opts: { locator: string; fileSlug?: string; commit?: string },
+  ): ImportResult {
+    const parsed = parseBranch(content, opts.fileSlug !== undefined ? { fileSlug: opts.fileSlug } : {})
+    const sourceHash = computeHash(content)
+    const link: Link = { kind: 'branch.md', locator: opts.locator }
+    let created = 0
+    let updated = 0
+
+    const findBySourceKey = (sourceKey: string): ItemState | undefined =>
+      [...this.state().items.values()].find((i) => i.sourceKey === sourceKey)
+
+    const feature = findBySourceKey(parsed.branchSlug)
+    const featureId =
+      feature?.id ??
+      this.createItem({
+        kind: 'feature',
+        title: parsed.feature.title || parsed.branchSlug,
+        workspace: parsed.branchSlug,
+        sourceKey: parsed.branchSlug,
+        links: [link],
+        ...(parsed.feature.body ? { body: parsed.feature.body } : {}),
+      })
+    if (!feature) created++
+
+    for (const lot of parsed.lots) {
+      const lotKey = `${parsed.branchSlug}/${lot.lotSlug}`
+      const item = findBySourceKey(lotKey)
+      const lotId =
+        item?.id ??
+        this.createItem({
+          kind: 'chore',
+          title: lot.title,
+          workspace: parsed.branchSlug,
+          parentId: featureId,
+          sourceKey: lotKey,
+          links: [link],
+        })
+      if (!item) created++
+
+      // checkbox -> realization (forward only; `done` is terminal, so an unchecked lot stays done)
+      if (lot.done) {
+        const current = this.state().items.get(lotId)!.realization
+        if (current === 'to-do') {
+          this.setRealization(lotId, 'in-progress')
+          this.setRealization(lotId, 'done')
+          updated++
+        } else if (current === 'in-progress') {
+          this.setRealization(lotId, 'done')
+          updated++
+        }
+      }
+
+      // nested UAT -> acceptance criterion (+ a manual pass run when checked)
+      for (const uat of lot.uat) {
+        const exists = [...this.state().criteria.values()].some(
+          (c) => c.itemId === lotId && c.statement === uat.statement,
+        )
+        if (exists) continue
+        const criterionId = this.addCriterion(lotId, uat.statement)
+        const evidenceId = this.linkEvidence(criterionId, 'manual', `${opts.locator}#${uat.uatSlug}`)
+        if (uat.passed) {
+          this.recordRun(evidenceId, {
+            commit: opts.commit ?? 'HEAD',
+            env: 'uat',
+            runner: 'manual',
+            result: 'pass',
+          })
+        }
+        created++
+      }
+    }
+
+    // provenance — emitted only when the import actually changed something (no-op re-import is silent)
+    if (created + updated > 0) {
+      this.emit('item', featureId, 'branch.imported', {
+        locator: opts.locator,
+        branchSlug: parsed.branchSlug,
+        sourceHash,
+      })
+    }
+
+    return { branchSlug: parsed.branchSlug, featureId, created, updated }
   }
 
   private evidenceOwner(evidenceId: string): ItemId {
