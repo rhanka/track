@@ -5,63 +5,63 @@ import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 
 import { EventStore } from '../events/store.js'
-import type { CommandEvent } from '../events/types.js'
-import { fold } from './fold.js'
+import { Track } from '../track.js'
+import { fold, openBlockers, openBlockersForItem } from './fold.js'
 
 let dir: string
 let store: EventStore
-let counter: number
+let track: Track
 
 beforeEach(() => {
   dir = mkdtempSync(join(tmpdir(), 'track-fold-'))
   store = new EventStore(join(dir, '.track', 'events.jsonl'))
-  counter = 0
+  let n = 0
+  track = new Track(store, {
+    by: 'tester',
+    now: () => '2026-06-03T10:00:00.000Z',
+    newId: () => `id-${String(++n).padStart(4, '0')}`,
+  })
 })
 
 afterEach(() => {
   rmSync(dir, { recursive: true, force: true })
 })
 
-function evt(over: Partial<CommandEvent> = {}): CommandEvent {
-  counter += 1
-  return {
-    id: `evt-${String(counter).padStart(4, '0')}`,
-    type: 'item.created',
-    aggregate: 'item',
-    aggregateId: 'item-A',
-    at: `2026-06-03T10:00:${String(counter).padStart(2, '0')}.000Z`,
-    by: 'tester',
-    payload: { k: counter },
-    ...over,
-  }
-}
-
-describe('fold', () => {
-  function buildStream() {
-    store.appendCommand([evt({ aggregateId: 'item-A', type: 'item.created' })])
-    store.appendCommand([evt({ aggregateId: 'item-B', type: 'item.created' })])
-    store.appendCommand([evt({ aggregateId: 'item-A', type: 'spec.transition' })])
-    store.appendCommand([evt({ aggregateId: 'item-A', type: 'realization.transition' })])
-    return store.readAll()
-  }
-
+describe('fold (typed state)', () => {
   it('is deterministic on single-stream replay', () => {
-    const events = buildStream()
+    const a = track.createItem({ kind: 'feature', title: 'a', workspace: 'ws' })
+    track.setSpec(a, 'specified')
+    track.setRealization(a, 'in-progress')
+    const events = store.readAll()
     expect(fold(events)).toEqual(fold(events))
   })
 
-  it('advances per-aggregate state by seq in stream order', () => {
-    const state = fold(buildStream())
-    const a = state.aggregates.get('item-A')!
-    const b = state.aggregates.get('item-B')!
+  it('projects item axes from the event stream', () => {
+    const a = track.createItem({ kind: 'feature', title: 'a', workspace: 'ws' })
+    track.setSpec(a, 'specified')
+    track.setRealization(a, 'in-progress')
+    track.setRealization(a, 'done')
 
-    expect(a.seq).toBe(3)
-    expect(a.history).toEqual(['item.created', 'spec.transition', 'realization.transition'])
-    expect(b.seq).toBe(1)
-    expect(b.history).toEqual(['item.created'])
+    const item = fold(store.readAll()).items.get(a)!
+    expect(item.specStatus).toBe('specified')
+    expect(item.realization).toBe('done')
+  })
+
+  it('computes open blockers and scopes them to a target', () => {
+    const target = track.createItem({ kind: 'feature', title: 't', workspace: 'ws' })
+    const other = track.createItem({ kind: 'feature', title: 'o', workspace: 'ws' })
+    const ref = track.createItem({ kind: 'feature', title: 'r', workspace: 'ws' })
+    track.openBlocker({ targetId: target, kind: 'dependency', ref, reason: 'dep' })
+
+    const state = fold(store.readAll())
+    expect(openBlockers(state)).toHaveLength(1)
+    expect(openBlockersForItem(state, target)).toHaveLength(1)
+    expect(openBlockersForItem(state, other)).toHaveLength(0)
   })
 
   it('folds an empty stream to empty state', () => {
-    expect(fold([]).aggregates.size).toBe(0)
+    const state = fold([])
+    expect(state.items.size).toBe(0)
+    expect(state.blockers.size).toBe(0)
   })
 })

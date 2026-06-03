@@ -2,15 +2,18 @@ import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 
 import { join } from 'node:path'
 
 import type { TrackEvent } from '../events/types.js'
-import { fold, type AggregateProjection, type State } from './fold.js'
+import type { BlockerState } from '../model/blocker.js'
+import type { ItemState } from '../model/item.js'
+import { fold, type State } from './fold.js'
 
 /**
  * Snapshots are NON-AUTHORITATIVE caches of `fold(events)` keyed by stream length
- * (SPEC §4: `.track/snapshots/<len>.json`). The append-only log is always the source of
- * truth; a snapshot can be deleted and rebuilt by re-folding.
+ * (SPEC §4: `.track/snapshots/<len>.json`). The append-only log is always the source of truth;
+ * a snapshot can be deleted and rebuilt by re-folding.
  */
 export interface SerializedState {
-  aggregates: AggregateProjection[]
+  items: ItemState[]
+  blockers: BlockerState[]
 }
 
 export interface Snapshot {
@@ -19,15 +22,17 @@ export interface Snapshot {
 }
 
 export function serializeState(state: State): SerializedState {
-  // Deep-copy `history` so a caller mutating the serialized form cannot corrupt a live fold.
+  // Structured-clone so a caller mutating the serialized form cannot corrupt a live fold.
   return {
-    aggregates: [...state.aggregates.values()].map((a) => ({ ...a, history: [...a.history] })),
+    items: [...state.items.values()].map((i) => structuredClone(i)),
+    blockers: [...state.blockers.values()].map((b) => structuredClone(b)),
   }
 }
 
 export function deserializeState(serialized: SerializedState): State {
   return {
-    aggregates: new Map(serialized.aggregates.map((a) => [a.aggregateId, a])),
+    items: new Map(serialized.items.map((i) => [i.id, i])),
+    blockers: new Map(serialized.blockers.map((b) => [b.id, b])),
   }
 }
 
