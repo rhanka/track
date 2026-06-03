@@ -42,9 +42,10 @@ describe('Track — item creation', () => {
     expect(item.kind).toBe('feature')
   })
 
-  it('creates a decision item with spec axis n/a', () => {
-    const id = track.createItem({ kind: 'decision', title: 'orient', workspace: 'ws' })
-    expect(track.state().items.get(id)!.specStatus).toBe('n/a')
+  it('rejects creating a decision via createItem (deferred to Lot 3 createDecision)', () => {
+    expect(() => track.createItem({ kind: 'decision', title: 'orient', workspace: 'ws' })).toThrow(
+      /createDecision/,
+    )
   })
 })
 
@@ -59,11 +60,6 @@ describe('Track — specification axis (A3 partial)', () => {
     const id = newItem()
     track.setSpec(id, 'specified')
     expect(() => track.setSpec(id, 'to-specify')).toThrow(/illegal spec transition/)
-  })
-
-  it('rejects a spec transition on a decision (n/a axis)', () => {
-    const id = track.createItem({ kind: 'decision', title: 'orient', workspace: 'ws' })
-    expect(() => track.setSpec(id, 'specified')).toThrow(/n\/a/)
   })
 })
 
@@ -101,13 +97,6 @@ describe('Track — realization axis (A3 partial)', () => {
   it('rejects a manual transition to rejected (requires a decision cause)', () => {
     const id = newItem()
     expect(() => track.setRealization(id, 'rejected')).toThrow(/requires a decision cause/)
-  })
-
-  it('allows rejected from in-progress with a decision cause', () => {
-    const id = newItem()
-    track.setRealization(id, 'in-progress')
-    track.setRealization(id, 'rejected', { decisionId: 'dec-1' })
-    expect(track.state().items.get(id)!.realization).toBe('rejected')
   })
 
   it('throws on an unknown item', () => {
@@ -161,15 +150,27 @@ describe('Track — blockers (SPEC §2.9)', () => {
     expect(() => track.resolveBlocker(blockerId)).toThrow(/cannot manually resolve a 'linked-done'/)
   })
 
-  it('rejects manual resolve of a decision blocker', () => {
+  it('rejects opening a blocker with an unknown target or ref', () => {
+    const real = newItem()
+    expect(() =>
+      track.openBlocker({ targetId: 'nope', kind: 'dependency', ref: real, reason: 'x' }),
+    ).toThrow(/unknown target/)
+    expect(() =>
+      track.openBlocker({ targetId: real, kind: 'dependency', ref: 'nope', reason: 'x' }),
+    ).toThrow(/unknown ref/)
+  })
+
+  it('rejects double-resolving a manual dependency blocker', () => {
     const target = newItem()
-    const decision = track.createItem({ kind: 'decision', title: 'go?', workspace: 'ws' })
+    const ref = newItem()
     const blockerId = track.openBlocker({
       targetId: target,
-      kind: 'decision',
-      ref: decision,
-      reason: 'awaiting decision',
+      kind: 'dependency',
+      ref,
+      reason: 'dep',
+      resolutionRule: 'manual',
     })
-    expect(() => track.resolveBlocker(blockerId)).toThrow(/cannot manually resolve a decision blocker/)
+    track.resolveBlocker(blockerId)
+    expect(() => track.resolveBlocker(blockerId)).toThrow(/already resolved/)
   })
 })

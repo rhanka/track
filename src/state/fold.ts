@@ -4,6 +4,7 @@ import type {
   BlockerState,
 } from '../model/blocker.js'
 import type {
+  BlockerId,
   ItemCreatedPayload,
   ItemId,
   ItemState,
@@ -20,12 +21,12 @@ import type {
  */
 export interface State {
   items: Map<ItemId, ItemState>
-  blockers: Map<string, BlockerState>
+  blockers: Map<BlockerId, BlockerState>
 }
 
 export function fold(events: ReadonlyArray<TrackEvent>): State {
   const items = new Map<ItemId, ItemState>()
-  const blockers = new Map<string, BlockerState>()
+  const blockers = new Map<BlockerId, BlockerState>()
 
   for (const event of events) {
     applyEvent(items, blockers, event)
@@ -51,7 +52,7 @@ export function openBlockersForItem(state: State, itemId: ItemId): BlockerState[
 
 function applyEvent(
   items: Map<ItemId, ItemState>,
-  blockers: Map<string, BlockerState>,
+  blockers: Map<BlockerId, BlockerState>,
   event: TrackEvent,
 ): void {
   switch (event.type) {
@@ -87,6 +88,9 @@ function applyEvent(
 
     case 'blocker.opened': {
       const payload = event.payload as unknown as BlockerOpenedPayload
+      // Apply the SPEC §2.9 default: a dependency blocker with no explicit rule is `linked-done`.
+      const resolutionRule =
+        payload.resolutionRule ?? (payload.kind === 'dependency' ? 'linked-done' : undefined)
       const blocker: BlockerState = {
         id: event.aggregateId,
         targetId: payload.targetId,
@@ -96,7 +100,7 @@ function applyEvent(
         openedAt: event.at,
         resolvedByEvent: false,
         open: true,
-        ...(payload.resolutionRule !== undefined ? { resolutionRule: payload.resolutionRule } : {}),
+        ...(resolutionRule !== undefined ? { resolutionRule } : {}),
         ...(payload.owner !== undefined ? { owner: payload.owner } : {}),
       }
       blockers.set(blocker.id, blocker)
@@ -120,7 +124,10 @@ function applyEvent(
 
 function isOpen(blocker: BlockerState, items: Map<ItemId, ItemState>): boolean {
   if (blocker.resolvedByEvent) return false
-  if (blocker.kind === 'dependency' && blocker.resolutionRule === 'linked-done') {
+  // Dependency default is linked-done (robust even if the rule was omitted upstream).
+  if (blocker.kind === 'dependency' && (blocker.resolutionRule ?? 'linked-done') === 'linked-done') {
+    // NOTE (open question, flagged for Lot 5): a ref that ends `cancelled`/`rejected` keeps this
+    // blocker OPEN (target stays AWAITED) — SPEC §2.9 resolves only on ref `done`. Reversible.
     return items.get(blocker.ref)?.realization !== 'done'
   }
   // decision blockers, manual dependency blockers, and (until Lot 4) linked-accepted stay open

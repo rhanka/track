@@ -16,7 +16,6 @@ import {
   type ItemId,
   type ItemState,
   type Realization,
-  type RealizationCause,
   type SpecStatus,
 } from './model/item.js'
 import { fold, type State } from './state/fold.js'
@@ -64,6 +63,9 @@ export class Track {
   }
 
   createItem(input: ItemCreatedPayload): ItemId {
+    if (input.kind === 'decision') {
+      throw new DomainError('use createDecision for kind:"decision" (Lot 3) — it needs targets, a dossier, and an atomic blocker batch (SPEC §2.5)')
+    }
     const itemId = this.newId()
     this.emit('item', itemId, 'item.created', { ...input })
     return itemId
@@ -74,12 +76,29 @@ export class Track {
     this.emit('item', itemId, 'spec.transition', { to })
   }
 
-  setRealization(itemId: ItemId, to: Realization, cause?: RealizationCause): void {
-    assertRealizationTransition(this.requireItem(itemId), to, cause !== undefined)
-    this.emit('item', itemId, 'realization.transition', cause ? { to, cause } : { to })
+  /**
+   * Public realization transitions: `in-progress`, `done`, `cancelled`. `rejected` is NOT
+   * settable here — it is the consequence of a `no-go` Decision (SPEC §2.3, §2.6) and is emitted
+   * internally by Lot 3's outcome batch (with a `cause`). `assertRealizationTransition(_, _, false)`
+   * rejects a direct `→rejected` here.
+   */
+  setRealization(itemId: ItemId, to: Realization): void {
+    assertRealizationTransition(this.requireItem(itemId), to, false)
+    this.emit('item', itemId, 'realization.transition', { to })
   }
 
   openBlocker(input: OpenBlockerInput): BlockerId {
+    const state = this.state()
+    if (!state.items.has(input.targetId)) {
+      throw new DomainError(`unknown target item ${input.targetId}`)
+    }
+    const ref = state.items.get(input.ref)
+    if (!ref) {
+      throw new DomainError(`unknown ref item ${input.ref}`)
+    }
+    if (input.kind === 'decision' && ref.kind !== 'decision') {
+      throw new DomainError(`a decision blocker's ref must be a decision item (${input.ref})`)
+    }
     const blockerId = this.newId()
     const resolutionRule: ResolutionRule | undefined =
       input.kind === 'dependency' ? (input.resolutionRule ?? 'linked-done') : undefined
@@ -99,6 +118,7 @@ export class Track {
     const blocker = this.state().blockers.get(blockerId)
     if (!blocker) throw new DomainError(`unknown blocker ${blockerId}`)
     assertManualResolve(blocker)
+    if (!blocker.open) throw new DomainError(`blocker ${blockerId} is already resolved`)
     this.emit('blocker', blockerId, 'blocker.resolved', { blockerId })
   }
 

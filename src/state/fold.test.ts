@@ -59,6 +59,28 @@ describe('fold (typed state)', () => {
     expect(openBlockersForItem(state, other)).toHaveLength(0)
   })
 
+  it('applies the linked-done default when resolutionRule is omitted in the event', () => {
+    const ref = track.createItem({ kind: 'feature', title: 'r', workspace: 'ws' })
+    const target = track.createItem({ kind: 'feature', title: 't', workspace: 'ws' })
+    // A raw blocker.opened with NO resolutionRule (e.g. a hand-written or future-source event).
+    store.appendCommand([
+      {
+        id: 'evt-raw',
+        type: 'blocker.opened',
+        aggregate: 'blocker',
+        aggregateId: 'blk-raw',
+        at: '2026-06-03T10:00:00.000Z',
+        by: 'tester',
+        payload: { blockerId: 'blk-raw', targetId: target, kind: 'dependency', ref, reason: 'dep' },
+      },
+    ])
+    expect(fold(store.readAll()).blockers.get('blk-raw')!.open).toBe(true)
+
+    track.setRealization(ref, 'in-progress')
+    track.setRealization(ref, 'done')
+    expect(fold(store.readAll()).blockers.get('blk-raw')!.open).toBe(false)
+  })
+
   it('folds an empty stream to empty state', () => {
     const state = fold([])
     expect(state.items.size).toBe(0)
