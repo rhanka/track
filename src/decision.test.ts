@@ -79,6 +79,19 @@ describe('createDecision (A7)', () => {
     ).toThrow(/cannot target another decision/)
   })
 
+  it('rejects duplicate target ids', () => {
+    const t = feature()
+    expect(() =>
+      track.createDecision({
+        decisionKind: 'orientation',
+        title: 'x',
+        workspace: 'ws',
+        targets: [t, t],
+        dossier: dossier(),
+      }),
+    ).toThrow(/same target twice/)
+  })
+
   it('rejects an unknown target and an empty target list', () => {
     expect(() =>
       track.createDecision({

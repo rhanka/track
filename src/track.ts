@@ -123,6 +123,9 @@ export class Track {
     if (input.targets.length === 0) {
       throw new DomainError('a decision needs at least one target (SPEC §2.5)')
     }
+    if (new Set(input.targets).size !== input.targets.length) {
+      throw new DomainError('a decision cannot list the same target twice')
+    }
     const state = this.state()
     for (const targetId of input.targets) {
       if (state.decisions.has(targetId)) {
@@ -185,6 +188,11 @@ export class Track {
         }
         if (to === 'no-go') {
           const target = state.items.get(targetId)
+          // Reject only NON-terminal targets. A target already done/cancelled/rejected keeps its
+          // realization (we do not retro-reject finished work); its decision blocker is still
+          // resolved above. Rejecting the whole no-go when a target is terminal would make a
+          // decision with an independently-finished (done) target UN-SETTLEABLE forever — strictly
+          // worse. (Reviewer split here; the done-under-no-go semantics are flagged for the user.)
           if (target && (target.realization === 'to-do' || target.realization === 'in-progress')) {
             parts.push({
               aggregate: 'item',
