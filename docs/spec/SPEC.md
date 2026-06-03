@@ -140,7 +140,7 @@ Waiver        { criterionId, reason, by, at }     // an EXCEPTION, not a test re
 **criterionStatus(c)** — ordered cascade over c's evidence (latest `TestRun` per evidence):
 1. `fail`    if any evidence's latest run = `fail`  *(a live fail overrides a waiver)*;
 2. `waived`  else if c has a `Waiver`;
-3. `unknown` else if any evidence has no run;
+3. `unknown` else if c has **no evidence**, or any evidence has no run;
 4. `stale`   else if any evidence's latest run `commit ≠ baselineCommit`;
 5. `pass`    else (all evidence latest = `pass` at baseline).
 

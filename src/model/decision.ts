@@ -5,6 +5,7 @@ import {
   type Link,
   type Realization,
 } from './item.js'
+import type { PriorityAssessment } from './priority.js'
 
 export type DecisionKind = Gate // a Decision's kind == the gate it settles (SPEC §2.10)
 export type Outcome = 'pending' | 'go' | 'no-go' | 'deferred'
@@ -31,7 +32,7 @@ export interface Dossier {
   selectedOptionId?: string
   recommendation?: { optionId: string; rationale: string }
   resultingSpecChange?: string
-  decisionEvaluation?: unknown // FROZEN PriorityAssessment snapshot (typed in Lot 4b)
+  decisionEvaluation?: PriorityAssessment // FROZEN priority snapshot at decision time
 }
 
 /** A Decision is a specialized Item (kind:"decision"): only realization (its prep) + outcome (SPEC §2.5). */

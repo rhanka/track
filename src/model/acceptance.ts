@@ -5,8 +5,8 @@ export type RunResult = 'pass' | 'fail'
 
 /** Computed per-criterion status (SPEC §2.4). */
 export type CriterionStatus = 'fail' | 'waived' | 'unknown' | 'stale' | 'pass'
-/** Computed per-item acceptance (SPEC §2.4). `n/a` is structural (decisions have no criteria). */
-export type AcceptanceStatus = CriterionStatus
+/** Computed per-item acceptance (SPEC §2.4). `n/a` for a Decision (no acceptance axis). */
+export type AcceptanceStatus = CriterionStatus | 'n/a'
 
 export interface TestRun {
   evidenceId: string

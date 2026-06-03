@@ -332,22 +332,24 @@ export class Track {
     const state = this.state()
     const parts: EventPart[] = []
     for (const entry of parseRunReport(content, format)) {
-      const evidence = [...state.evidence.values()].find((e) => e.locator === entry.locator)
-      if (!evidence) continue
-      const criterion = state.criteria.get(evidence.criterionId)
-      if (!criterion) continue
-      parts.push({
-        aggregate: 'item',
-        aggregateId: criterion.itemId,
-        type: 'acceptance.run',
-        payload: {
-          evidenceId: evidence.id,
-          commit: run.commit,
-          env: run.env,
-          runner: run.runner,
-          result: entry.result,
-        },
-      })
+      // A locator may be shared by several evidence — record the run for ALL of them.
+      for (const evidence of state.evidence.values()) {
+        if (evidence.locator !== entry.locator) continue
+        const criterion = state.criteria.get(evidence.criterionId)
+        if (!criterion) continue
+        parts.push({
+          aggregate: 'item',
+          aggregateId: criterion.itemId,
+          type: 'acceptance.run',
+          payload: {
+            evidenceId: evidence.id,
+            commit: run.commit,
+            env: run.env,
+            runner: run.runner,
+            result: entry.result,
+          },
+        })
+      }
     }
     if (parts.length === 0) return 0
     this.emitBatch(parts)

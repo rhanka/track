@@ -37,13 +37,15 @@ export function serializeState(state: State): SerializedState {
   }
 }
 
-export function deserializeState(serialized: SerializedState): State {
+export function deserializeState(serialized: Partial<SerializedState>): State {
+  // Tolerate older (pre-Lot-4) snapshots missing newer collections — they are non-authoritative
+  // and rebuildable, so an absent array defaults to empty rather than crashing.
   return {
-    items: new Map(serialized.items.map((i) => [i.id, i])),
-    decisions: new Map(serialized.decisions.map((d) => [d.id, d])),
-    blockers: new Map(serialized.blockers.map((b) => [b.id, b])),
-    criteria: new Map(serialized.criteria.map((c) => [c.id, c])),
-    evidence: new Map(serialized.evidence.map((e) => [e.id, e])),
+    items: new Map((serialized.items ?? []).map((i) => [i.id, i])),
+    decisions: new Map((serialized.decisions ?? []).map((d) => [d.id, d])),
+    blockers: new Map((serialized.blockers ?? []).map((b) => [b.id, b])),
+    criteria: new Map((serialized.criteria ?? []).map((c) => [c.id, c])),
+    evidence: new Map((serialized.evidence ?? []).map((e) => [e.id, e])),
   }
 }
 

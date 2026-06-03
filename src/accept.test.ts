@@ -143,4 +143,45 @@ describe('accept run --from ingestion', () => {
     track.ingestRuns(json, 'json', { commit: 'c1', env: 'ci', runner: 'jest' })
     expect(criterionStatus(track.state(), c, 'c1')).toBe('fail')
   })
+
+  it('does NOT record a skipped/unknown JSON status as a pass', () => {
+    const i = feature()
+    const c = track.addCriterion(i, 'x')
+    track.linkEvidence(c, 'unit', 'loc1')
+    const json = JSON.stringify({ results: [{ locator: 'loc1', status: 'skipped' }] })
+    expect(track.ingestRuns(json, 'json', { commit: 'c1', env: 'ci', runner: 'jest' })).toBe(0)
+    expect(criterionStatus(track.state(), c, 'c1')).toBe('unknown')
+  })
+
+  it('records a run for ALL evidence sharing a locator', () => {
+    const c1 = track.addCriterion(feature(), 'a')
+    track.linkEvidence(c1, 'unit', 'shared')
+    const c2 = track.addCriterion(feature(), 'b')
+    track.linkEvidence(c2, 'unit', 'shared')
+    const json = JSON.stringify({ results: [{ locator: 'shared', result: 'pass' }] })
+    expect(track.ingestRuns(json, 'json', { commit: 'c1', env: 'ci', runner: 'jest' })).toBe(2)
+    expect(criterionStatus(track.state(), c1, 'c1')).toBe('pass')
+    expect(criterionStatus(track.state(), c2, 'c1')).toBe('pass')
+  })
+
+  it('JUnit: XML-like text inside CDATA is not misread as a failure', () => {
+    const i = feature()
+    const c = track.addCriterion(i, 'x')
+    track.linkEvidence(c, 'unit', 'loc')
+    const junit = `<testsuite><testcase name="loc"><system-out><![CDATA[log: <failure> in output]]></system-out></testcase></testsuite>`
+    track.ingestRuns(junit, 'junit', { commit: 'c1', env: 'ci', runner: 'junit' })
+    expect(criterionStatus(track.state(), c, 'c1')).toBe('pass')
+  })
+
+  it('acceptanceStatus is n/a for a decision', () => {
+    const t = feature()
+    const d = track.createDecision({
+      decisionKind: 'orientation',
+      title: 'x',
+      workspace: 'ws',
+      targets: [t],
+      dossier: { context: '', options: [], qa: [] },
+    })
+    expect(acceptanceStatus(track.state(), d, 'c1')).toBe('n/a')
+  })
 })

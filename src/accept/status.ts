@@ -35,6 +35,7 @@ export function acceptanceStatus(
   itemId: ItemId,
   baselineCommit: string,
 ): AcceptanceStatus {
+  if (state.decisions.has(itemId)) return 'n/a' // a Decision has no acceptance axis (SPEC §2.4/§2.5)
   const criteria = [...state.criteria.values()].filter((c) => c.itemId === itemId)
   if (criteria.length === 0) return 'unknown'
   const statuses = criteria.map((c) => criterionStatus(state, c.id, baselineCommit))
