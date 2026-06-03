@@ -2,6 +2,14 @@ import { ulid } from 'ulid'
 
 import { EventStore } from './events/store.js'
 import type { ActorId, Aggregate, CommandEvent, EventType, Ulid } from './events/types.js'
+import { parseRunReport, type RunReportFormat } from './accept/ingest.js'
+import type { EvidenceKind, RunResult } from './model/acceptance.js'
+import {
+  WSJF_SCHEME_VERSION,
+  wsjfScore,
+  type PriorityAssessment,
+  type WsjfInputs,
+} from './model/priority.js'
 import {
   assertManualResolve,
   type BlockerKind,
@@ -266,6 +274,110 @@ export class Track {
     assertManualResolve(blocker)
     if (!blocker.open) throw new DomainError(`blocker ${blockerId} is already resolved`)
     this.emit('blocker', blockerId, 'blocker.resolved', { blockerId })
+  }
+
+  // ---- Acceptance (SPEC §2.4) ----
+
+  /** Add an acceptance criterion to a non-decision item (A3 forbids criteria on a Decision). */
+  addCriterion(itemId: ItemId, statement: string): string {
+    const state = this.state()
+    if (state.decisions.has(itemId)) {
+      throw new DomainError(`cannot add an acceptance criterion to a decision (${itemId}) [A3]`)
+    }
+    if (!state.items.has(itemId)) throw new DomainError(`unknown item ${itemId}`)
+    const criterionId = this.newId()
+    this.emit('item', itemId, 'acceptance.criterion.added', { criterionId, statement })
+    return criterionId
+  }
+
+  linkEvidence(criterionId: string, kind: EvidenceKind, locator: string): string {
+    const criterion = this.state().criteria.get(criterionId)
+    if (!criterion) throw new DomainError(`unknown criterion ${criterionId}`)
+    const evidenceId = this.newId()
+    this.emit('item', criterion.itemId, 'acceptance.evidence.linked', {
+      evidenceId,
+      criterionId,
+      kind,
+      locator,
+    })
+    return evidenceId
+  }
+
+  recordRun(
+    evidenceId: string,
+    run: { commit: string; env: string; runner: string; result: RunResult },
+  ): void {
+    this.emit('item', this.evidenceOwner(evidenceId), 'acceptance.run', { evidenceId, ...run })
+  }
+
+  waive(criterionId: string, reason: string): void {
+    const criterion = this.state().criteria.get(criterionId)
+    if (!criterion) throw new DomainError(`unknown criterion ${criterionId}`)
+    this.emit('item', criterion.itemId, 'acceptance.waived', {
+      criterionId,
+      reason,
+      by: this.actor,
+    })
+  }
+
+  /**
+   * Ingest a test report (`accept run --from`): match each entry to an evidence by `locator` and
+   * emit one `acceptance.run` per match as a single atomic batch. Returns the number of runs.
+   */
+  ingestRuns(
+    content: string,
+    format: RunReportFormat,
+    run: { commit: string; env: string; runner: string },
+  ): number {
+    const state = this.state()
+    const parts: EventPart[] = []
+    for (const entry of parseRunReport(content, format)) {
+      const evidence = [...state.evidence.values()].find((e) => e.locator === entry.locator)
+      if (!evidence) continue
+      const criterion = state.criteria.get(evidence.criterionId)
+      if (!criterion) continue
+      parts.push({
+        aggregate: 'item',
+        aggregateId: criterion.itemId,
+        type: 'acceptance.run',
+        payload: {
+          evidenceId: evidence.id,
+          commit: run.commit,
+          env: run.env,
+          runner: run.runner,
+          result: entry.result,
+        },
+      })
+    }
+    if (parts.length === 0) return 0
+    this.emitBatch(parts)
+    return parts.length
+  }
+
+  // ---- Prioritization (SPEC §2.8) ----
+
+  /** Append a WSJF priority assessment; the latest becomes the item's live `priority`. */
+  assessPriority(itemId: ItemId, inputs: WsjfInputs): PriorityAssessment {
+    if (!this.state().items.has(itemId)) throw new DomainError(`unknown item ${itemId}`)
+    const assessment: PriorityAssessment = {
+      itemId,
+      schemeId: 'wsjf',
+      schemeVersion: WSJF_SCHEME_VERSION,
+      inputs: { ...inputs },
+      score: wsjfScore(inputs),
+      at: this.clock(),
+    }
+    this.emit('item', itemId, 'priority.assessed', { ...assessment })
+    return assessment
+  }
+
+  private evidenceOwner(evidenceId: string): ItemId {
+    const state = this.state()
+    const evidence = state.evidence.get(evidenceId)
+    if (!evidence) throw new DomainError(`unknown evidence ${evidenceId}`)
+    const criterion = state.criteria.get(evidence.criterionId)
+    if (!criterion) throw new DomainError(`evidence ${evidenceId} references an unknown criterion`)
+    return criterion.itemId
   }
 
   private requireItem(itemId: ItemId): ItemState {

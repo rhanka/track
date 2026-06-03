@@ -1,4 +1,10 @@
 import type { TrackEvent } from '../events/types.js'
+import type {
+  CriterionState,
+  EvidenceKind,
+  EvidenceState,
+  RunResult,
+} from '../model/acceptance.js'
 import type { BlockerOpenedPayload, BlockerState } from '../model/blocker.js'
 import type {
   DecisionCreatedPayload,
@@ -7,6 +13,7 @@ import type {
   Outcome,
 } from '../model/decision.js'
 import { isSettled } from '../model/decision.js'
+import type { PriorityAssessment } from '../model/priority.js'
 import type {
   BlockerId,
   Disposition,
@@ -20,8 +27,8 @@ import type {
 
 /**
  * Materialized state (SPEC §2). The fold *mechanism* (replay in stream order, per-aggregate by
- * `seq`) is the frozen part (Lot 1); the *shape* below grows per lot — acceptance/priority are
- * layered on in Lot 4.
+ * `seq`) is the frozen part (Lot 1); the *shape* below grows per lot. Acceptance *status* is a
+ * pure function of this state + a baselineCommit (see `accept/`), not stored here.
  *
  * Precondition: `events` is a VALIDATED stream (the store runs `validate` before every append).
  */
@@ -29,22 +36,29 @@ export interface State {
   items: Map<ItemId, ItemState> // non-decision items
   decisions: Map<ItemId, DecisionState>
   blockers: Map<BlockerId, BlockerState>
+  criteria: Map<string, CriterionState>
+  evidence: Map<string, EvidenceState>
+}
+
+function emptyState(): State {
+  return {
+    items: new Map(),
+    decisions: new Map(),
+    blockers: new Map(),
+    criteria: new Map(),
+    evidence: new Map(),
+  }
 }
 
 export function fold(events: ReadonlyArray<TrackEvent>): State {
-  const items = new Map<ItemId, ItemState>()
-  const decisions = new Map<ItemId, DecisionState>()
-  const blockers = new Map<BlockerId, BlockerState>()
-
+  const state = emptyState()
   for (const event of events) {
-    applyEvent(items, decisions, blockers, event)
+    applyEvent(state, event)
   }
-
-  for (const blocker of blockers.values()) {
-    blocker.open = isOpen(blocker, items)
+  for (const blocker of state.blockers.values()) {
+    blocker.open = isOpen(blocker, state.items)
   }
-
-  return { items, decisions, blockers }
+  return state
 }
 
 /** Open blockers across the whole backlog (SPEC §2.9; report AWAITED bucket, §7). */
@@ -57,12 +71,7 @@ export function openBlockersForItem(state: State, itemId: ItemId): BlockerState[
   return openBlockers(state).filter((b) => b.targetId === itemId)
 }
 
-function applyEvent(
-  items: Map<ItemId, ItemState>,
-  decisions: Map<ItemId, DecisionState>,
-  blockers: Map<BlockerId, BlockerState>,
-  event: TrackEvent,
-): void {
+function applyEvent(state: State, event: TrackEvent): void {
   switch (event.type) {
     case 'item.created': {
       const payload = event.payload as unknown as ItemCreatedPayload
@@ -79,7 +88,7 @@ function applyEvent(
         ...(payload.body !== undefined ? { body: payload.body } : {}),
         ...(payload.links !== undefined ? { links: payload.links } : {}),
       }
-      items.set(item.id, item)
+      state.items.set(item.id, item)
       break
     }
 
@@ -100,31 +109,30 @@ function applyEvent(
         ...(payload.body !== undefined ? { body: payload.body } : {}),
         ...(payload.links !== undefined ? { links: payload.links } : {}),
       }
-      decisions.set(decision.id, decision)
+      state.decisions.set(decision.id, decision)
       break
     }
 
     case 'spec.transition': {
-      const item = items.get(event.aggregateId)
+      const item = state.items.get(event.aggregateId)
       if (item) item.specStatus = (event.payload as { to: SpecStatus }).to
       break
     }
 
     case 'realization.transition': {
-      const target = items.get(event.aggregateId) ?? decisions.get(event.aggregateId)
+      const target = state.items.get(event.aggregateId) ?? state.decisions.get(event.aggregateId)
       if (target) target.realization = (event.payload as { to: Realization }).to
       break
     }
 
     case 'decision.outcome': {
-      const decision = decisions.get(event.aggregateId)
+      const decision = state.decisions.get(event.aggregateId)
       if (!decision) break
       const to = (event.payload as { to: Outcome }).to
       decision.outcome = to // legality is checked at append; fold takes the latest in stream order
       if (isSettled(to)) {
-        // auto-complete the gate disposition on each target (SPEC §2.10; latest settle wins)
         for (const targetId of decision.targets) {
-          const target = items.get(targetId)
+          const target = state.items.get(targetId)
           if (target) target.disposition[decision.decisionKind] = 'completed'
         }
       }
@@ -133,14 +141,77 @@ function applyEvent(
 
     case 'decision.disposition': {
       const payload = event.payload as { itemId: ItemId; gate: Gate; disposition: Disposition }
-      const item = items.get(payload.itemId)
+      const item = state.items.get(payload.itemId)
       if (item) item.disposition[payload.gate] = payload.disposition
       break
     }
 
     case 'dossier.revised': {
-      const decision = decisions.get(event.aggregateId)
+      const decision = state.decisions.get(event.aggregateId)
       if (decision) decision.dossier = (event.payload as { dossier: Dossier }).dossier
+      break
+    }
+
+    case 'acceptance.criterion.added': {
+      const payload = event.payload as { criterionId: string; statement: string }
+      state.criteria.set(payload.criterionId, {
+        id: payload.criterionId,
+        itemId: event.aggregateId,
+        statement: payload.statement,
+      })
+      break
+    }
+
+    case 'acceptance.evidence.linked': {
+      const payload = event.payload as {
+        evidenceId: string
+        criterionId: string
+        kind: EvidenceKind
+        locator: string
+      }
+      state.evidence.set(payload.evidenceId, {
+        id: payload.evidenceId,
+        criterionId: payload.criterionId,
+        kind: payload.kind,
+        locator: payload.locator,
+      })
+      break
+    }
+
+    case 'acceptance.run': {
+      const payload = event.payload as {
+        evidenceId: string
+        commit: string
+        env: string
+        runner: string
+        result: RunResult
+      }
+      const evidence = state.evidence.get(payload.evidenceId)
+      // latest run wins (stream order)
+      if (evidence) {
+        evidence.latestRun = {
+          evidenceId: payload.evidenceId,
+          commit: payload.commit,
+          env: payload.env,
+          runner: payload.runner,
+          result: payload.result,
+          at: event.at,
+        }
+      }
+      break
+    }
+
+    case 'acceptance.waived': {
+      const payload = event.payload as { criterionId: string; reason: string; by: string }
+      const criterion = state.criteria.get(payload.criterionId)
+      if (criterion) {
+        criterion.waiver = {
+          criterionId: payload.criterionId,
+          reason: payload.reason,
+          by: payload.by,
+          at: event.at,
+        }
+      }
       break
     }
 
@@ -160,12 +231,12 @@ function applyEvent(
         ...(resolutionRule !== undefined ? { resolutionRule } : {}),
         ...(payload.owner !== undefined ? { owner: payload.owner } : {}),
       }
-      blockers.set(blocker.id, blocker)
+      state.blockers.set(blocker.id, blocker)
       break
     }
 
     case 'blocker.resolved': {
-      const blocker = blockers.get(event.aggregateId)
+      const blocker = state.blockers.get(event.aggregateId)
       if (blocker) {
         blocker.resolvedByEvent = true
         blocker.resolvedAt = event.at
@@ -173,8 +244,15 @@ function applyEvent(
       break
     }
 
+    case 'priority.assessed': {
+      const payload = event.payload as unknown as PriorityAssessment
+      const item = state.items.get(event.aggregateId)
+      if (item) item.priority = payload // latest in stream order = live priority (SPEC §2.8)
+      break
+    }
+
     default:
-      // acceptance / priority events are folded in Lot 4.
+      // branch.imported provenance is folded in Lot 6.
       break
   }
 }

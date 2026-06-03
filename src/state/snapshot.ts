@@ -2,6 +2,7 @@ import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 
 import { join } from 'node:path'
 
 import type { TrackEvent } from '../events/types.js'
+import type { CriterionState, EvidenceState } from '../model/acceptance.js'
 import type { BlockerState } from '../model/blocker.js'
 import type { DecisionState } from '../model/decision.js'
 import type { ItemState } from '../model/item.js'
@@ -16,6 +17,8 @@ export interface SerializedState {
   items: ItemState[]
   decisions: DecisionState[]
   blockers: BlockerState[]
+  criteria: CriterionState[]
+  evidence: EvidenceState[]
 }
 
 export interface Snapshot {
@@ -29,6 +32,8 @@ export function serializeState(state: State): SerializedState {
     items: [...state.items.values()].map((i) => structuredClone(i)),
     decisions: [...state.decisions.values()].map((d) => structuredClone(d)),
     blockers: [...state.blockers.values()].map((b) => structuredClone(b)),
+    criteria: [...state.criteria.values()].map((c) => structuredClone(c)),
+    evidence: [...state.evidence.values()].map((e) => structuredClone(e)),
   }
 }
 
@@ -37,6 +42,8 @@ export function deserializeState(serialized: SerializedState): State {
     items: new Map(serialized.items.map((i) => [i.id, i])),
     decisions: new Map(serialized.decisions.map((d) => [d.id, d])),
     blockers: new Map(serialized.blockers.map((b) => [b.id, b])),
+    criteria: new Map(serialized.criteria.map((c) => [c.id, c])),
+    evidence: new Map(serialized.evidence.map((e) => [e.id, e])),
   }
 }
 

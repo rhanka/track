@@ -33,3 +33,20 @@ export {
   type Outcome,
   type QAEntry,
 } from './decision.js'
+export {
+  type AcceptanceStatus,
+  type CriterionState,
+  type CriterionStatus,
+  type EvidenceKind,
+  type EvidenceState,
+  type RunResult,
+  type TestRun,
+  type Waiver,
+} from './acceptance.js'
+export {
+  WSJF_SCHEME_VERSION,
+  wsjfScore,
+  type PriorityAssessment,
+  type SchemeId,
+  type WsjfInputs,
+} from './priority.js'

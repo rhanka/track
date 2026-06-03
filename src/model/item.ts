@@ -1,4 +1,5 @@
 import type { Ulid } from '../events/types.js'
+import type { PriorityAssessment } from './priority.js'
 
 export type ItemId = Ulid
 export type BlockerId = Ulid
@@ -29,6 +30,7 @@ export interface ItemState {
   specStatus: SpecStatus | 'n/a' // `n/a` for kind:"decision" (SPEC §2.2)
   realization: Realization
   disposition: Record<Gate, Disposition> // per-gate disposition (SPEC §2.10)
+  priority?: PriorityAssessment // latest assessment, live sort key (SPEC §2.8)
   parentId?: ItemId
   sourceKey?: string
   body?: string
