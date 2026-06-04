@@ -252,7 +252,8 @@ function applyEvent(state: State, event: TrackEvent): void {
     }
 
     default:
-      // branch.imported provenance is folded in Lot 6.
+      // `branch.imported` carries provenance only — not folded into state; read raw from the
+      // event log by the v2.0 read contract (TrackReader.branchProvenance / freshness).
       break
   }
 }

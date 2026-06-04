@@ -32,7 +32,8 @@
     "track": "dist/cli/index.js"
   },
   "exports": {
-    ".": "./dist/index.js"
+    ".": "./dist/index.js",
+    "./read": "./dist/read/index.js"
   },
   "files": [
     "dist"

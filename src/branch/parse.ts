@@ -55,6 +55,15 @@ function deriveBranchSlug(content: string, title: string, fileSlug: string | und
 }
 
 /**
+ * The `BR-NN` id carried by a BRANCH.md, if any. It is the ONLY branch identity that import and a
+ * later reader provably agree on (brId wins over fileSlug and title in `deriveBranchSlug`). The
+ * v2.0 read contract uses its presence to decide whether freshness is authoritative.
+ */
+export function branchId(content: string): string | undefined {
+  return BR_ID.exec(content)?.[0]
+}
+
+/**
  * Parse the stable `BRANCH_TEMPLATE` sections (SPEC §5): `# Feature:` → title; `## Objective` +
  * `## Scope` → body; `## Plan / Todo (lot-based)` → lots (`- [x] **Lot N — slug**`, any checkbox
  * marker); UAT checkboxes nested under a lot (text contains "UAT") → criteria. Gate sub-checkboxes

@@ -8,3 +8,5 @@ export * from './report/index.js'
 export * from './branch/index.js'
 export { Track, type ImportResult, type OpenBlockerInput, type TrackOptions } from './track.js'
 export { runCli, type CliIO } from './cli/index.js'
+// Skill-facing, versioned, read-only contract (M2a, Lot v2.0).
+export * from './read/index.js'

@@ -39,7 +39,7 @@ Recommendation: **commit M2a now**; M2b after D3; M3/M4/M5 are design-doc-first.
 
 ### Lot v2.0 — Skill-consumption + frozen read contract
 - **Deliver:** a **curated public read API** (not today's `export *`, which leaks internals) with an explicit `contractVersion` and an **additive-only** evolution rule; `scope-check`/`lot-gate` consume it (`report`/`query`/`validate`) **as a read overlay on `BRANCH.md`, which stays master** — lot-gate mutations remain on `BRANCH.md` only, track is never written by skills.
-- **Stale-authority guard (review #5):** skill consumption MUST verify the sidecar is fresh — require the latest `branch.imported` `sourceHash`/locator to match the current `BRANCH.md`; **fail closed** on stale import or `validate` desync (never let a stale sidecar become de-facto master).
+- **Stale-authority guard (review #5):** skill consumption MUST verify the sidecar is fresh — compare the **structural signature** of the current `BRANCH.md` (per-lot `done`, per-UAT `passed`, branchSlug; prose/title/order-invariant) against the latest valid `branch.imported.structureHash` for the locator; **fail closed** on stale, absent, malformed-latest-stamp, or `validate` desync (never let a stale sidecar become de-facto master). The latest stamp is authoritative — a malformed latest never falls back to an older one.
 - **Tests:** contract **snapshot** test (breaking field change fails CI); golden fixture → stable JSON; a **stale-sidecar fixture fails closed**; zero writes to track from skills; `BRANCH.md` byte-hash unchanged.
 - **Gate:** curated surface + version stamped; stale-guard proven; snapshot green.
 
@@ -132,7 +132,7 @@ Per-lot unit + the MVP golden `.track/events.jsonl` extended per milestone. New 
 ## Risks
 
 - **Contract drift across CLI/MCP** → single command layer (no git/fs) + normalized-parity test (v2.3 gate).
-- **Stale sidecar usurps BRANCH.md** → fail-closed `sourceHash` guard (v2.0).
+- **Stale sidecar usurps BRANCH.md** → fail-closed structural-signature guard, latest-stamp-authoritative (v2.0).
 - **MCP write mis-attribution** → caller-supplied actor, no `'system'` default (D3/M2b gate).
 - **M4 silently breaks the frozen chain** → reclassified as a contract round; no code before a Lot-1-grade design doc answers the cross-stream-order question.
 - **h2a coupling stalls on cross-repo evolutions** (M3) → sidecar stays optional; standalone path always green; track frames canonical.

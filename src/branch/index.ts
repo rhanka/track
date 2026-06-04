@@ -6,3 +6,5 @@ export {
   type ParsedLot,
   type ParsedUat,
 } from './parse.js'
+export { branchId } from './parse.js'
+export { branchSignature } from './signature.js'

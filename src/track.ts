@@ -4,6 +4,7 @@ import { EventStore } from './events/store.js'
 import type { ActorId, Aggregate, CommandEvent, EventType, Ulid } from './events/types.js'
 import { parseRunReport, type RunReportFormat } from './accept/ingest.js'
 import { parseBranch, slugify } from './branch/parse.js'
+import { branchSignature } from './branch/signature.js'
 import { computeHash } from './events/canonical.js'
 import {
   buildReport,
@@ -516,6 +517,9 @@ export class Track {
         locator: opts.locator,
         branchSlug: parsed.branchSlug,
         sourceHash,
+        // Structural signature of the reconciled projection — drives v2.0 freshness (read contract).
+        // Pass the RESOLVED branchSlug (fileSlug-aware) so the stamp matches the real sourceKeys.
+        structureHash: branchSignature(content, parsed.branchSlug),
       })
     }
 
