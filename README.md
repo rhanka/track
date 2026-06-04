@@ -67,6 +67,11 @@ track branch import <plan/NN-BRANCH_*.md> [--commit <sha>]
 
 The event log is **append-only**; each event carries `contentHash = sha256(canonicalize(core))` and a positional `prevHash` chain + per-aggregate `seq` (faithful to the h2a journal). `track validate` recomputes the chain, the per-aggregate sequence, atomic-batch completeness, and a `head.json` truncation anchor. The contract was frozen after multi-round adversarial review — see [`docs/reviews/lot1-FROZEN.md`](./docs/reviews/lot1-FROZEN.md).
 
+## Read contract (skills) & CI (M2a)
+
+- **Read contract** — skills (`scope-check`/`lot-gate`) consume the versioned, read-only surface at `@sentropic/track/read`: `new TrackReader('.track/events.jsonl')` exposes `report`/`query`/`validate`/`branchProvenance`/`freshness`, plus a fail-closed `requireFresh(branchContent, locator)` that throws unless the sidecar is structurally current with `BRANCH.md` **and** integrity-intact — so a stale or tampered sidecar can never be trusted as the backlog (`BRANCH.md` stays master).
+- **CI → acceptance** — `accept run --from <report> --format junit|json --commit $SHA` ingests test results; ingestion is **idempotent** (dedup on `evidenceId+commit+env+runner+result`), so re-running a commit never multiplies events. A reusable GitHub Actions workflow ships at [`.github/workflows/track-acceptance.yml`](./.github/workflows/track-acceptance.yml).
+
 ## Library
 
 ```ts

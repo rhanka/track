@@ -44,7 +44,7 @@ Recommendation: **commit M2a now**; M2b after D3; M3/M4/M5 are design-doc-first.
 - **Gate:** curated surface + version stamped; stale-guard proven; snapshot green.
 
 ### Lot v2.1 — CI → `acceptance.run` bridge (with idempotency as a real deliverable)
-- **Deliver:** a GitHub Actions reusable step: run suite → emit `junit|json` → `track accept run --from … --commit $GITHUB_SHA`. **New deliverable (not existing behavior):** ingest **idempotency** — today `ingestRuns` appends unconditionally; add a dedupe key **`evidenceId + commit + env + runner`** so re-runs don't multiply events. Resolves INTENTION Open-Q 3, SPEC §10.
+- **Deliver:** a GitHub Actions reusable step: run suite → emit `junit|json` → `track accept run --from … --commit $GITHUB_SHA`. **New deliverable (not existing behavior):** ingest **idempotency** — today `ingestRuns` appends unconditionally; skip a candidate run only when its result **equals the LATEST recorded result for `(evidenceId, commit, env, runner)`** (not a whole-history 5-tuple, which would drop a flaky test's recovery, nor the bare 4-tuple, which would drop the first result change). A true re-ingest is then a no-op, every genuine transition (incl. `pass→fail→pass`) is recorded, and `latestRun` never goes false-green on `fail→pass→fail`. Resolves INTENTION Open-Q 3, SPEC §10.
 - **Tests:** junit + json fixtures flip criteria to `pass`/`fail`; `stale` vs `baselineCommit`; **re-ingest leaves event count stable** (idempotency); dogfood on **track's own CI**.
 - **Gate:** idempotency test green; format restricted to `junit|json` (or TAP added as explicit scope); contract unchanged.
 

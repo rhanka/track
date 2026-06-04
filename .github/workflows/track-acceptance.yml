@@ -1,0 +1,71 @@
+# Reusable workflow (Lot v2.1) — push CI test results into a track sidecar as acceptance runs.
+#
+# A consumer repo calls this after its test job, having committed a `.track/events.jsonl` whose
+# evidence `locator`s match the report's test names. Ingestion is IDEMPOTENT: a run is skipped
+# unless its result differs from the latest recorded result for (evidenceId, commit, env, runner),
+# so re-runs of the same commit never multiply events while genuine flips are still recorded.
+#
+# PRECONDITIONS / CAVEATS:
+#  - The checkout MUST contain `.track/events.jsonl` with evidence whose locators match the report's
+#    test names. A missing sidecar or locator drift ingests 0 runs and the step still passes
+#    (silent green) — verify the printed `ingested N run(s)` count, or fail the job if N is 0.
+#  - This step ingests into the CHECKOUT's sidecar; it does NOT persist it. To keep the feed
+#    durable, add a commit+push (or artifact upload) step after this one.
+#  - `uses:` references the GitHub repo (`rhanka/track`); the npx call uses the npm package
+#    (`@sentropic/track`) — the two names intentionally differ.
+#
+# Usage in a consumer workflow:
+#   jobs:
+#     acceptance:
+#       needs: test
+#       uses: rhanka/track/.github/workflows/track-acceptance.yml@main
+#       with:
+#         report: reports/junit.xml
+#         format: junit
+name: track-acceptance
+
+on:
+  workflow_call:
+    inputs:
+      report:
+        description: Path to the test report to ingest (relative to the repo root).
+        required: true
+        type: string
+      format:
+        description: Report format — junit | json (the two formats track ingests).
+        required: false
+        default: junit
+        type: string
+      env:
+        description: Environment label recorded on each run.
+        required: false
+        default: ci
+        type: string
+      runner:
+        description: Runner label recorded on each run.
+        required: false
+        default: ci
+        type: string
+      track-version:
+        description: '@sentropic/track version/spec to run via npx.'
+        required: false
+        default: latest
+        type: string
+
+jobs:
+  ingest:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - name: Ingest test results into the track sidecar
+        run: >-
+          npx -y @sentropic/track@${{ inputs.track-version }}
+          accept run
+          --from "${{ inputs.report }}"
+          --format "${{ inputs.format }}"
+          --commit "${{ github.sha }}"
+          --env "${{ inputs.env }}"
+          --runner "${{ inputs.runner }}"

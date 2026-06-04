@@ -354,26 +354,59 @@ export class Track {
     run: { commit: string; env: string; runner: string },
   ): number {
     const state = this.state()
-    const parts: EventPart[] = []
+    // Idempotency (v2.1). A report asserts ONE result per test, so we (1) collapse intra-report
+    // duplicates for the same (evidenceId, commit, env, runner) to the LAST asserted result, then
+    // (2) emit a run only when that result differs from the LATEST already in the log for the tuple.
+    // ⇒ a true re-ingest (even of a malformed `[pass, fail]` same-test report) is a no-op; a genuine
+    // cross-report transition — incl. a flaky recovery pass→fail→pass — is recorded; `latestRun`
+    // never goes false-green on fail→pass→fail.
+    const tupleKey = (evidenceId: string, commit: string, env: string, runner: string): string =>
+      JSON.stringify([evidenceId, commit, env, runner]) // collision-proof key (one shared builder)
+
+    // (a) latest result per tuple already in the log (replayed in order; later overwrites earlier).
+    const logLatest = new Map<string, RunResult>()
+    for (const e of this.store.readAll()) {
+      if (e.type !== 'acceptance.run') continue
+      const p = e.payload as Record<string, unknown>
+      const { evidenceId, commit, env, runner, result } = p
+      if (
+        typeof evidenceId !== 'string' ||
+        typeof commit !== 'string' ||
+        typeof env !== 'string' ||
+        typeof runner !== 'string' ||
+        (result !== 'pass' && result !== 'fail')
+      ) {
+        continue // malformed acceptance.run payload — ignore for dedup
+      }
+      logLatest.set(tupleKey(evidenceId, commit, env, runner), result)
+    }
+
+    // (b) collapse THIS report to the last result per tuple, preserving first-seen order.
+    const reportResult = new Map<string, RunResult>()
+    const order: Array<{ key: string; itemId: ItemId; evidenceId: string }> = []
     for (const entry of parseRunReport(content, format)) {
-      // A locator may be shared by several evidence — record the run for ALL of them.
+      // A locator may be shared by several evidence — one run per evidence.
       for (const evidence of state.evidence.values()) {
         if (evidence.locator !== entry.locator) continue
         const criterion = state.criteria.get(evidence.criterionId)
         if (!criterion) continue
-        parts.push({
-          aggregate: 'item',
-          aggregateId: criterion.itemId,
-          type: 'acceptance.run',
-          payload: {
-            evidenceId: evidence.id,
-            commit: run.commit,
-            env: run.env,
-            runner: run.runner,
-            result: entry.result,
-          },
-        })
+        const key = tupleKey(evidence.id, run.commit, run.env, run.runner)
+        if (!reportResult.has(key)) order.push({ key, itemId: criterion.itemId, evidenceId: evidence.id })
+        reportResult.set(key, entry.result) // last assertion wins within the report
       }
+    }
+
+    // (c) emit only the tuples whose asserted result changes the log.
+    const parts: EventPart[] = []
+    for (const { key, itemId, evidenceId } of order) {
+      const result = reportResult.get(key)!
+      if (logLatest.get(key) === result) continue // unchanged vs log → idempotent skip
+      parts.push({
+        aggregate: 'item',
+        aggregateId: itemId,
+        type: 'acceptance.run',
+        payload: { evidenceId, commit: run.commit, env: run.env, runner: run.runner, result },
+      })
     }
     if (parts.length === 0) return 0
     this.emitBatch(parts)

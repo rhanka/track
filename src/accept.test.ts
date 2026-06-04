@@ -185,3 +185,95 @@ describe('accept run --from ingestion', () => {
     expect(acceptanceStatus(track.state(), d, 'c1')).toBe('n/a')
   })
 })
+
+describe('accept run --from — ingest idempotency (v2.1)', () => {
+  function evidenceOnLoc1(): string {
+    const c = track.addCriterion(feature(), 'x')
+    track.linkEvidence(c, 'unit', 'loc1')
+    return c
+  }
+  const report = (result: 'pass' | 'fail' = 'pass'): string =>
+    JSON.stringify({ results: [{ locator: 'loc1', result }] })
+  const eventCount = (): number =>
+    new EventStore(join(dir, '.track', 'events.jsonl')).readAll().length
+
+  it('re-ingesting an identical report is a no-op (no new events)', () => {
+    const c = evidenceOnLoc1()
+    expect(track.ingestRuns(report('pass'), 'json', run('pass'))).toBe(1)
+    const after = eventCount()
+    expect(track.ingestRuns(report('pass'), 'json', run('pass'))).toBe(0)
+    expect(eventCount()).toBe(after)
+    expect(criterionStatus(track.state(), c, 'c1')).toBe('pass')
+  })
+
+  it('records a genuine result change for the same commit (latest wins)', () => {
+    const c = evidenceOnLoc1()
+    expect(track.ingestRuns(report('pass'), 'json', run('pass'))).toBe(1)
+    expect(track.ingestRuns(report('fail'), 'json', run('fail'))).toBe(1) // different result → new run
+    expect(criterionStatus(track.state(), c, 'c1')).toBe('fail')
+  })
+
+  it('a new commit is a new run (not deduped)', () => {
+    evidenceOnLoc1()
+    expect(track.ingestRuns(report('pass'), 'json', run('pass', 'c1'))).toBe(1)
+    expect(track.ingestRuns(report('pass'), 'json', run('pass', 'c2'))).toBe(1)
+  })
+
+  it('deduplicates duplicate entries WITHIN a single report', () => {
+    evidenceOnLoc1()
+    const dup = JSON.stringify({
+      results: [
+        { locator: 'loc1', result: 'pass' },
+        { locator: 'loc1', result: 'pass' },
+      ],
+    })
+    expect(track.ingestRuns(dup, 'json', run('pass'))).toBe(1) // one evidence, one run — not two
+  })
+
+  it('collapses an intra-report flip [pass,fail] to one run and re-ingests as a no-op', () => {
+    const c = evidenceOnLoc1()
+    const flip = JSON.stringify({
+      results: [
+        { locator: 'loc1', result: 'pass' },
+        { locator: 'loc1', result: 'fail' },
+      ],
+    })
+    expect(track.ingestRuns(flip, 'json', run('fail'))).toBe(1) // collapsed to last (fail): one run
+    expect(criterionStatus(track.state(), c, 'c1')).toBe('fail')
+    expect(track.ingestRuns(flip, 'json', run('fail'))).toBe(0) // re-ingest is a true no-op
+  })
+
+  it('records a flaky recovery pass→fail→pass on the same commit (latest = pass)', () => {
+    const c = evidenceOnLoc1()
+    expect(track.ingestRuns(report('pass'), 'json', run('pass'))).toBe(1)
+    expect(track.ingestRuns(report('fail'), 'json', run('fail'))).toBe(1)
+    expect(track.ingestRuns(report('pass'), 'json', run('pass'))).toBe(1) // recovery NOT dropped
+    expect(criterionStatus(track.state(), c, 'c1')).toBe('pass')
+  })
+
+  it('records a regression fail→pass→fail on the same commit (latest = fail, no false-green)', () => {
+    const c = evidenceOnLoc1()
+    expect(track.ingestRuns(report('fail'), 'json', run('fail'))).toBe(1)
+    expect(track.ingestRuns(report('pass'), 'json', run('pass'))).toBe(1)
+    expect(track.ingestRuns(report('fail'), 'json', run('fail'))).toBe(1) // regression NOT dropped
+    expect(criterionStatus(track.state(), c, 'c1')).toBe('fail')
+  })
+
+  it('is idempotent for a JUnit report too', () => {
+    const c = evidenceOnLoc1()
+    const junit = '<testsuite><testcase name="loc1"/></testsuite>'
+    expect(track.ingestRuns(junit, 'junit', run('pass'))).toBe(1)
+    expect(track.ingestRuns(junit, 'junit', run('pass'))).toBe(0)
+    expect(criterionStatus(track.state(), c, 'c1')).toBe('pass')
+  })
+
+  it('re-ingesting a shared-locator report is a no-op for ALL N evidence', () => {
+    const c1 = track.addCriterion(feature(), 'a')
+    track.linkEvidence(c1, 'unit', 'shared')
+    const c2 = track.addCriterion(feature(), 'b')
+    track.linkEvidence(c2, 'unit', 'shared')
+    const rep = JSON.stringify({ results: [{ locator: 'shared', result: 'pass' }] })
+    expect(track.ingestRuns(rep, 'json', run('pass'))).toBe(2) // both evidence
+    expect(track.ingestRuns(rep, 'json', run('pass'))).toBe(0) // re-ingest no-op for both
+  })
+})
