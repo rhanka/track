@@ -29,7 +29,7 @@
     "node": ">=20"
   },
   "bin": {
-    "track": "./dist/cli/index.js"
+    "track": "dist/cli/index.js"
   },
   "exports": {
     ".": "./dist/index.js"

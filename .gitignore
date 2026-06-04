@@ -8,3 +8,6 @@ HANDOVER.md
 
 # Harness session artifacts
 .claude/scheduled_tasks.lock
+
+# Playwright MCP session artifacts
+.playwright-mcp/
