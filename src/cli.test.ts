@@ -138,6 +138,9 @@ describe('CLI full verb surface (Lot 7) end-to-end', () => {
     const text = out.join('')
     expect(text).toContain('desync')
     expect(text).toContain('missing')
+    // v2.2c: each desync finding carries a remediation hint (detect-only, never auto-applied).
+    expect(text).toContain('hint')
+    expect(text).toContain('create') // the hint suggests creating the missing file
   })
 })
 
