@@ -12,8 +12,10 @@ import type { BlockerKind, ResolutionRule } from '../model/blocker.js'
 import type { DecisionKind, Outcome } from '../model/decision.js'
 import { DomainError, type Disposition, type Gate, type ItemKind, type Realization, type SpecStatus } from '../model/item.js'
 import type { Bucket } from '../report/buckets.js'
-import { formatReport, formatRows, type Format } from '../report/format.js'
+import { formatRows, type Format } from '../report/format.js'
 import { Track } from '../track.js'
+import { TrackReader } from '../read/contract.js'
+import { queryText, reportText } from '../read/commands.js'
 import { desyncFindings } from './desync.js'
 
 export interface CliIO {
@@ -351,21 +353,29 @@ function cmdPriority(args: string[], io: CliIO): number {
 
 function cmdReport(args: string[], io: CliIO): number {
   const { flags } = parseFlags(args)
-  const track = new Track(store(io.cwd))
-  const report = track.report({
-    baselineCommit: opt(flags, 'commit') ?? gitHead(io.cwd),
-    requireAccepted: flags['require-accepted'] === true,
-    decisions: flags['decisions'] === true,
-  })
-  io.out(formatReport(report, fmt(flags)))
+  // Reads go through the shared TrackReader command layer (same path the MCP server uses).
+  const reader = new TrackReader(eventsPath(io.cwd))
+  io.out(
+    reportText(
+      reader,
+      {
+        baselineCommit: opt(flags, 'commit') ?? gitHead(io.cwd),
+        requireAccepted: flags['require-accepted'] === true,
+        decisions: flags['decisions'] === true,
+      },
+      fmt(flags),
+    ),
+  )
   return 0
 }
 
 function cmdQuery(args: string[], io: CliIO): number {
   const { flags } = parseFlags(args)
-  const track = new Track(store(io.cwd))
-  const rows = track.query(
-    {
+  const reader = new TrackReader(eventsPath(io.cwd))
+  io.out(
+    queryText(
+      reader,
+      {
       ...(opt(flags, 'kind') !== undefined ? { kind: oneOf(req(flags, 'kind'), ITEM_KINDS, '--kind') } : {}),
       ...(opt(flags, 'workspace') !== undefined ? { workspace: req(flags, 'workspace') } : {}),
       ...(opt(flags, 'bucket') !== undefined ? { bucket: oneOf(req(flags, 'bucket'), BUCKETS_ARG, '--bucket') as Bucket } : {}),
@@ -375,10 +385,11 @@ function cmdQuery(args: string[], io: CliIO): number {
       ...(opt(flags, 'acceptance') !== undefined
         ? { acceptance: oneOf(req(flags, 'acceptance'), ACCEPTANCES, '--acceptance') as never }
         : {}),
-    },
-    { baselineCommit: opt(flags, 'commit') ?? gitHead(io.cwd) },
+      },
+      { baselineCommit: opt(flags, 'commit') ?? gitHead(io.cwd) },
+      fmt(flags),
+    ),
   )
-  rowsOut(rows, fmt(flags), io)
   return 0
 }
 

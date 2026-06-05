@@ -29,7 +29,8 @@
     "node": ">=20"
   },
   "bin": {
-    "track": "dist/cli/index.js"
+    "track": "dist/cli/index.js",
+    "track-mcp": "dist/mcp/cli.js"
   },
   "exports": {
     ".": "./dist/index.js",
@@ -48,6 +49,7 @@
     "prepublishOnly": "npm run build"
   },
   "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.29.0",
     "ulid": "^3.0.2"
   },
   "devDependencies": {

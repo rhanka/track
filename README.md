@@ -70,7 +70,8 @@ The event log is **append-only**; each event carries `contentHash = sha256(canon
 ## Read contract (skills) & CI (M2a)
 
 - **Read contract** — skills (`scope-check`/`lot-gate`) consume the versioned, read-only surface at `@sentropic/track/read`: `new TrackReader('.track/events.jsonl')` exposes `report`/`query`/`validate`/`branchProvenance`/`freshness`, plus a fail-closed `requireFresh(branchContent, locator)` that throws unless the sidecar is structurally current with `BRANCH.md` **and** integrity-intact — so a stale or tampered sidecar can never be trusted as the backlog (`BRANCH.md` stays master).
-- **CI → acceptance** — `accept run --from <report> --format junit|json --commit $SHA` ingests test results; ingestion is **idempotent** (dedup on `evidenceId+commit+env+runner+result`), so re-running a commit never multiplies events. A reusable GitHub Actions workflow ships at [`.github/workflows/track-acceptance.yml`](./.github/workflows/track-acceptance.yml).
+- **CI → acceptance** — `accept run --from <report> --format junit|json --commit $SHA` ingests test results; ingestion is **idempotent** (a run is skipped unless its result differs from the latest for `evidenceId+commit+env+runner`), so re-running a commit never multiplies events. A reusable GitHub Actions workflow ships at [`.github/workflows/track-acceptance.yml`](./.github/workflows/track-acceptance.yml).
+- **MCP (read-only)** — a second bin, `track-mcp`, serves the read contract over MCP (stdio) for agents: tools `track_report` · `track_query` · `track_validate` · `track_branch_provenance` · `track_freshness`. CLI and MCP share one read command layer, so their JSON output is byte-identical (parity-tested); read tools are side-effect-free (never append). The caller supplies `baselineCommit` (no git in the server).
 
 ## Library
 
