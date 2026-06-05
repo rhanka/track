@@ -207,16 +207,30 @@ describe('CLI input validation + review fixes (Lot 7)', () => {
     expect(out.join('')).toContain('no H1')
   })
 
-  it('rejects v2-only/unreachable enum values (linked-accepted rule, n/a acceptance)', () => {
+  it('ships linked-accepted end-to-end: gate derived vs --commit and revocable', () => {
     runCli(['init'], io)
     const t = last(['item', 'new', '--kind', 'feature', '--title', 't', '--workspace', 'ws'])
-    const ref = last(['item', 'new', '--kind', 'chore', '--title', 'r', '--workspace', 'ws'])
-    out.length = 0
+    const ref = last(['item', 'new', '--kind', 'feature', '--title', 'r', '--workspace', 'ws'])
+    const crit = last(['accept', 'criterion', ref, '--statement', 'r works'])
+    const ev = last(['accept', 'link', crit, '--kind', 'unit', '--locator', 'r.test'])
     expect(
-      runCli(['blocker', 'raise', '--target', t, '--kind', 'dependency', '--ref', ref, '--rule', 'linked-accepted'], io),
-    ).toBe(1)
-    expect(out.join('')).toContain('--rule must be one of')
-    out.length = 0
+      runCli(['blocker', 'raise', '--target', t, '--kind', 'dependency', '--ref', ref, '--rule', 'linked-accepted', '--reason', 'needs r'], io),
+    ).toBe(0)
+
+    const awaitedHasT = (commit: string): boolean => {
+      out.length = 0
+      runCli(['query', '--bucket', 'AWAITED', '--format', 'json', '--commit', commit], io)
+      return out.join('').includes(t)
+    }
+    expect(awaitedHasT('c1')).toBe(true) // R unknown → t AWAITED
+    runCli(['accept', 'run', ev, '--result', 'pass', '--commit', 'c1'], io)
+    expect(awaitedHasT('c1')).toBe(false) // R pass @ c1 → gate closed
+    runCli(['accept', 'run', ev, '--result', 'fail', '--commit', 'c1'], io)
+    expect(awaitedHasT('c1')).toBe(true) // regression → re-AWAITED, no new blocker
+  })
+
+  it('still rejects an unqueryable n/a acceptance value', () => {
+    runCli(['init'], io)
     expect(runCli(['query', '--acceptance', 'n/a'], io)).toBe(1)
   })
 })

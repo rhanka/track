@@ -35,7 +35,7 @@ const USAGE = `usage: track <command>
   decision outcome <decisionId> <go|no-go|deferred>
   decision dossier <decisionId> --context <c>
   decision disposition <itemId> <orientation|commitment> <required|skipped|not-applicable>
-  blocker raise --target <id> --kind <decision|dependency> --ref <id> [--reason <r>] [--rule <linked-done|manual>]
+  blocker raise --target <id> --kind <decision|dependency> --ref <id> [--reason <r>] [--rule <linked-done|linked-accepted|manual>]
   blocker resolve <blockerId>
   accept criterion <itemId> --statement <s>
   accept link <criterionId> --kind <unit|integration|e2e|manual> --locator <l>
@@ -58,8 +58,9 @@ const OUTCOMES = ['go', 'no-go', 'deferred'] as const
 const GATES = ['orientation', 'commitment'] as const
 const DISPOSITIONS = ['required', 'skipped', 'not-applicable'] as const
 const BLOCKER_KINDS = ['decision', 'dependency'] as const
-// `linked-accepted` is SPEC §10 (v2+) and not yet auto-resolvable — not offered in the MVP.
-const RESOLUTION_RULES = ['linked-done', 'manual'] as const
+// `linked-accepted` openness is DERIVED at report/query time vs `--commit` (v2.2a hybrid-A):
+// the gate re-opens when the ref regresses. See src/report/blocker-status.ts.
+const RESOLUTION_RULES = ['linked-done', 'linked-accepted', 'manual'] as const
 const EVIDENCE_KINDS = ['unit', 'integration', 'e2e', 'manual'] as const
 const RESULTS = ['pass', 'fail'] as const
 const FROM_FORMATS = ['junit', 'json'] as const

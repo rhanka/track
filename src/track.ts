@@ -275,11 +275,8 @@ export class Track {
     const blockerId = this.newId()
     const resolutionRule: ResolutionRule | undefined =
       input.kind === 'dependency' ? (input.resolutionRule ?? 'linked-done') : undefined
-    if (resolutionRule === 'linked-accepted') {
-      throw new DomainError(
-        "resolutionRule 'linked-accepted' is not implemented in the MVP (SPEC §10, v2+) — it would never resolve",
-      )
-    }
+    // `linked-accepted` is now resolved by the commit-relative projection (v2.2a hybrid-A):
+    // openness = ref not accepted at the report's baselineCommit (revocable). See report/blocker-status.ts.
     this.emit('blocker', blockerId, 'blocker.opened', {
       blockerId,
       targetId: input.targetId,

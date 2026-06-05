@@ -143,12 +143,13 @@ describe('Track — blockers (SPEC §2.9)', () => {
     expect(track.state().blockers.get(blockerId)!.open).toBe(false)
   })
 
-  it('rejects a linked-accepted dependency blocker (v2+, would never resolve)', () => {
+  it('accepts a linked-accepted dependency blocker (v2.2a — resolved by the commit-relative projection)', () => {
     const target = newItem()
     const ref = newItem()
-    expect(() =>
-      track.openBlocker({ targetId: target, kind: 'dependency', ref, reason: 'dep', resolutionRule: 'linked-accepted' }),
-    ).toThrow(/linked-accepted/)
+    const id = track.openBlocker({ targetId: target, kind: 'dependency', ref, reason: 'dep', resolutionRule: 'linked-accepted' })
+    expect(track.state().blockers.get(id)?.resolutionRule).toBe('linked-accepted')
+    // Openness is derived at report/query time (report/blocker-status.ts), not at fold — see
+    // src/report/blocker-status.test.ts for the revocable pass/fail/stale/waived semantics.
   })
 
   it('rejects manual resolve of a linked-done dependency blocker', () => {

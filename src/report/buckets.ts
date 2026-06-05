@@ -1,6 +1,7 @@
 import { acceptanceStatus } from '../accept/status.js'
 import type { ItemState } from '../model/item.js'
-import { openBlockersForItem, type State } from '../state/fold.js'
+import type { State } from '../state/fold.js'
+import { effectiveOpenBlockersForItem } from './blocker-status.js'
 
 export type Bucket = 'AWAITED' | 'DROPPED' | 'DONE' | 'TO-DO'
 export const BUCKETS: readonly Bucket[] = ['AWAITED', 'DROPPED', 'DONE', 'TO-DO']
@@ -19,7 +20,9 @@ export interface ReportConfig {
  * item that is not yet accepted (under requireAccepted) falls through to TO-DO.
  */
 export function bucketOf(state: State, item: ItemState, config: ReportConfig): Bucket {
-  if (openBlockersForItem(state, item.id).length > 0) return 'AWAITED'
+  // AWAITED uses COMMIT-RELATIVE openness (v2.2a hybrid-A): `linked-accepted` re-opens when its ref
+  // regresses at `config.baselineCommit`. bucketOf already holds the baseline (no new boundary).
+  if (effectiveOpenBlockersForItem(state, item.id, config.baselineCommit).length > 0) return 'AWAITED'
   if (item.realization === 'cancelled' || item.realization === 'rejected') return 'DROPPED'
   if (item.realization === 'done') {
     if (

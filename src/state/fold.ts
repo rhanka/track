@@ -61,12 +61,18 @@ export function fold(events: ReadonlyArray<TrackEvent>): State {
   return state
 }
 
-/** Open blockers across the whole backlog (SPEC §2.9; report AWAITED bucket, §7). */
+/**
+ * ⚠️ COMMIT-BLIND. Returns the fold scalar `blocker.open`, which is conservatively OPEN for
+ * `linked-accepted` blockers (fold has no `baselineCommit`). For AWAITED / bucketing use
+ * `effectiveOpenBlockersForItem(state, id, baselineCommit)` (report/blocker-status.ts), which
+ * derives `linked-accepted` openness revocably against a commit. Safe here only for settle-once
+ * rules (decision/manual/linked-done).
+ */
 export function openBlockers(state: State): BlockerState[] {
   return [...state.blockers.values()].filter((b) => b.open)
 }
 
-/** Open blockers targeting a given item. */
+/** ⚠️ COMMIT-BLIND — see {@link openBlockers}; prefer `effectiveOpenBlockersForItem` for AWAITED. */
 export function openBlockersForItem(state: State, itemId: ItemId): BlockerState[] {
   return openBlockers(state).filter((b) => b.targetId === itemId)
 }
@@ -266,7 +272,10 @@ function isOpen(blocker: BlockerState, items: Map<ItemId, ItemState>): boolean {
     // blocker OPEN (target stays AWAITED) — SPEC §2.9 resolves only on ref `done`. Reversible.
     return items.get(blocker.ref)?.realization !== 'done'
   }
-  // decision blockers, manual dependency blockers, and (until Lot 4) linked-accepted stay open
-  // until an explicit blocker.resolved event (a decision blocker resolves on its go/no-go batch).
+  // decision blockers and manual dependency blockers stay open until an explicit blocker.resolved
+  // event (a decision blocker resolves on its go/no-go batch). `linked-accepted` also lands here and
+  // folds CONSERVATIVELY OPEN: fold is baseline-free and cannot evaluate acceptance — its
+  // authoritative, revocable openness is derived at report/query time against `baselineCommit`
+  // (report/blocker-status.ts, v2.2a hybrid-A). Conservative-open is fail-safe (never falsely clear).
   return true
 }

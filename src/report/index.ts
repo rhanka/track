@@ -10,3 +10,5 @@ export {
   type ReportRow,
 } from './build.js'
 export { formatReport, formatRows, type Format } from './format.js'
+// Commit-relative blocker openness (v2.2a hybrid-A) — `linked-accepted` derived at projection time.
+export { effectiveBlockerOpen, effectiveOpenBlockersForItem } from './blocker-status.js'
