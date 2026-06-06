@@ -236,4 +236,14 @@ describe('CLI input validation + review fixes (Lot 7)', () => {
     runCli(['init'], io)
     expect(runCli(['query', '--acceptance', 'n/a'], io)).toBe(1)
   })
+
+  it('attributes CLI writes to the local user with cli provenance (D3 — never system)', () => {
+    runCli(['init'], io)
+    last(['item', 'new', '--kind', 'feature', '--title', 't', '--workspace', 'ws'])
+    const lines = readFileSync(join(dir, '.track', 'events.jsonl'), 'utf8').trim().split('\n')
+    const created = JSON.parse(lines.find((l) => l.includes('"item.created"'))!)
+    expect(created.by).not.toBe('system')
+    expect(created.by).toMatch(/^(human:|cli:)/)
+    expect(created.prov).toMatchObject({ transport: 'cli', proposed: false, auth: 'local-user' })
+  })
 })

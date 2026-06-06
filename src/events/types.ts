@@ -40,6 +40,26 @@ export interface CmdPosition {
 }
 
 /**
+ * Provenance of a write (D3, "hybrid A→B"). `by` is the actor (on whose behalf); `prov` records HOW
+ * the write arrived and its TRUST level, so a reviewer of the immutable log can tell a human-CLI
+ * write from an agent-proposed one. Optional + additive (absent on pre-D3 events; `canonicalize`
+ * drops `undefined`, so adding it never changes an existing event's hash). M3/h2a fills the
+ * forward-compat slots (`sig`/`principal`) and flips `auth` to `'signed'`.
+ */
+export interface Provenance {
+  /** Channel the write arrived through. */
+  transport: 'cli' | 'mcp-stdio' | 'import' | 'internal'
+  /** Agent-PROPOSED (LLM proposes) vs human/deterministic. */
+  proposed: boolean
+  /**
+   * Trust level of `by`: a local user, or an asserted-but-unverified actor. M3/h2a will widen this
+   * (additively) with `'signed'` + `sig`/`principal` — NOT defined here so 0.2.0 carries no
+   * trust level it cannot yet produce or verify.
+   */
+  auth: 'local-user' | 'unauthenticated'
+}
+
+/**
  * The command-supplied core of an event: everything except the integrity frame
  * (`seq`, `prevHash`, `contentHash`). This is exactly the domain hashed into `contentHash`
  * (cf. h2a `stripFrame`).
@@ -52,6 +72,8 @@ export interface EventCore {
   at: string // ISO-8601 ms — informational only; ordering authority = stream position + seq
   by: ActorId
   payload: Readonly<Record<string, unknown>>
+  /** D3 provenance — present on D3+ writes, absent on older events (additive, hash-covered). */
+  prov?: Provenance
   cmdId?: Ulid
   cmd?: CmdPosition
 }

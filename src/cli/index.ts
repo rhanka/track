@@ -14,6 +14,7 @@ import { DomainError, type Disposition, type Gate, type ItemKind, type Realizati
 import type { Bucket } from '../report/buckets.js'
 import { formatRows, type Format } from '../report/format.js'
 import { Track } from '../track.js'
+import type { ActorId, Provenance } from '../events/types.js'
 import { TrackReader } from '../read/contract.js'
 import { queryText, reportText } from '../read/commands.js'
 import { desyncFindings } from './desync.js'
@@ -90,6 +91,30 @@ function gitHead(cwd: string): string {
   } catch {
     return 'HEAD'
   }
+}
+
+// D3: CLI writes are attributed to the LOCAL USER (never the reserved `'system'`), with `cli`
+// provenance — so the immutable log honestly distinguishes a human-CLI write from an agent one.
+const CLI_PROV: Provenance = { transport: 'cli', proposed: false, auth: 'local-user' }
+
+function cliActor(cwd: string): ActorId {
+  try {
+    const email = execFileSync('git', ['config', 'user.email'], {
+      cwd,
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'ignore'],
+    }).trim()
+    if (email) return `human:${email}`
+  } catch {
+    /* not a repo / git absent — fall through */
+  }
+  const user = process.env['USER'] ?? process.env['USERNAME']
+  return user ? `human:${user}` : 'cli:unknown'
+}
+
+/** A writer Track for CLI commands — attributed to the local user with `cli` provenance (D3). */
+function writeTrack(io: CliIO): Track {
+  return new Track(store(io.cwd), { by: cliActor(io.cwd), prov: CLI_PROV })
 }
 
 function parseFlags(args: string[]): { positional: string[]; flags: Flags } {
@@ -182,7 +207,7 @@ function rowsOut(rows: unknown[], format: Format, io: CliIO): void {
 function cmdItem(args: string[], io: CliIO): number {
   const sub = args[0]
   const { positional, flags } = parseFlags(args.slice(1))
-  const track = new Track(store(io.cwd))
+  const track = writeTrack(io)
   if (sub === 'new') {
     const id = track.createItem({
       kind: oneOf(req(flags, 'kind'), ITEM_KINDS, '--kind') as ItemKind,
@@ -226,7 +251,7 @@ function cmdItem(args: string[], io: CliIO): number {
 function cmdDecision(args: string[], io: CliIO): number {
   const sub = args[0]
   const { positional, flags } = parseFlags(args.slice(1))
-  const track = new Track(store(io.cwd))
+  const track = writeTrack(io)
   if (sub === 'new') {
     const id = track.createDecision({
       decisionKind: oneOf(req(flags, 'kind'), DECISION_KINDS, '--kind') as DecisionKind,
@@ -267,7 +292,7 @@ function cmdDecision(args: string[], io: CliIO): number {
 function cmdBlocker(args: string[], io: CliIO): number {
   const sub = args[0]
   const { positional, flags } = parseFlags(args.slice(1))
-  const track = new Track(store(io.cwd))
+  const track = writeTrack(io)
   if (sub === 'raise') {
     const id = track.openBlocker({
       targetId: req(flags, 'target'),
@@ -293,7 +318,7 @@ function cmdBlocker(args: string[], io: CliIO): number {
 function cmdAccept(args: string[], io: CliIO): number {
   const sub = args[0]
   const { positional, flags } = parseFlags(args.slice(1))
-  const track = new Track(store(io.cwd))
+  const track = writeTrack(io)
   if (sub === 'criterion') {
     io.out(`${track.addCriterion(positional[0]!, req(flags, 'statement'))}\n`)
     return 0
@@ -336,7 +361,7 @@ function cmdAccept(args: string[], io: CliIO): number {
 function cmdPriority(args: string[], io: CliIO): number {
   const sub = args[0]
   const { positional, flags } = parseFlags(args.slice(1))
-  const track = new Track(store(io.cwd))
+  const track = writeTrack(io)
   if (sub === 'assess') {
     const a = track.assessPriority(positional[0]!, {
       userBusinessValue: num(flags, 'ubv'),
@@ -428,7 +453,7 @@ function cmdBranch(args: string[], io: CliIO): number {
     return 2
   }
   const content = readFileSync(isAbsolute(file) ? file : join(io.cwd, file), 'utf8')
-  const track = new Track(store(io.cwd))
+  const track = writeTrack(io)
   const result = track.importBranch(content, {
     locator: file,
     fileSlug: basename(file).replace(/\.md$/, ''),

@@ -1,7 +1,7 @@
 import { ulid } from 'ulid'
 
 import { EventStore } from './events/store.js'
-import type { ActorId, Aggregate, CommandEvent, EventType, Ulid } from './events/types.js'
+import type { ActorId, Aggregate, CommandEvent, EventType, Provenance, Ulid } from './events/types.js'
 import { parseRunReport, type RunReportFormat } from './accept/ingest.js'
 import { parseBranch, slugify } from './branch/parse.js'
 import { branchSignature } from './branch/signature.js'
@@ -69,6 +69,8 @@ export interface TrackOptions {
   newId?: () => Ulid
   /** Default actor recorded on events. */
   by?: ActorId
+  /** D3 provenance stamped on every emitted event (transport/trust). Omitted ⇒ no `prov` field. */
+  prov?: Provenance
 }
 
 export interface OpenBlockerInput {
@@ -89,6 +91,7 @@ export class Track {
   private readonly clock: () => string
   private readonly newId: () => Ulid
   private readonly actor: ActorId
+  private readonly prov: Provenance | undefined
 
   constructor(
     private readonly store: EventStore,
@@ -97,6 +100,9 @@ export class Track {
     this.clock = opts.now ?? (() => new Date().toISOString())
     this.newId = opts.newId ?? (() => ulid())
     this.actor = opts.by ?? 'system'
+    // Snapshot prov once into an inert, caller-detached value (flat object: primitives only), so a
+    // mutable/live prov passed by the caller can never make events carry divergent provenance.
+    this.prov = opts.prov ? { ...opts.prov } : undefined
   }
 
   /** Materialized state from a full replay of the log. */
@@ -590,6 +596,7 @@ export class Track {
       aggregateId: part.aggregateId,
       at,
       by: this.actor,
+      ...(this.prov !== undefined ? { prov: this.prov } : {}),
       payload: part.payload,
     }))
     if (events.length > 1) {
