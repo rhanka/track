@@ -27,7 +27,9 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '24'
-          registry-url: 'https://registry.npmjs.org'
+          # NB: deliberately NO `registry-url` — it injects a placeholder NODE_AUTH_TOKEN into
+          # .npmrc, which npm uses instead of OIDC (causing a 404). OIDC trusted publishing needs
+          # NO token configured; the default registry is registry.npmjs.org.
       - name: Ensure npm supports OIDC trusted publishing (>= 11.5.1)
         run: npm install -g npm@latest
       - run: npm ci
