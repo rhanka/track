@@ -1,0 +1,42 @@
+# Publish @sentropic/track to npm via OIDC TRUSTED PUBLISHING — no token, no 2FA.
+#
+# Mirrors the sentropic monorepo posture (id-token: write + version-guarded `npm publish`),
+# adapted to this single package. `npm publish` (npm >= 11.5.1) detects the GitHub Actions OIDC
+# environment and mints a short-lived publish credential — provided a TRUSTED PUBLISHER is
+# configured for the package on npmjs.com (one-time):
+#   npmjs.com → @sentropic/track → Settings → Trusted Publisher → GitHub Actions:
+#     Organization/User: rhanka   Repository: track   Workflow filename: publish.yml
+# Provenance attestations are emitted automatically.
+#
+# Trigger: push a version tag `vX.Y.Z` (matching package.json), or run manually.
+name: publish
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write # OIDC — required for trusted publishing
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          registry-url: 'https://registry.npmjs.org'
+      - name: Ensure npm supports OIDC trusted publishing (>= 11.5.1)
+        run: npm install -g npm@latest
+      - run: npm ci
+      - run: npm test
+      - name: Publish (idempotent — skip if this version already exists)
+        run: |
+          v="$(node -p "require('./package.json').version")"
+          if npm view "@sentropic/track@${v}" version >/dev/null 2>&1; then
+            echo "@sentropic/track@${v} already published — skipping."
+          else
+            npm publish --access public
+          fi
