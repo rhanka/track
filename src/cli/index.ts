@@ -1,8 +1,6 @@
-#!/usr/bin/env node
 import { execFileSync } from 'node:child_process'
 import { mkdirSync, readFileSync } from 'node:fs'
 import { basename, isAbsolute, join } from 'node:path'
-import { fileURLToPath } from 'node:url'
 
 import { readHead } from '../events/head.js'
 import { EventStore } from '../events/store.js'
@@ -17,6 +15,7 @@ import { Track } from '../track.js'
 import type { ActorId, Provenance } from '../events/types.js'
 import { TrackReader } from '../read/contract.js'
 import { queryText, reportText } from '../read/commands.js'
+import { VERSION } from '../version.js'
 import { desyncFindings } from './desync.js'
 
 export interface CliIO {
@@ -28,6 +27,7 @@ export interface CliIO {
 type Flags = Record<string, string | true>
 
 const USAGE = `usage: track <command>
+  --version | -v
   init
   item new --kind <feature|bug|chore> --title <t> --workspace <w> [--body <b>] [--parent <id>]
   item spec <itemId> <to-specify|specified>
@@ -168,6 +168,11 @@ export function runCli(argv: string[], io: CliIO): number {
   const rest = argv.slice(1)
   try {
     switch (cmd) {
+      case '--version':
+      case '-v':
+      case 'version':
+        io.out(`${VERSION}\n`)
+        return 0
       case 'init':
         mkdirSync(trackDir(io.cwd), { recursive: true })
         io.out(`Initialized .track/ in ${io.cwd}\n`)
@@ -461,14 +466,4 @@ function cmdBranch(args: string[], io: CliIO): number {
   })
   io.out(`Imported ${result.branchSlug}: ${result.created} created, ${result.updated} updated\n`)
   return 0
-}
-
-if (process.argv[1] !== undefined && process.argv[1] === fileURLToPath(import.meta.url)) {
-  process.exit(
-    runCli(process.argv.slice(2), {
-      cwd: process.cwd(),
-      out: (s) => process.stdout.write(s),
-      err: (s) => process.stderr.write(s),
-    }),
-  )
 }

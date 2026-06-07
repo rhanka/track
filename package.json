@@ -1,6 +1,6 @@
 {
   "name": "@sentropic/track",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "Typed product-backlog and spec/plan/UAT system of record for the sentropic ecosystem (record-only MVP).",
   "license": "MIT",
   "author": "Fabien Antoine",
@@ -29,7 +29,7 @@
     "node": ">=20"
   },
   "bin": {
-    "track": "dist/cli/index.js",
+    "track": "dist/cli/bin.js",
     "track-mcp": "dist/mcp/cli.js"
   },
   "exports": {

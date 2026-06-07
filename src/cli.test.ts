@@ -73,6 +73,17 @@ describe('CLI smoke (Milestone 1): init -> branch import -> report', () => {
     expect(runCli(['frobnicate'], io)).toBe(2)
     expect(out.join('')).toContain('usage: track')
   })
+
+  it('prints the package version on --version / -v / version', () => {
+    const pkg = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8')) as {
+      version: string
+    }
+    for (const flag of ['--version', '-v', 'version']) {
+      out.length = 0
+      expect(runCli([flag], io)).toBe(0)
+      expect(out.join('').trim()).toBe(pkg.version)
+    }
+  })
 })
 
 describe('CLI full verb surface (Lot 7) end-to-end', () => {
