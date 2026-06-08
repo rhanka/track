@@ -1,0 +1,14 @@
+{
+  "name": "sentropic",
+  "metadata": {
+    "description": "Sentropic ecosystem plugins for Claude Code (starting with track — the record-only system of record)."
+  },
+  "owner": { "name": "Sentropic", "email": "fabien.antoine.trash@gmail.com" },
+  "plugins": [
+    {
+      "name": "track",
+      "source": "./",
+      "description": "Record-only spec/realization/acceptance system of record — read-only track-mcp tools over your .track/ event log; writes via the `track` CLI."
+    }
+  ]
+}

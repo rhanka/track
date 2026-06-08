@@ -1,0 +1,13 @@
+{
+  "name": "track",
+  "description": "Record-only spec / realization / acceptance system of record. Bundles the read-only track-mcp server (report / query / validate / branch-provenance / freshness) over a project's .track/ event log. Writes stay on the `track` CLI (record-only, append-only, integrity-chained).",
+  "version": "0.3.0",
+  "author": { "name": "Fabien Antoine" },
+  "homepage": "https://github.com/rhanka/track#readme",
+  "mcpServers": {
+    "track": {
+      "command": "npx",
+      "args": ["-y", "@sentropic/track", "track-mcp"]
+    }
+  }
+}
