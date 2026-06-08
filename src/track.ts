@@ -105,9 +105,10 @@ export class Track {
     this.clock = opts.now ?? (() => new Date().toISOString())
     this.newId = opts.newId ?? (() => ulid())
     this.actor = opts.by ?? 'system'
-    // Snapshot prov once into an inert, caller-detached value (flat object: primitives only), so a
-    // mutable/live prov passed by the caller can never make events carry divergent provenance.
-    this.prov = opts.prov ? { ...opts.prov } : undefined
+    // Snapshot prov once into an inert, FULLY caller-detached value, so a mutable/live prov passed by
+    // the caller can never make events carry divergent provenance. `structuredClone` deep-copies the
+    // nested `sig` (M3) — a shallow spread would share `sig` by reference and reopen the D3 mutation hole.
+    this.prov = opts.prov ? structuredClone(opts.prov) : undefined
   }
 
   /** Materialized state from a full replay of the log. */

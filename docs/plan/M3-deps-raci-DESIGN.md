@@ -76,10 +76,21 @@ milestones, zero duplication.
   WorkEvent-schema + `mapWorkEvent` additions. **Works with no auth channel** (a human opens an `extra` dep
   and resolves it manually today). Gate: additive contract snapshot; old logs hash-identical; cross-scope
   validation; CLI≡ingest parity for the new fields.
-- **Lot B (M3 auth channel):** widen `Provenance` additively (`auth:'signed'` + `sig?`/`principal?`, new
-  HTTP `transport`); authenticated server-to-server HTTP ingest verifying an h2a-NHI signature or a
-  platform OIDC JWT (JWKS), constructing `IngestContext{ by=verified principal, prov.auth='signed' }` over
-  the **same** `mapWorkEvent`/`ingest`. Reuses the shipped idempotency (request id → `clientToken`).
+- **Lot B (M3 auth channel) — SHIPPED, shape A (library-import), owner-ratified option ①.** track stays a
+  library; **the verified caller** (the platform API / the h2a bridge — which already verified the OIDC JWT
+  or the NHI Ed25519 signature) constructs a signed `IngestContext` and calls the **same** `ingest()`. track
+  **RECORDS** the attestation; it **never verifies** (record-only, h2a-free). NO network service, NO new
+  dependency. Delivered: `Provenance` widened additively — `auth += 'signed'`, `transport += 'http'`,
+  optional `principal?` (NHI id / JWT `sub`) and `sig?: {alg,value,by}` (mirrors `H2ASignature`, recorded
+  for audit, NOT a signature over the EventCore, NOT a bearer token); the prov snapshot deep-clones the
+  nested `sig` (`structuredClone`) to preserve D3's inert-snapshot guarantee; `BINDING_AUTH` already admits
+  `'signed'`, so a signed channel may perform binding writes with no `ingest` change, and workspace
+  containment still holds for `signed`.
+  - **Signed-ctx construction recipe (for the caller):** after verifying the principal, build
+    `ingest(events, { by: verifiedPrincipalId, workspace, prov: { transport: 'http'|'import', proposed: false,
+    auth: 'signed', principal: verifiedPrincipalId, sig?: <H2ASignature> } }, store)`. track does no
+    verification; it records `prov.auth:'signed'` + `principal` (+ `sig`). The CLI is NOT extended (it stays
+    `transport:'cli', auth:'local-user'`) — signed contexts are constructed programmatically by the caller.
 - **Lot C (h2a bridge):** the automated path — an h2a engagement reaching `accepted`/`stabilized` crosses
   the (M3) signed channel as a neutral `blocker.resolved` WorkEvent carrying the `engagementRef`. Gated on
   Lot B.

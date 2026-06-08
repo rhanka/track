@@ -39,24 +39,39 @@ export interface CmdPosition {
   n: number // batch size
 }
 
+/** An attestation signature RECORDED by track (mirrors h2a's `H2ASignature` so an NHI sig drops in
+ *  verbatim). It is NOT a signature over track's `EventCore` and NOT a bearer token — it is the
+ *  artifact the trusted channel verified, carried for audit. Track NEVER verifies it. */
+export interface ProvenanceSignature {
+  alg: string // e.g. "Ed25519"
+  value: string // base64 signature / non-bearer receipt
+  by: string // signer key id / NHI id
+}
+
 /**
  * Provenance of a write (D3, "hybrid A→B"). `by` is the actor (on whose behalf); `prov` records HOW
  * the write arrived and its TRUST level, so a reviewer of the immutable log can tell a human-CLI
  * write from an agent-proposed one. Optional + additive (absent on pre-D3 events; `canonicalize`
- * drops `undefined`, so adding it never changes an existing event's hash). M3/h2a fills the
- * forward-compat slots (`sig`/`principal`) and flips `auth` to `'signed'`.
+ * drops `undefined`, so adding it never changes an existing event's hash).
  */
 export interface Provenance {
-  /** Channel the write arrived through. */
-  transport: 'cli' | 'mcp-stdio' | 'import' | 'internal'
+  /** Channel the write arrived through. `'http'` records that the trusted CALLER received the write
+   *  over HTTP — track does NOT host HTTP (M3 is library-import; see M3-deps-raci-DESIGN.md). */
+  transport: 'cli' | 'mcp-stdio' | 'import' | 'internal' | 'http'
   /** Agent-PROPOSED (LLM proposes) vs human/deterministic. */
   proposed: boolean
   /**
-   * Trust level of `by`: a local user, or an asserted-but-unverified actor. M3/h2a will widen this
-   * (additively) with `'signed'` + `sig`/`principal` — NOT defined here so 0.2.0 carries no
-   * trust level it cannot yet produce or verify.
+   * Trust level of `by`. `'local-user'` = a local CLI user; `'unauthenticated'` = an asserted-but-
+   * unverified actor. **`'signed'` means a verifiable attestation (`principal` + optional `sig`) was
+   * RECORDED — it does NOT mean track verified it.** Track is record-only and h2a-free: verification
+   * is the trusted channel's job (the platform IdP / the h2a bridge that built the `IngestContext`),
+   * and re-verifiability is any consumer's job. Owner-ratified semantics (M3, option ①).
    */
-  auth: 'local-user' | 'unauthenticated'
+  auth: 'local-user' | 'unauthenticated' | 'signed'
+  /** Verified-principal identity the channel attests (NHI id / JWT `sub`). RECORDED, not verified. */
+  principal?: string
+  /** The attestation signature, recorded for audit (see ProvenanceSignature). RECORDED, not verified. */
+  sig?: ProvenanceSignature
 }
 
 /**

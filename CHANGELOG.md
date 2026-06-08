@@ -2,6 +2,25 @@
 
 All notable changes to `@sentropic/track`. Format loosely follows [Keep a Changelog](https://keepachangelog.com); this package is pre-1.0 (the **event contract** is frozen, but the library/CLI surface may still evolve additively).
 
+## [0.6.0] — M3 signed write channel (library-import)
+
+### Added
+- **`prov.auth: 'signed'`** + `transport: 'http'` + optional `principal?` (an NHI id / JWT `sub`) +
+  `sig?: {alg, value, by}` on `Provenance` — the M3 authenticated write channel, **shape A
+  (library-import)**: a verified caller (the platform API / the h2a bridge, which already verified the OIDC
+  JWT or the NHI Ed25519 signature) constructs a signed `IngestContext` and calls the **same** `ingest()`.
+  **Track RECORDS the attestation; it never verifies** — record-only and h2a-free (owner-ratified
+  semantics). A `signed` channel may perform binding writes (the binding-auth allowlist admits it) and
+  **workspace containment still applies** (signed is not a bypass). No network service, no new dependency.
+
+### Notes
+- Additive and frozen-contract-neutral (a `Provenance` widening; old events hash byte-identically — the
+  proven `prov`/`clientToken` pattern). The recorded `sig` lives inside the hashed core, so a tampered
+  attestation surfaces as a `content-hash` finding; the prov snapshot deep-clones the nested `sig`
+  (`structuredClone`), preserving D3's inert-snapshot guarantee. The CLI is unchanged — signed contexts are
+  built programmatically by the verified caller. Double-reviewed (`docs/reviews/lot-B-m3-{codex,opus}.md`,
+  both SHIP). The h2a bridge (automated `extra`-dep resolution) is the next lot.
+
 ## [0.5.0] — Dependencies, RACI & contractualization handle (M3 prelude, Lot A)
 
 ### Added
