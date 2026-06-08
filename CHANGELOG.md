@@ -2,6 +2,24 @@
 
 All notable changes to `@sentropic/track`. Format loosely follows [Keep a Changelog](https://keepachangelog.com); this package is pre-1.0 (the **event contract** is frozen, but the library/CLI surface may still evolve additively).
 
+## [0.2.2] — Cross-process write serialization (integrity fix)
+
+### Fixed
+- **Concurrent writers could permanently brick the log.** `appendCommand`'s read→validate→compute→append
+  critical section had no mutual exclusion: two writers on the same `events.jsonl` (a CLI run while an
+  MCP server is live, two processes, a sidecar) computed the same `prevHash`/`seq`, corrupting the
+  single stream — after which the fail-closed guard refuses **every** future append (manual repair
+  only). Writes are now serialized by an exclusive cross-process lock (`events.jsonl.lock`, kernel-atomic
+  `O_EXCL`): **fail-closed, no automatic stealing** (pathname stealing is intrinsically racy), a
+  diagnosed timeout (reports the holder and whether it is alive — an orphan from a writer killed
+  mid-append is safe to delete, and the message says so), and ownership-token-checked release.
+  Double-reviewed (`docs/reviews/lot-v2.3b0-{codex,opus}.md`); contract-neutral (event bytes, hashes,
+  `seq`, `head.json` semantics unchanged). Same-host/local-FS scope (NFS out of scope).
+
+### Notes
+- Known pre-existing transient (unchanged, detect-only): a reader overlapping a large in-progress append
+  can observe a torn trailing line (fail-closed error, not corruption).
+
 ## [0.2.1] — Installed-CLI fix
 
 ### Fixed

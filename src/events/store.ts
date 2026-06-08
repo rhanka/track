@@ -12,6 +12,7 @@ import { dirname } from 'node:path'
 import { canonicalize, materialize } from './canonical.js'
 import { contentHashOf } from './frame.js'
 import { readHead, writeHead } from './head.js'
+import { withFileLock } from './lock.js'
 import type { CommandEvent, EventCore, Sha256, TrackEvent, Ulid } from './types.js'
 import { validate } from './validate.js'
 
@@ -62,58 +63,63 @@ export class EventStore {
       throw new Error('EventStore.appendCommand: a multi-event command requires a cmdId')
     }
 
-    const existing = this.readAll()
-    const integrity = validate(existing, readHead(this.filePath))
-    if (!integrity.ok) {
-      const kinds = integrity.findings.map((f) => f.kind).join(', ')
-      throw new Error(
-        `EventStore.appendCommand: refusing to extend an invalid log ` +
-          `(${integrity.findings.length} finding(s): ${kinds})`,
-      )
-    }
+    // Serialize the read→validate→compute→append→writeHead critical section ACROSS processes. Without
+    // it, two concurrent writers compute the same prevHash/seq and corrupt the single stream, which the
+    // fail-closed guard below then turns into a permanent write-DoS for every future writer (see lock.ts).
+    return withFileLock(this.filePath, () => {
+      const existing = this.readAll()
+      const integrity = validate(existing, readHead(this.filePath))
+      if (!integrity.ok) {
+        const kinds = integrity.findings.map((f) => f.kind).join(', ')
+        throw new Error(
+          `EventStore.appendCommand: refusing to extend an invalid log ` +
+            `(${integrity.findings.length} finding(s): ${kinds})`,
+        )
+      }
 
-    let prevHash: Sha256 | null =
-      existing.length > 0 ? existing[existing.length - 1]!.contentHash : null
+      let prevHash: Sha256 | null =
+        existing.length > 0 ? existing[existing.length - 1]!.contentHash : null
 
-    // Next per-aggregate seq = max(seq) + 1, aligned with validate's authority.
-    const lastSeqByAggregate = new Map<string, number>()
-    for (const e of existing) {
-      lastSeqByAggregate.set(e.aggregateId, e.seq)
-    }
+      // Next per-aggregate seq = max(seq) + 1, aligned with validate's authority.
+      const lastSeqByAggregate = new Map<string, number>()
+      for (const e of existing) {
+        lastSeqByAggregate.set(e.aggregateId, e.seq)
+      }
 
-    const events: TrackEvent[] = []
-    inputs.forEach((input, i) => {
-      const seq = (lastSeqByAggregate.get(input.aggregateId) ?? 0) + 1
-      lastSeqByAggregate.set(input.aggregateId, seq)
-      const core: EventCore = isBatch
-        ? { ...input, cmdId: opts.cmdId!, cmd: { i, n } }
-        : { ...input }
-      // Materialize ONCE to an inert plain-data snapshot, then hash AND persist that same
-      // snapshot — so a live payload (Proxy / getter / toJSON) cannot diverge between the two.
-      const materialized = materialize(core) as EventCore
-      const contentHash = contentHashOf(materialized)
-      const event: TrackEvent = { ...materialized, seq, prevHash, contentHash }
-      events.push(event)
-      prevHash = contentHash
+      const events: TrackEvent[] = []
+      inputs.forEach((input, i) => {
+        const seq = (lastSeqByAggregate.get(input.aggregateId) ?? 0) + 1
+        lastSeqByAggregate.set(input.aggregateId, seq)
+        const core: EventCore = isBatch
+          ? { ...input, cmdId: opts.cmdId!, cmd: { i, n } }
+          : { ...input }
+        // Materialize ONCE to an inert plain-data snapshot, then hash AND persist that same
+        // snapshot — so a live payload (Proxy / getter / toJSON) cannot diverge between the two.
+        const materialized = materialize(core) as EventCore
+        const contentHash = contentHashOf(materialized)
+        const event: TrackEvent = { ...materialized, seq, prevHash, contentHash }
+        events.push(event)
+        prevHash = contentHash
+      })
+
+      // Validate the FULL candidate stream (not just the existing prefix): the command itself
+      // could introduce a cross-event violation (e.g. an aggregate-mismatch, a malformed batch).
+      const candidate = validate([...existing, ...events])
+      if (!candidate.ok) {
+        const kinds = candidate.findings.map((f) => f.kind).join(', ')
+        throw new Error(
+          `EventStore.appendCommand: command would produce an invalid log ` +
+            `(${candidate.findings.length} finding(s): ${kinds})`,
+        )
+      }
+
+      this.appendAtomic(events)
+      writeHead(this.filePath, {
+        streamLength: existing.length + events.length,
+        lastContentHash: events[events.length - 1]!.contentHash,
+      })
+      return events
     })
-
-    // Validate the FULL candidate stream (not just the existing prefix): the command itself
-    // could introduce a cross-event violation (e.g. an aggregate-mismatch, a malformed batch).
-    const candidate = validate([...existing, ...events])
-    if (!candidate.ok) {
-      const kinds = candidate.findings.map((f) => f.kind).join(', ')
-      throw new Error(
-        `EventStore.appendCommand: command would produce an invalid log ` +
-          `(${candidate.findings.length} finding(s): ${kinds})`,
-      )
-    }
-
-    this.appendAtomic(events)
-    writeHead(this.filePath, {
-      streamLength: existing.length + events.length,
-      lastContentHash: events[events.length - 1]!.contentHash,
-    })
-    return events
   }
 
   /**
