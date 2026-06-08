@@ -45,11 +45,18 @@ export interface WorkEvent {
   kind: WorkEventKind
   /** Validated per-kind by WORK_EVENT_SCHEMA (required + type + enum + NO unknown fields). */
   payload: Record<string, unknown>
+  /**
+   * Optional delivery idempotency key (v2.3c). If a prior event with this token is already in the log,
+   * ingest SKIPS this WorkEvent (returning its original assigned id). The producer owns token uniqueness.
+   * This is a delivery key, not a WHO/trust field — so it is allowed on the envelope (unlike actor/sponsor).
+   */
+  clientToken?: string
 }
 
 /** The only allowed envelope keys — any other (actor/sponsor/proposed/…) is rejected fail-closed: the
- *  WHO and the trust level come from the ingest CONTEXT (channel), never per-event (v2.3b-DESIGN.md §2). */
-export const WORK_EVENT_ENVELOPE_KEYS = ['v', 'kind', 'payload'] as const
+ *  WHO and the trust level come from the ingest CONTEXT (channel), never per-event (v2.3b-DESIGN.md §2).
+ *  `clientToken` is the one exception — a delivery idempotency key, not a trust field (v2.3c). */
+export const WORK_EVENT_ENVELOPE_KEYS = ['v', 'kind', 'payload', 'clientToken'] as const
 
 // --- per-kind payload schema -------------------------------------------------------------------------
 export type FieldType = 'string' | 'number' | 'string[]' | 'object'

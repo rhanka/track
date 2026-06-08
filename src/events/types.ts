@@ -74,6 +74,15 @@ export interface EventCore {
   payload: Readonly<Record<string, unknown>>
   /** D3 provenance — present on D3+ writes, absent on older events (additive, hash-covered). */
   prov?: Provenance
+  /**
+   * Delivery idempotency key (v2.3c). A producer-supplied token; ingest stamps it on every event of a
+   * WorkEvent and SKIPS a WorkEvent whose token is already in the log — so a retry is a safe no-op.
+   * Additive + hash-covered (absent on older events, which hash identically; `canonicalize` drops
+   * `undefined`). Hash-covered because a tampered token would change replay/skip behavior. Unlike `prov`
+   * (a per-channel snapshot) this is per-event-varying — correct for a delivery key, and carries no
+   * authority (a forged/colliding token only skips the producer's own write).
+   */
+  clientToken?: string
   cmdId?: Ulid
   cmd?: CmdPosition
 }

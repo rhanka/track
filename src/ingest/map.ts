@@ -21,7 +21,11 @@ export interface MappedCommand {
   payload: Readonly<Record<string, unknown>>
   /** Positional arguments to spread into the Track method. */
   args: readonly unknown[]
+  /** Optional delivery idempotency key (v2.3c). */
+  clientToken?: string
 }
+
+const MAX_CLIENT_TOKEN = 256
 
 /** A fail-closed rejection of a malformed/illegal WorkEvent (distinct from a domain error). */
 export class IngestError extends Error {
@@ -56,7 +60,11 @@ function checkType(kind: WorkEventKind, field: string, spec: FieldSpec, v: unkno
 }
 
 /** Validate envelope + payload against the schema. Throws IngestError on any violation. */
-function validate(ev: WorkEvent): { kind: WorkEventKind; payload: Record<string, unknown> } {
+function validate(ev: WorkEvent): {
+  kind: WorkEventKind
+  payload: Record<string, unknown>
+  clientToken: string | undefined
+} {
   if (!isPlainObject(ev)) throw new IngestError('WorkEvent must be an object')
   // Reject unknown envelope keys (fail-closed): no per-event actor/sponsor/proposed — the WHO/trust come
   // from the channel context, not the event.
@@ -67,6 +75,10 @@ function validate(ev: WorkEvent): { kind: WorkEventKind; payload: Record<string,
   }
   if ((ev as { v?: unknown }).v !== 1) {
     throw new IngestError(`unsupported WorkEvent contract major (expected v:1, got ${String((ev as { v?: unknown }).v)})`)
+  }
+  const clientToken = (ev as { clientToken?: unknown }).clientToken
+  if (clientToken !== undefined && (typeof clientToken !== 'string' || clientToken.length === 0 || clientToken.length > MAX_CLIENT_TOKEN)) {
+    throw new IngestError(`clientToken must be a non-empty string of at most ${MAX_CLIENT_TOKEN} chars`)
   }
   const kind = ev.kind
   const schema = (WORK_EVENT_SCHEMA as Record<string, (typeof WORK_EVENT_SCHEMA)[WorkEventKind]>)[kind]
@@ -87,12 +99,12 @@ function validate(ev: WorkEvent): { kind: WorkEventKind; payload: Record<string,
     }
     checkType(kind, field, spec, v)
   }
-  return { kind, payload }
+  return { kind, payload, clientToken: clientToken as string | undefined }
 }
 
 /** Validate a WorkEvent and produce its mapped Track command. Pure; throws IngestError on any violation. */
 export function mapWorkEvent(ev: WorkEvent): MappedCommand {
-  const { kind, payload: p } = validate(ev)
+  const { kind, payload: p, clientToken } = validate(ev)
   const { method, settles } = WORK_EVENT_SCHEMA[kind]
   const opt = (k: string): Record<string, unknown> => (p[k] !== undefined ? { [k]: p[k] } : {})
 
@@ -162,5 +174,5 @@ export function mapWorkEvent(ev: WorkEvent): MappedCommand {
       break
   }
 
-  return { kind, method, settles, payload: p, args }
+  return { kind, method, settles, payload: p, args, ...(clientToken !== undefined ? { clientToken } : {}) }
 }

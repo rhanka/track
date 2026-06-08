@@ -2,6 +2,26 @@
 
 All notable changes to `@sentropic/track`. Format loosely follows [Keep a Changelog](https://keepachangelog.com); this package is pre-1.0 (the **event contract** is frozen, but the library/CLI surface may still evolve additively).
 
+## [0.4.0] — Ingest idempotency (`clientToken`)
+
+### Added
+- **Opt-in delivery idempotency for `ingest`.** A `WorkEvent` may carry an optional `clientToken`; ingest
+  stamps it (additive, hash-covered) onto every event it emits and **skips** a WorkEvent whose token is
+  already in the log — returning the **original** assigned id. A retry of a partial or duplicate stream is
+  then a safe no-op with stable ids: creates don't duplicate, transition replays don't throw, criterion/
+  link/assess don't re-append. Without a token, the prior at-least-once behavior is unchanged (the human
+  `track ingest` path is untouched). The token namespace is **scoped per workspace**, so a token used in
+  one workspace can never suppress or alias a write in another.
+
+### Notes
+- `EventCore.clientToken` is additive and hash-covered exactly like `prov` (0.2.0): events without it hash
+  byte-identically, no event type / `seq` / `prevHash` / chain change, fold unchanged. Double-reviewed
+  (`docs/reviews/lot-v2.3c-impl-{codex,opus}.md`).
+- **Deferred to M3** (documented): the concurrent-retry race (two *parallel* ingests both seeing the token
+  absent before either commits) needs an in-`appendCommand` token recheck under the existing write lock,
+  plus the authenticated channel's request-level idempotency; token-reuse-conflict detection (same token,
+  different content) and whole-file atomicity are likewise deferred.
+
 ## [0.3.0] — M2b write seam: `WorkEvent` ingest (channel ①)
 
 ### Added

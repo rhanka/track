@@ -15,7 +15,7 @@ import type { Disposition, Gate, ItemId, Realization, SpecStatus } from '../mode
 import type { ItemCreatedPayload } from '../model/item.js'
 import type { DecisionCreatedPayload } from '../model/decision.js'
 import type { WsjfInputs } from '../model/priority.js'
-import type { ActorId, Provenance, Ulid } from '../events/types.js'
+import type { ActorId, Provenance, TrackEvent, Ulid } from '../events/types.js'
 import type { EventStore } from '../events/store.js'
 import type { State } from '../state/fold.js'
 import { Track, type OpenBlockerInput } from '../track.js'
@@ -199,17 +199,63 @@ function applyCommand(track: Track, cmd: MappedCommand): string | undefined {
   }
 }
 
+/** The id `applyCommand` originally returned for an event carrying a clientToken (for stable retry ids). */
+function resultIdOf(e: TrackEvent): string | null {
+  switch (e.type) {
+    case 'item.created':
+    case 'decision.created':
+    case 'blocker.opened':
+      return e.aggregateId
+    case 'acceptance.criterion.added':
+      return (e.payload as { criterionId?: string }).criterionId ?? null
+    case 'acceptance.evidence.linked':
+      return (e.payload as { evidenceId?: string }).evidenceId ?? null
+    default:
+      return null
+  }
+}
+
+/** The workspace of the aggregate a stored event belongs to (for scoping the token index). */
+function eventWorkspace(e: TrackEvent, state: State): string | undefined {
+  switch (e.aggregate) {
+    case 'item':
+      return state.items.get(e.aggregateId)?.workspace
+    case 'decision':
+      return state.decisions.get(e.aggregateId)?.workspace
+    case 'blocker': {
+      const b = state.blockers.get(e.aggregateId)
+      return b ? state.items.get(b.targetId)?.workspace : undefined
+    }
+  }
+}
+
+/**
+ * Index clientToken → original result id, from the FIRST (primary) event carrying each token — SCOPED to
+ * `workspace`. The namespace is per-workspace so a token used in workspace V cannot suppress (skip) a
+ * write on a channel pinned to W, nor disclose V's id to W. (Without this, a shared global namespace would
+ * be a cross-tenant write-suppression vector once M3 admits multiple principals onto one log.)
+ */
+function tokenIndex(events: readonly TrackEvent[], state: State, workspace: string): Map<string, string | null> {
+  const idx = new Map<string, string | null>()
+  for (const e of events) {
+    if (e.clientToken === undefined || idx.has(e.clientToken)) continue
+    if (eventWorkspace(e, state) === workspace) idx.set(e.clientToken, resultIdOf(e))
+  }
+  return idx
+}
+
 /**
  * Apply a WorkEvent stream to the store under channel authorization. Each event maps 1:1 to a Track
  * command (its own locked, atomic append).
  *
- * ⚠️ AT-LEAST-ONCE, NON-ATOMIC (M2b). The loop has no batch transaction: if event k throws
- * (Ingest/DomainError), events 1..k-1 are already committed. And re-ingesting re-applies create kinds
- * (no `sourceKey` dedup — only `importBranch` dedups), so a retry after a partial/timed-out batch
- * DUPLICATES every already-applied create. Safe for a human running `track ingest` and reviewing the
- * result; a RETRYING consumer (CI/harness) MUST dedup upstream. Do NOT wire an automated-retry M3
- * channel onto this without first implementing idempotency (the reserved envelope key, or sourceKey-based
- * create dedup).
+ * IDEMPOTENCY (v2.3c): a WorkEvent carrying a `clientToken` already present in the log is SKIPPED
+ * (nothing applied) and returns its ORIGINAL assigned id — so a retry of a partial/duplicate stream is a
+ * safe no-op with stable ids. A WorkEvent WITHOUT a token keeps the at-least-once behavior (re-applies on
+ * re-ingest). The skip is single-process-correct (the M2b consumer — a human or sequential CI ingest — is
+ * not concurrent); the CONCURRENT-retry race (two parallel ingests both seeing "absent") is deferred to M3
+ * (an in-`appendCommand` token recheck under the existing lock + the authenticated channel's request-level
+ * idempotency). Note: the loop is still non-atomic (a mid-stream throw leaves earlier events committed),
+ * but with tokens a retry skips that committed prefix and resumes.
  */
 export function ingest(events: readonly WorkEvent[], ctx: IngestContext, store: EventStore): IngestResult {
   const track = new Track(store, {
@@ -218,11 +264,18 @@ export function ingest(events: readonly WorkEvent[], ctx: IngestContext, store: 
     ...(ctx.now !== undefined ? { now: ctx.now } : {}),
     ...(ctx.newId !== undefined ? { newId: ctx.newId } : {}),
   })
+  const seen = tokenIndex(store.readAll(), track.state(), ctx.workspace)
   const ids: Array<string | null> = []
   for (const ev of events) {
     const cmd = mapWorkEvent(ev)
+    if (cmd.clientToken !== undefined && seen.has(cmd.clientToken)) {
+      ids.push(seen.get(cmd.clientToken) ?? null) // already applied — skip, return the original id
+      continue
+    }
     authorize(cmd, ctx, track.state()) // fresh fold each iteration (re-fold after each apply)
-    ids.push(applyCommand(track, cmd) ?? null)
+    const id = track.withClientToken(cmd.clientToken, () => applyCommand(track, cmd)) ?? null
+    if (cmd.clientToken !== undefined) seen.set(cmd.clientToken, id) // intra-stream duplicates also skip
+    ids.push(id)
   }
   return { ids, count: events.length }
 }

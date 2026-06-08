@@ -69,6 +69,14 @@ describe('mapWorkEvent — fail-closed rejections', () => {
       /unknown WorkEvent envelope key "actor"/,
     )
   })
+  it('accepts and threads a clientToken envelope key (v2.3c)', () => {
+    const m = mapWorkEvent({ v: 1, kind: 'item.spec', payload: { itemId: 'i', to: 'specified' }, clientToken: 'tok-1' })
+    expect(m.clientToken).toBe('tok-1')
+  })
+  it('rejects an empty or oversized clientToken', () => {
+    expect(() => mapWorkEvent(bad({ v: 1, kind: 'item.spec', payload: { itemId: 'i', to: 'specified' }, clientToken: '' }))).toThrow(/clientToken/)
+    expect(() => mapWorkEvent(bad({ v: 1, kind: 'item.spec', payload: { itemId: 'i', to: 'specified' }, clientToken: 'x'.repeat(257) }))).toThrow(/clientToken/)
+  })
   it('rejects a missing required field', () => {
     expect(() => mapWorkEvent(ev('item.create', { kind: 'feature', workspace: 'ws' }))).toThrow(/missing required field "title"/)
   })

@@ -92,6 +92,8 @@ export class Track {
   private readonly newId: () => Ulid
   private readonly actor: ActorId
   private readonly prov: Provenance | undefined
+  /** Delivery idempotency token stamped on emitted events for the duration of a `withClientToken` scope. */
+  private activeClientToken: string | undefined
 
   constructor(
     private readonly store: EventStore,
@@ -108,6 +110,21 @@ export class Track {
   /** Materialized state from a full replay of the log. */
   state(): State {
     return fold(this.store.readAll())
+  }
+
+  /**
+   * Run `fn` (one command) with `token` stamped on every event it emits — the delivery idempotency key
+   * (v2.3c). Scoped (restored in `finally`), so it stamps exactly this command's batch and nothing else.
+   * `undefined` ⇒ no token (today's behavior). Not nested by the ingest seam.
+   */
+  withClientToken<T>(token: string | undefined, fn: () => T): T {
+    const prev = this.activeClientToken
+    this.activeClientToken = token
+    try {
+      return fn()
+    } finally {
+      this.activeClientToken = prev
+    }
   }
 
   createItem(input: ItemCreatedPayload): ItemId {
@@ -597,6 +614,7 @@ export class Track {
       at,
       by: this.actor,
       ...(this.prov !== undefined ? { prov: this.prov } : {}),
+      ...(this.activeClientToken !== undefined ? { clientToken: this.activeClientToken } : {}),
       payload: part.payload,
     }))
     if (events.length > 1) {

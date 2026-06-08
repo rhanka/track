@@ -11,6 +11,9 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 // against the resolved module path and never matched, so the installed CLI ran nothing. Here we
 // reproduce that exact shape — invoke the bin THROUGH a symlink — and assert it actually writes.
 const binSrc = join(dirname(fileURLToPath(import.meta.url)), 'bin.ts')
+// The repo's LOCAL tsx binary — invoking it directly avoids `npx`'s registry-resolution overhead
+// (~25s cold) that made this test exceed its timeout as the import graph grew.
+const tsx = join(dirname(fileURLToPath(import.meta.url)), '..', '..', 'node_modules', '.bin', 'tsx')
 
 let dir: string
 
@@ -28,12 +31,11 @@ describe('cli bin entry — installed-bin (symlink) regression', () => {
     symlinkSync(binSrc, link)
     expect(readlinkSync(link)).toBe(binSrc) // sanity: argv[1] will be the symlink, not the module
 
-    // `npx tsx <symlink> init` then `item new`: proves the entry runs even though argv[1] differs
-    // from the resolved module path. Uses tsx (a devDependency) so no build step is required.
-    execFileSync('npx', ['tsx', link, 'init'], { cwd: dir, stdio: 'pipe' })
+    // `tsx <symlink> item new`: proves the entry runs runCli even though argv[1] (the symlink) differs
+    // from the resolved module path. tsx is a devDependency, so no build step is required.
     const out = execFileSync(
-      'npx',
-      ['tsx', link, 'item', 'new', '--kind', 'feature', '--title', 'X', '--workspace', 'ws'],
+      tsx,
+      [link, 'item', 'new', '--kind', 'feature', '--title', 'X', '--workspace', 'ws'],
       { cwd: dir, encoding: 'utf8' },
     )
 
