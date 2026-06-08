@@ -2,6 +2,33 @@
 
 All notable changes to `@sentropic/track`. Format loosely follows [Keep a Changelog](https://keepachangelog.com); this package is pre-1.0 (the **event contract** is frozen, but the library/CLI surface may still evolve additively).
 
+## [0.3.0] — M2b write seam: `WorkEvent` ingest (channel ①)
+
+### Added
+- **Neutral `WorkEvent` ingest contract + pure mapper** (`@sentropic/track` internals; `INGEST_CONTRACT_VERSION`).
+  A transport-agnostic envelope `{v, kind, payload}` maps 1:1 to a Track command; `mapWorkEvent` validates
+  fail-closed (unknown major/kind/envelope-key/payload-field, bad type/enum). The CLI's write enums are now
+  sourced from this single contract (the CLI's `oneOf` checks and the mapper cannot diverge).
+- **`ingest()` with channel-bound authorization.** The WHO/trust come from an `IngestContext` (fixed when
+  the channel opens), never the event. Two gates run against freshly-folded state before every write:
+  **workspace containment** (the affected aggregate's — and a decision's targets' — workspace must equal
+  the channel's; resolved from state, since the payload carries `workspace` only on the two create kinds)
+  and a **binding allowlist** (`decision.outcome`, `acceptance.waive`/`run`, `realize→done|cancelled`,
+  `blocker.resolve` require `auth ∈ {local-user, signed}` — an unauthenticated channel may only
+  create/prepare). MCP stays read-only; the authenticated network channel is deferred to M3.
+- **`track ingest <file.jsonl> --workspace <w>`** — a local CLI verb (a local-file adapter like
+  `branch import` / `accept run --from`, not a network transport) that applies a WorkEvent stream as the
+  local user, stamped `prov.transport:'import'`. Parity-tested **byte-for-byte** against the direct Track
+  facade across all 14 kinds incl. `cmdId` batches and go/no-go outcomes.
+
+### Notes
+- The frozen event contract is unchanged (no new event types / seq / prevHash / hash); `prov` remains the
+  sole provenance carrier. Double-reviewed (`docs/reviews/lot-v2.3b{,-impl}-{codex,opus}.md`).
+- **Ingest is at-least-once and non-atomic** in 0.3.0: re-ingesting re-applies create kinds (no dedup) and
+  a mid-stream failure leaves earlier events committed. Safe for a human running `track ingest`; a
+  **retrying consumer (CI/harness) must dedup upstream**. Idempotency (a reserved envelope key /
+  `sourceKey` create dedup) is a prerequisite before any M3 automated-retry channel.
+
 ## [0.2.2] — Cross-process write serialization (integrity fix)
 
 ### Fixed

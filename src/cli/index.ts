@@ -13,6 +13,21 @@ import type { Bucket } from '../report/buckets.js'
 import { formatRows, type Format } from '../report/format.js'
 import { Track } from '../track.js'
 import type { ActorId, Provenance } from '../events/types.js'
+import {
+  BLOCKER_KINDS,
+  DECISION_KINDS,
+  DISPOSITIONS,
+  EVIDENCE_KINDS,
+  GATES,
+  ITEM_KINDS,
+  OUTCOMES,
+  REALIZE_TARGETS,
+  RESOLUTION_RULES,
+  RESULTS,
+  SPEC_TARGETS,
+  type WorkEvent,
+} from '../ingest/contract.js'
+import { ingest, type IngestContext } from '../ingest/ingest.js'
 import { TrackReader } from '../read/contract.js'
 import { queryText, reportText } from '../read/commands.js'
 import { VERSION } from '../version.js'
@@ -50,22 +65,15 @@ const USAGE = `usage: track <command>
   query [--kind <k>] [--workspace <w>] [--bucket <AWAITED|DROPPED|DONE|TO-DO>] [--realization <r>] [--acceptance <a>] [--format json|text|md] [--commit <sha>]
   validate [--commit <sha>]
   branch import <BRANCH.md> [--commit <sha>]
+  ingest <file.jsonl> --workspace <w>
 `
 
-const ITEM_KINDS = ['feature', 'bug', 'chore'] as const
-const SPEC_TARGETS = ['to-specify', 'specified'] as const
-const REALIZE_TARGETS = ['in-progress', 'done', 'cancelled'] as const
+// Write enums (ITEM_KINDS, SPEC_TARGETS, REALIZE_TARGETS, DECISION_KINDS, OUTCOMES, GATES, DISPOSITIONS,
+// BLOCKER_KINDS, RESOLUTION_RULES, EVIDENCE_KINDS, RESULTS) are sourced from the ingest contract — the
+// SINGLE source, so the CLI's `oneOf` checks and the WorkEvent mapper cannot diverge on accepted values.
+// (`linked-accepted` openness is DERIVED at report/query time vs `--commit`, v2.2a hybrid-A; see
+// src/report/blocker-status.ts.) Only CLI/read-projection enums stay local:
 const REALIZATIONS = ['to-do', 'in-progress', 'done', 'cancelled', 'rejected'] as const
-const DECISION_KINDS = ['orientation', 'commitment'] as const
-const OUTCOMES = ['go', 'no-go', 'deferred'] as const
-const GATES = ['orientation', 'commitment'] as const
-const DISPOSITIONS = ['required', 'skipped', 'not-applicable'] as const
-const BLOCKER_KINDS = ['decision', 'dependency'] as const
-// `linked-accepted` openness is DERIVED at report/query time vs `--commit` (v2.2a hybrid-A):
-// the gate re-opens when the ref regresses. See src/report/blocker-status.ts.
-const RESOLUTION_RULES = ['linked-done', 'linked-accepted', 'manual'] as const
-const EVIDENCE_KINDS = ['unit', 'integration', 'e2e', 'manual'] as const
-const RESULTS = ['pass', 'fail'] as const
 const FROM_FORMATS = ['junit', 'json'] as const
 const BUCKETS_ARG = ['AWAITED', 'DROPPED', 'DONE', 'TO-DO'] as const
 // `n/a` is decision-only; `query` projects non-decision rows, so it would never match.
@@ -195,6 +203,8 @@ export function runCli(argv: string[], io: CliIO): number {
         return cmdValidate(rest, io)
       case 'branch':
         return cmdBranch(rest, io)
+      case 'ingest':
+        return cmdIngest(rest, io)
       default:
         io.err(USAGE)
         return 2
@@ -465,5 +475,40 @@ function cmdBranch(args: string[], io: CliIO): number {
     commit: opt(flags, 'commit') ?? gitHead(io.cwd),
   })
   io.out(`Imported ${result.branchSlug}: ${result.created} created, ${result.updated} updated\n`)
+  return 0
+}
+
+/**
+ * `track ingest <file.jsonl> --workspace <w>` — apply a neutral WorkEvent stream (M2b channel ①). A
+ * local-user channel pinned to one workspace; provenance is `transport:'import'` to keep batch ingest
+ * distinguishable from interactive CLI writes in the audit log. Same shape as `branch import` /
+ * `accept run --from`: a local-file adapter, not a network transport.
+ */
+function cmdIngest(args: string[], io: CliIO): number {
+  const { positional, flags } = parseFlags(args)
+  const file = positional[0]
+  if (file === undefined) {
+    io.err('usage: track ingest <file.jsonl> --workspace <w>\n')
+    return 2
+  }
+  const workspace = req(flags, 'workspace')
+  const raw = readFileSync(isAbsolute(file) ? file : join(io.cwd, file), 'utf8')
+  const events: WorkEvent[] = []
+  raw.split('\n').forEach((line, i) => {
+    const trimmed = line.trim()
+    if (trimmed.length === 0) return
+    try {
+      events.push(JSON.parse(trimmed) as WorkEvent)
+    } catch {
+      throw new DomainError(`ingest: malformed JSON on line ${i + 1}`)
+    }
+  })
+  const ctx: IngestContext = {
+    by: cliActor(io.cwd),
+    workspace,
+    prov: { transport: 'import', proposed: false, auth: 'local-user' },
+  }
+  const result = ingest(events, ctx, store(io.cwd))
+  for (const id of result.ids) io.out(`${id ?? '-'}\n`)
   return 0
 }
