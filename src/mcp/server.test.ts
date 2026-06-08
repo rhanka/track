@@ -48,6 +48,7 @@ describe('MCP read server — tool surface', () => {
   it('exposes exactly the read-only tools', () => {
     expect(READ_TOOLS.map((t) => t.name).sort()).toEqual([
       'track_branch_provenance',
+      'track_external_deps',
       'track_freshness',
       'track_query',
       'track_report',

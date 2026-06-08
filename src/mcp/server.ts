@@ -74,6 +74,11 @@ export const READ_TOOLS = [
       required: ['locator', 'content'],
     },
   },
+  {
+    name: 'track_external_deps',
+    description: 'Open external (scope:extra) dependencies awaiting an h2a ENGAGEMENT, as JSON [{blockerId, targetId, engagementRef, openedAt}]. What an h2a bridge watches to resolve when an engagement settles.',
+    inputSchema: { type: 'object', properties: {} },
+  },
 ] as const
 
 function reqStr(args: Record<string, unknown>, key: string): string {
@@ -144,6 +149,8 @@ export function dispatchReadTool(
     }
     case 'track_validate':
       return JSON.stringify(reader.validate(), null, 2)
+    case 'track_external_deps':
+      return JSON.stringify(reader.externalDependencies(), null, 2)
     case 'track_branch_provenance':
       return JSON.stringify(reader.branchProvenance(reqStr(args, 'locator')) ?? null, null, 2)
     case 'track_freshness':

@@ -30,7 +30,7 @@ import { fold } from '../state/fold.js'
  * shapes it returns may only GROW (new methods / new optional fields); nothing is removed or
  * repurposed without a major bump. Consumers gate on `reader.contractVersion`.
  */
-export const READ_CONTRACT_VERSION = '1.0.0'
+export const READ_CONTRACT_VERSION = '1.1.0' // +externalDependencies() (Lot C, additive)
 
 /** Provenance of the last `branch.imported` for a locator (drawn from the raw event log). */
 export interface BranchProvenance {
@@ -63,6 +63,18 @@ export class StaleSidecarError extends Error {
 const isSha256 = (v: unknown): v is Sha256 => typeof v === 'string' && v.startsWith('sha256:')
 
 /**
+ * An OPEN external (`scope:'extra'`) dependency — a cross-repo/cross-agent blocker awaiting its h2a
+ * ENGAGEMENT. This is the read surface an **h2a bridge** watches: when the engagement (`engagementRef`)
+ * settles, the bridge resolves the dep via a signed `blocker.resolve` (M3). Track records, never reads h2a.
+ */
+export interface ExternalDependency {
+  blockerId: string
+  targetId: string
+  engagementRef: string
+  openedAt: string
+}
+
+/**
  * Read-only, versioned consumption surface over a frozen track log. Holds NO `git` and only reads
  * the event file/head via `fs` — a baseline commit is supplied by the caller via `ReportOptions`
  * (the adapter owns `git`, not this layer — PLAN-v2 stack note).
@@ -92,6 +104,22 @@ export class TrackReader {
   /** Recompute the integrity chain (SPEC §3) — pure detector, never repairs. */
   validate(): IntegrityResult {
     return validate(this.events(), readHead(this.eventsPath))
+  }
+
+  /**
+   * Open external (`scope:'extra'`) dependencies — what an h2a bridge watches to resolve when an
+   * ENGAGEMENT settles (Lot C). Read-only; the bridge resolves each via a signed `blocker.resolve`.
+   * Baseline-free (an external dep resolves only by an explicit event, never commit-relative).
+   */
+  externalDependencies(): ExternalDependency[] {
+    const state = fold(this.events())
+    const out: ExternalDependency[] = []
+    for (const b of state.blockers.values()) {
+      if (b.open && b.kind === 'dependency' && b.scope === 'extra' && b.engagementRef !== undefined) {
+        out.push({ blockerId: b.id, targetId: b.targetId, engagementRef: b.engagementRef, openedAt: b.openedAt })
+      }
+    }
+    return out
   }
 
   /** Latest VALID `branch.imported` provenance for `locator`, or `undefined`. */

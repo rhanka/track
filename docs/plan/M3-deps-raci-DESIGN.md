@@ -91,9 +91,15 @@ milestones, zero duplication.
     auth: 'signed', principal: verifiedPrincipalId, sig?: <H2ASignature> } }, store)`. track does no
     verification; it records `prov.auth:'signed'` + `principal` (+ `sig`). The CLI is NOT extended (it stays
     `transport:'cli', auth:'local-user'`) — signed contexts are constructed programmatically by the caller.
-- **Lot C (h2a bridge):** the automated path — an h2a engagement reaching `accepted`/`stabilized` crosses
-  the (M3) signed channel as a neutral `blocker.resolved` WorkEvent carrying the `engagementRef`. Gated on
-  Lot B.
+- **Lot C (h2a bridge) — SHIPPED.** The automated path: when an h2a engagement reaches
+  `accepted`/`stabilized`, the **bridge** (a signed channel) finds the open external deps via
+  `TrackReader.externalDependencies()` (also exposed as the `track_external_deps` read MCP tool), keyed on
+  `engagementRef`, and resolves **each** by `blockerId` with a signed `blocker.resolve` (admitted because
+  `BINDING_AUTH` includes `'signed'`; workspace containment still applies). The `blocker.resolve` WorkEvent
+  carries only `{blockerId}` (resolve-by-blockerId — one engagement blocking N items ⇒ N resolves; a bulk
+  resolve-by-`engagementRef` is a deferred write-path feature, not needed here). The emitted
+  `blocker.resolved` **event** records the `engagementRef` (stamped server-side from the blocker) so an
+  auditor can tie a resolution back to its engagement. Track records; it never reads h2a state.
 
 ## Frozen-contract risk
 Low and precedented — all additions are payload/enum-only on existing event types (hash-identical for old

@@ -341,7 +341,12 @@ export class Track {
     if (!blocker) throw new DomainError(`unknown blocker ${blockerId}`)
     assertManualResolve(blocker)
     if (!blocker.open) throw new DomainError(`blocker ${blockerId} is already resolved`)
-    this.emit('blocker', blockerId, 'blocker.resolved', { blockerId })
+    // For an `extra` dep, stamp the `engagementRef` onto the resolved event (additive) so an auditor can
+    // tie a resolution back to the h2a ENGAGEMENT that triggered it — without re-folding to the opened event.
+    this.emit('blocker', blockerId, 'blocker.resolved', {
+      blockerId,
+      ...(blocker.engagementRef !== undefined ? { engagementRef: blocker.engagementRef } : {}),
+    })
   }
 
   // ---- Acceptance (SPEC §2.4) ----

@@ -2,6 +2,25 @@
 
 All notable changes to `@sentropic/track`. Format loosely follows [Keep a Changelog](https://keepachangelog.com); this package is pre-1.0 (the **event contract** is frozen, but the library/CLI surface may still evolve additively).
 
+## [0.7.0] — h2a-bridge read surface (M3 deps/RACI plan complete)
+
+### Added
+- **`TrackReader.externalDependencies()`** (read contract → `1.1.0`, additive) + the **`track_external_deps`**
+  read-only MCP tool — the open external (`scope:'extra'`) dependencies an h2a bridge watches:
+  `[{ blockerId, targetId, engagementRef, openedAt }]`. When an h2a ENGAGEMENT settles, the bridge (a signed
+  channel) finds the deps keyed on `engagementRef` and resolves **each** by `blockerId` via a signed
+  `blocker.resolve` (admitted because the binding-auth allowlist includes `'signed'`; workspace containment
+  still applies). The emitted `blocker.resolved` event now records the `engagementRef` (audit correlation).
+
+### Notes
+- Read-only / additive (the read contract only grows; the frozen event contract is untouched apart from the
+  additive `engagementRef` audit field on `blocker.resolved`). Double-reviewed
+  (`docs/reviews/lot-C-bridge-{codex,opus}.md`). **Completes the M3-deps-raci plan**
+  (`docs/plan/M3-deps-raci-DESIGN.md`): deps/RACI + intra/extra dependencies (0.5.0) → signed write channel
+  (0.6.0) → bridge read surface (0.7.0). Deferred (tracked, non-blocking): a bulk resolve-by-`engagementRef`
+  primitive (one engagement → N items ⇒ N resolves today); the bridge's automated retry should carry a
+  `clientToken` (already idempotent) — an untokened double-resolve errors.
+
 ## [0.6.0] — M3 signed write channel (library-import)
 
 ### Added
