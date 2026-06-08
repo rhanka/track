@@ -32,7 +32,8 @@ export function effectiveBlockerOpen(
   baselineCommit: string,
 ): boolean {
   if (blocker.resolvedByEvent) return false
-  if (blocker.kind === 'dependency' && blocker.resolutionRule === 'linked-accepted') {
+  // `linked-accepted` is intra-only — `ref` is always a local item here; an `extra` dep is `manual`.
+  if (blocker.kind === 'dependency' && blocker.resolutionRule === 'linked-accepted' && blocker.ref !== undefined) {
     return !ACCEPTED_CLOSES.has(acceptanceStatus(state, blocker.ref, baselineCommit))
   }
   return blocker.open

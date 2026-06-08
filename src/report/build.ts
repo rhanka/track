@@ -1,4 +1,5 @@
 import { acceptanceStatus } from '../accept/status.js'
+import type { ActorId } from '../events/types.js'
 import type { AcceptanceStatus } from '../model/acceptance.js'
 import type { DecisionKind, Outcome } from '../model/decision.js'
 import type { ItemId, ItemKind, ItemState, Realization } from '../model/item.js'
@@ -14,6 +15,8 @@ export interface ReportRow {
   realization: Realization
   acceptance: AcceptanceStatus
   priority?: number
+  accountable?: ActorId // RACI-A (Lot A) — surfaced for "who is answerable for this item"
+  engagementRef?: string // present ⇒ an h2a contract backs this item
 }
 
 export interface DecisionRow {
@@ -23,6 +26,7 @@ export interface DecisionRow {
   decisionKind: DecisionKind
   realization: Realization
   outcome: Outcome
+  accountable?: ActorId // the decision sponsor (D6)
 }
 
 export interface Report {
@@ -46,6 +50,8 @@ function toRow(state: State, item: ItemState, config: ReportConfig): ReportRow {
     realization: item.realization,
     acceptance: acceptanceStatus(state, item.id, config.baselineCommit),
     ...(item.priority !== undefined ? { priority: item.priority.score } : {}),
+    ...(item.accountable !== undefined ? { accountable: item.accountable } : {}),
+    ...(item.engagementRef !== undefined ? { engagementRef: item.engagementRef } : {}),
   }
 }
 
@@ -81,6 +87,7 @@ export function buildReport(state: State, options: ReportOptions): Report {
       decisionKind: d.decisionKind,
       realization: d.realization,
       outcome: d.outcome,
+      ...(d.accountable !== undefined ? { accountable: d.accountable } : {}),
     }))
   }
   return report

@@ -2,6 +2,32 @@
 
 All notable changes to `@sentropic/track`. Format loosely follows [Keep a Changelog](https://keepachangelog.com); this package is pre-1.0 (the **event contract** is frozen, but the library/CLI surface may still evolve additively).
 
+## [0.5.0] — Dependencies, RACI & contractualization handle (M3 prelude, Lot A)
+
+### Added
+- **RACI fields** (additive): `accountable?` (RACI-A — the answerable owner) and `responsible?` (RACI-R —
+  the doers) on Items; `accountable?` on Decisions, where it **is the decision sponsor** (resolves D6 —
+  supersedes the reserved separate `sponsor` field). Surfaced in fold + report rows.
+- **Intra- vs extra-repo dependency blockers.** A `dependency` blocker now carries an optional
+  `scope: 'intra' | 'extra'`. `intra` (the default — implicit, byte-unchanged) keeps the local-`ref`
+  invariant. `extra` expresses a **cross-repo/cross-agent** dependency: it omits the local `ref`, requires
+  an opaque **`engagementRef`** (an h2a ENGAGEMENT id), and resolves `manual` only — track records the
+  external dependency but never reads or coordinates h2a's state.
+- **`engagementRef?`** on Items, Decisions, and Blockers — the link to an h2a executable contract; present
+  ⇒ a contract backs this record. The boundary stays clean: **track owns the record; h2a owns the
+  contract** (charter / negotiation / signatures).
+- All of the above flow through the CLI (`item new`/`decision new`/`blocker raise` flags) and the neutral
+  `WorkEvent` ingest contract.
+
+### Notes
+- Additive and frozen-contract-neutral (payload/enum-only on existing event types; old events hash
+  byte-identically — the proven `prov`/`clientToken` pattern). A new fail-closed `validate` finding
+  (`blocker-scope`) enforces the dependency-scope invariant on the log, so a self-consistent but illegal
+  blocker (from a future writer or a direct append) cannot fold into a foreign-`ref` dereference.
+- Double-reviewed (`docs/reviews/lot-A-deps-raci-{codex,opus}.md`). Design + boundary:
+  `docs/plan/M3-deps-raci-DESIGN.md`. **M3** (the authenticated server-to-server write channel, signed
+  `prov.auth`) and the **h2a bridge** (automated `extra`-dep resolution) are subsequent lots.
+
 ## [0.4.0] — Ingest idempotency (`clientToken`)
 
 ### Added

@@ -32,6 +32,7 @@ export type IntegrityFinding =
   | { kind: 'batch-noncontiguous'; cmdId: string; index: number }
   | { kind: 'truncation'; expected: number; actual: number }
   | { kind: 'head-mismatch'; index: number; expected: Sha256 | null; actual: Sha256 }
+  | { kind: 'blocker-scope'; index: number; eventId: string; reason: string }
 
 export interface IntegrityResult {
   ok: boolean
@@ -139,9 +140,42 @@ export function validate(
   }
 
   findings.push(...validateBatches(events))
+  findings.push(...validateBlockerScope(events))
   findings.push(...validateHead(events, head))
 
   return { ok: findings.length === 0, findings }
+}
+
+/**
+ * Lot A fail-closed assertion (the single mitigation for the relaxed `openBlocker` ref check): a
+ * dependency `blocker.opened` must satisfy `scope:'extra' ⇒ ref absent ∧ engagementRef present`, and
+ * conversely an intra dependency must carry a `ref`. `openBlocker` enforces this at write time, but a
+ * self-consistent (valid-hash) event from a future writer / the Lot C bridge / a direct append must NOT
+ * fold into a state where the `linked-done`/`linked-accepted` projection dereferences a foreign ref.
+ */
+function validateBlockerScope(events: ReadonlyArray<TrackEvent>): IntegrityFinding[] {
+  const findings: IntegrityFinding[] = []
+  for (let i = 0; i < events.length; i++) {
+    const e = events[i]!
+    if (e.type !== 'blocker.opened') continue
+    const p = e.payload as { kind?: unknown; ref?: unknown; scope?: unknown; engagementRef?: unknown; resolutionRule?: unknown }
+    let reason: string | undefined
+    if (p.kind === 'decision') {
+      if (p.ref === undefined) reason = 'decision blocker requires a ref'
+    } else if (p.kind === 'dependency') {
+      if (p.scope === 'extra') {
+        if (p.ref !== undefined) reason = 'extra-scope dependency must not carry a local ref'
+        else if (typeof p.engagementRef !== 'string' || p.engagementRef.length === 0)
+          reason = 'extra-scope dependency requires a non-empty engagementRef'
+        else if (p.resolutionRule !== undefined && p.resolutionRule !== 'manual')
+          reason = "extra-scope dependency must resolve 'manual' (track cannot see h2a state)"
+      } else if (p.ref === undefined) {
+        reason = 'intra-scope dependency requires a ref'
+      }
+    }
+    if (reason !== undefined) findings.push({ kind: 'blocker-scope', index: i, eventId: e.id, reason })
+  }
+  return findings
 }
 
 interface BatchMember {

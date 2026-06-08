@@ -19,6 +19,7 @@ export {
   assertManualResolve,
   type BlockerKind,
   type BlockerOpenedPayload,
+  type BlockerScope,
   type BlockerState,
   type ResolutionRule,
 } from './blocker.js'

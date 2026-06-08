@@ -93,6 +93,9 @@ function applyEvent(state: State, event: TrackEvent): void {
         ...(payload.sourceKey !== undefined ? { sourceKey: payload.sourceKey } : {}),
         ...(payload.body !== undefined ? { body: payload.body } : {}),
         ...(payload.links !== undefined ? { links: payload.links } : {}),
+        ...(payload.accountable !== undefined ? { accountable: payload.accountable } : {}),
+        ...(payload.responsible !== undefined ? { responsible: payload.responsible } : {}),
+        ...(payload.engagementRef !== undefined ? { engagementRef: payload.engagementRef } : {}),
       }
       state.items.set(item.id, item)
       break
@@ -114,6 +117,8 @@ function applyEvent(state: State, event: TrackEvent): void {
         ...(payload.sourceKey !== undefined ? { sourceKey: payload.sourceKey } : {}),
         ...(payload.body !== undefined ? { body: payload.body } : {}),
         ...(payload.links !== undefined ? { links: payload.links } : {}),
+        ...(payload.accountable !== undefined ? { accountable: payload.accountable } : {}),
+        ...(payload.engagementRef !== undefined ? { engagementRef: payload.engagementRef } : {}),
       }
       state.decisions.set(decision.id, decision)
       break
@@ -229,13 +234,15 @@ function applyEvent(state: State, event: TrackEvent): void {
         id: event.aggregateId,
         targetId: payload.targetId,
         kind: payload.kind,
-        ref: payload.ref,
         reason: payload.reason,
         openedAt: event.at,
         resolvedByEvent: false,
         open: true,
+        ...(payload.ref !== undefined ? { ref: payload.ref } : {}),
         ...(resolutionRule !== undefined ? { resolutionRule } : {}),
         ...(payload.owner !== undefined ? { owner: payload.owner } : {}),
+        ...(payload.scope !== undefined ? { scope: payload.scope } : {}),
+        ...(payload.engagementRef !== undefined ? { engagementRef: payload.engagementRef } : {}),
       }
       state.blockers.set(blocker.id, blocker)
       break
@@ -266,8 +273,9 @@ function applyEvent(state: State, event: TrackEvent): void {
 
 function isOpen(blocker: BlockerState, items: Map<ItemId, ItemState>): boolean {
   if (blocker.resolvedByEvent) return false
-  // Dependency default is linked-done (robust even if the rule was omitted upstream).
-  if (blocker.kind === 'dependency' && (blocker.resolutionRule ?? 'linked-done') === 'linked-done') {
+  // Dependency default is linked-done (robust even if the rule was omitted upstream). `ref` is always
+  // present for a linked-done dep (intra); an `extra` dep is `manual` and never reaches this branch.
+  if (blocker.ref !== undefined && blocker.kind === 'dependency' && (blocker.resolutionRule ?? 'linked-done') === 'linked-done') {
     // NOTE (open question, flagged for Lot 5): a ref that ends `cancelled`/`rejected` keeps this
     // blocker OPEN (target stays AWAITED) — SPEC §2.9 resolves only on ref `done`. Reversible.
     return items.get(blocker.ref)?.realization !== 'done'

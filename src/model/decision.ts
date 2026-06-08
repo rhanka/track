@@ -5,6 +5,7 @@ import {
   type Link,
   type Realization,
 } from './item.js'
+import type { ActorId } from '../events/types.js'
 import type { PriorityAssessment } from './priority.js'
 
 export type DecisionKind = Gate // a Decision's kind == the gate it settles (SPEC §2.10)
@@ -50,6 +51,10 @@ export interface DecisionState {
   sourceKey?: string
   body?: string
   links?: Link[]
+  // Lot A (additive): `accountable` IS the decision sponsor (D6 resolved — supersedes the reserved
+  // separate `sponsor` field). `engagementRef` links to an h2a ENGAGEMENT (the executable contract).
+  accountable?: ActorId
+  engagementRef?: string
 }
 
 export interface DecisionCreatedPayload {
@@ -62,6 +67,8 @@ export interface DecisionCreatedPayload {
   sourceKey?: string
   body?: string
   links?: Link[]
+  accountable?: ActorId
+  engagementRef?: string
 }
 
 // outcome machine (SPEC §2.6): pending → {go,no-go,deferred}; deferred → {go,no-go}; go/no-go terminal.

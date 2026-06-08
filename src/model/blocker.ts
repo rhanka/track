@@ -3,15 +3,24 @@ import type { ActorId } from '../events/types.js'
 
 export type BlockerKind = 'decision' | 'dependency'
 export type ResolutionRule = 'linked-done' | 'linked-accepted' | 'manual'
+/**
+ * Lot A: a dependency blocker is `intra` (default — `ref` is a LOCAL item, today's behavior) or `extra`
+ * (a cross-repo/cross-agent dependency — `ref` is OMITTED, `engagementRef` points at an h2a ENGAGEMENT;
+ * resolves `manual` only, since track cannot see h2a's state). The discriminant lets a channel/consumer
+ * tell an internal item↔item link from an external contractual dependency.
+ */
+export type BlockerScope = 'intra' | 'extra'
 
 export interface BlockerState {
   id: BlockerId
   targetId: ItemId
   kind: BlockerKind
-  ref: ItemId
+  ref?: ItemId // present for `intra` deps + `decision` blockers; ABSENT for an `extra` dep
   reason: string
   resolutionRule?: ResolutionRule // dependency only
   owner?: ActorId
+  scope?: BlockerScope // dependency only; absent ⇒ `intra`
+  engagementRef?: string // required iff scope === 'extra'
   openedAt: string
   resolvedAt?: string
   resolvedByEvent: boolean // resolved by an explicit blocker.resolved event (manual or decision)
@@ -22,10 +31,12 @@ export interface BlockerOpenedPayload {
   blockerId: BlockerId
   targetId: ItemId
   kind: BlockerKind
-  ref: ItemId
+  ref?: ItemId
   reason: string
   resolutionRule?: ResolutionRule
   owner?: ActorId
+  scope?: BlockerScope
+  engagementRef?: string
 }
 
 /**

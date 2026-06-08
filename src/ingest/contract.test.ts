@@ -69,7 +69,7 @@ describe('WorkEvent contract surface', () => {
         settles: 'never',
         required: ['itemId', 'jobSize', 'riskReductionOpportunityEnablement', 'timeCriticality', 'userBusinessValue'],
       },
-      'blocker.raise': { method: 'openBlocker', settles: 'never', required: ['kind', 'ref', 'targetId'] },
+      'blocker.raise': { method: 'openBlocker', settles: 'never', required: ['kind', 'targetId'] },
       'blocker.resolve': { method: 'resolveBlocker', settles: 'always', required: ['blockerId'] },
     })
   })

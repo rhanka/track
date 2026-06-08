@@ -24,6 +24,7 @@ import {
 import {
   assertManualResolve,
   type BlockerKind,
+  type BlockerScope,
   type ResolutionRule,
 } from './model/blocker.js'
 import {
@@ -76,10 +77,12 @@ export interface TrackOptions {
 export interface OpenBlockerInput {
   targetId: ItemId
   kind: BlockerKind
-  ref: ItemId
+  ref?: ItemId // required for `intra` deps + `decision` blockers; MUST be omitted for an `extra` dep
   reason: string
   resolutionRule?: ResolutionRule
   owner?: ActorId
+  scope?: BlockerScope // dependency only; absent ⇒ `intra`
+  engagementRef?: string // required iff scope === 'extra'
 }
 
 /**
@@ -288,26 +291,46 @@ export class Track {
     if (!state.items.has(input.targetId)) {
       throw new DomainError(`unknown target item ${input.targetId}`)
     }
+    // Lot A: `extra`-scope dependencies reference an h2a ENGAGEMENT (cross-repo/cross-agent), not a local
+    // item; `intra` (default) and `decision` keep today's local-ref invariant.
+    const scope: BlockerScope = input.kind === 'dependency' ? (input.scope ?? 'intra') : 'intra'
+    let resolutionRule: ResolutionRule | undefined
+
     if (input.kind === 'decision') {
-      if (!state.decisions.has(input.ref)) {
-        throw new DomainError(`a decision blocker's ref must be an existing decision (${input.ref})`)
+      if (input.ref === undefined || !state.decisions.has(input.ref)) {
+        throw new DomainError(`a decision blocker's ref must be an existing decision (${String(input.ref)})`)
       }
-    } else if (!state.items.has(input.ref)) {
-      throw new DomainError(`unknown ref item ${input.ref}`)
+    } else if (scope === 'extra') {
+      if (input.engagementRef === undefined || input.engagementRef.length === 0) {
+        throw new DomainError('an extra-scope dependency blocker requires an engagementRef (an h2a engagement id)')
+      }
+      if (input.ref !== undefined) {
+        throw new DomainError('an extra-scope dependency blocker must NOT carry a local ref (it references the engagementRef)')
+      }
+      if (input.resolutionRule !== undefined && input.resolutionRule !== 'manual') {
+        throw new DomainError(`an extra-scope dependency resolves 'manual' only (got '${input.resolutionRule}') — track cannot see h2a state`)
+      }
+      resolutionRule = 'manual'
+    } else {
+      if (input.ref === undefined || !state.items.has(input.ref)) {
+        throw new DomainError(`unknown ref item ${String(input.ref)}`)
+      }
+      // `linked-accepted` openness is resolved by the commit-relative projection (v2.2a hybrid-A);
+      // see report/blocker-status.ts.
+      resolutionRule = input.resolutionRule ?? 'linked-done'
     }
+
     const blockerId = this.newId()
-    const resolutionRule: ResolutionRule | undefined =
-      input.kind === 'dependency' ? (input.resolutionRule ?? 'linked-done') : undefined
-    // `linked-accepted` is now resolved by the commit-relative projection (v2.2a hybrid-A):
-    // openness = ref not accepted at the report's baselineCommit (revocable). See report/blocker-status.ts.
     this.emit('blocker', blockerId, 'blocker.opened', {
       blockerId,
       targetId: input.targetId,
       kind: input.kind,
-      ref: input.ref,
+      ...(input.ref !== undefined ? { ref: input.ref } : {}),
       reason: input.reason,
       ...(resolutionRule !== undefined ? { resolutionRule } : {}),
       ...(input.owner !== undefined ? { owner: input.owner } : {}),
+      ...(scope === 'extra' ? { scope } : {}),
+      ...(input.engagementRef !== undefined ? { engagementRef: input.engagementRef } : {}),
     })
     return blockerId
   }

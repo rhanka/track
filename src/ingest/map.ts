@@ -158,14 +158,17 @@ export function mapWorkEvent(ev: WorkEvent): MappedCommand {
       break
     case 'blocker.raise':
       // openBlocker(OpenBlockerInput) — reason defaults to '' to match the CLI (`opt(reason) ?? ''`).
+      // `ref` is conditional (omitted for an `extra` dep); the Track method enforces the intra/extra rules.
       args = [
         {
           targetId: p['targetId'],
           kind: p['kind'],
-          ref: p['ref'],
+          ...opt('ref'),
           reason: p['reason'] ?? '',
           ...opt('resolutionRule'),
           ...opt('owner'),
+          ...opt('scope'),
+          ...opt('engagementRef'),
         },
       ]
       break

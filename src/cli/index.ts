@@ -6,7 +6,7 @@ import { readHead } from '../events/head.js'
 import { EventStore } from '../events/store.js'
 import { validate } from '../events/validate.js'
 import type { EvidenceKind, RunResult } from '../model/acceptance.js'
-import type { BlockerKind, ResolutionRule } from '../model/blocker.js'
+import type { BlockerKind, BlockerScope, ResolutionRule } from '../model/blocker.js'
 import type { DecisionKind, Outcome } from '../model/decision.js'
 import { DomainError, type Disposition, type Gate, type ItemKind, type Realization, type SpecStatus } from '../model/item.js'
 import type { Bucket } from '../report/buckets.js'
@@ -15,6 +15,7 @@ import { Track } from '../track.js'
 import type { ActorId, Provenance } from '../events/types.js'
 import {
   BLOCKER_KINDS,
+  BLOCKER_SCOPES,
   DECISION_KINDS,
   DISPOSITIONS,
   EVIDENCE_KINDS,
@@ -44,16 +45,16 @@ type Flags = Record<string, string | true>
 const USAGE = `usage: track <command>
   --version | -v
   init
-  item new --kind <feature|bug|chore> --title <t> --workspace <w> [--body <b>] [--parent <id>]
+  item new --kind <feature|bug|chore> --title <t> --workspace <w> [--body <b>] [--parent <id>] [--accountable <a>] [--responsible <a,a>] [--engagement-ref <e>]
   item spec <itemId> <to-specify|specified>
   item realize <itemId> <in-progress|done|cancelled>
   item show <itemId>
   item ls [--workspace <w>] [--kind <feature|bug|chore>] [--format json|text|md]
-  decision new --kind <orientation|commitment> --title <t> --workspace <w> --targets <id,id> [--context <c>]
+  decision new --kind <orientation|commitment> --title <t> --workspace <w> --targets <id,id> [--context <c>] [--accountable <a>] [--engagement-ref <e>]
   decision outcome <decisionId> <go|no-go|deferred>
   decision dossier <decisionId> --context <c>
   decision disposition <itemId> <orientation|commitment> <required|skipped|not-applicable>
-  blocker raise --target <id> --kind <decision|dependency> --ref <id> [--reason <r>] [--rule <linked-done|linked-accepted|manual>]
+  blocker raise --target <id> --kind <decision|dependency> [--ref <id>] [--reason <r>] [--rule <linked-done|linked-accepted|manual>] [--scope <intra|extra>] [--engagement-ref <e>]
   blocker resolve <blockerId>
   accept criterion <itemId> --statement <s>
   accept link <criterionId> --kind <unit|integration|e2e|manual> --locator <l>
@@ -230,6 +231,11 @@ function cmdItem(args: string[], io: CliIO): number {
       workspace: req(flags, 'workspace'),
       ...(opt(flags, 'body') !== undefined ? { body: req(flags, 'body') } : {}),
       ...(opt(flags, 'parent') !== undefined ? { parentId: req(flags, 'parent') } : {}),
+      ...(opt(flags, 'accountable') !== undefined ? { accountable: req(flags, 'accountable') } : {}),
+      ...(opt(flags, 'responsible') !== undefined
+        ? { responsible: req(flags, 'responsible').split(',').map((s) => s.trim()).filter(Boolean) }
+        : {}),
+      ...(opt(flags, 'engagement-ref') !== undefined ? { engagementRef: req(flags, 'engagement-ref') } : {}),
     })
     io.out(`${id}\n`)
     return 0
@@ -274,6 +280,8 @@ function cmdDecision(args: string[], io: CliIO): number {
       workspace: req(flags, 'workspace'),
       targets: req(flags, 'targets').split(',').map((s) => s.trim()).filter(Boolean),
       dossier: { context: opt(flags, 'context') ?? '', options: [], qa: [] },
+      ...(opt(flags, 'accountable') !== undefined ? { accountable: req(flags, 'accountable') } : {}),
+      ...(opt(flags, 'engagement-ref') !== undefined ? { engagementRef: req(flags, 'engagement-ref') } : {}),
     })
     io.out(`${id}\n`)
     return 0
@@ -312,11 +320,15 @@ function cmdBlocker(args: string[], io: CliIO): number {
     const id = track.openBlocker({
       targetId: req(flags, 'target'),
       kind: oneOf(req(flags, 'kind'), BLOCKER_KINDS, '--kind') as BlockerKind,
-      ref: req(flags, 'ref'),
+      ...(opt(flags, 'ref') !== undefined ? { ref: req(flags, 'ref') } : {}),
       reason: opt(flags, 'reason') ?? '',
       ...(opt(flags, 'rule') !== undefined
         ? { resolutionRule: oneOf(req(flags, 'rule'), RESOLUTION_RULES, '--rule') as ResolutionRule }
         : {}),
+      ...(opt(flags, 'scope') !== undefined
+        ? { scope: oneOf(req(flags, 'scope'), BLOCKER_SCOPES, '--scope') as BlockerScope }
+        : {}),
+      ...(opt(flags, 'engagement-ref') !== undefined ? { engagementRef: req(flags, 'engagement-ref') } : {}),
     })
     io.out(`${id}\n`)
     return 0

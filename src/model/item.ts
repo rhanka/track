@@ -1,4 +1,4 @@
-import type { Ulid } from '../events/types.js'
+import type { ActorId, Ulid } from '../events/types.js'
 import type { PriorityAssessment } from './priority.js'
 
 export type ItemId = Ulid
@@ -35,6 +35,12 @@ export interface ItemState {
   sourceKey?: string
   body?: string
   links?: Link[]
+  // RACI (Lot A, additive): WHO is answerable/doing — domain data about the work, distinct from
+  // the event writer `by` (which the ingest seam pins to the channel). `engagementRef` links to an
+  // h2a ENGAGEMENT (the executable contract); present ⇒ a contract exists. track records, never owns it.
+  accountable?: ActorId // RACI-A — the single neck-to-grab
+  responsible?: ActorId[] // RACI-R — the doers
+  engagementRef?: string
 }
 
 export interface ItemCreatedPayload {
@@ -45,6 +51,9 @@ export interface ItemCreatedPayload {
   sourceKey?: string
   body?: string
   links?: Link[]
+  accountable?: ActorId
+  responsible?: ActorId[]
+  engagementRef?: string
 }
 
 /** A rejected domain command (illegal transition, unknown aggregate, …). */

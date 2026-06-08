@@ -19,6 +19,7 @@ export const BLOCKER_KINDS = ['decision', 'dependency'] as const
 export const RESOLUTION_RULES = ['linked-done', 'linked-accepted', 'manual'] as const
 export const EVIDENCE_KINDS = ['unit', 'integration', 'e2e', 'manual'] as const
 export const RESULTS = ['pass', 'fail'] as const
+export const BLOCKER_SCOPES = ['intra', 'extra'] as const // Lot A — dependency blocker scope
 
 // --- kinds -------------------------------------------------------------------------------------------
 export const WORK_EVENT_KINDS = [
@@ -100,6 +101,9 @@ export const WORK_EVENT_SCHEMA: Record<WorkEventKind, KindSchema> = {
       parentId: str(false),
       body: str(false),
       sourceKey: str(false),
+      accountable: str(false),
+      responsible: { type: 'string[]', required: false },
+      engagementRef: str(false),
     },
   },
   'item.spec': {
@@ -124,6 +128,8 @@ export const WORK_EVENT_SCHEMA: Record<WorkEventKind, KindSchema> = {
       parentId: str(false),
       body: str(false),
       sourceKey: str(false),
+      accountable: str(false),
+      engagementRef: str(false),
     },
   },
   'decision.dossier': {
@@ -189,10 +195,12 @@ export const WORK_EVENT_SCHEMA: Record<WorkEventKind, KindSchema> = {
     fields: {
       targetId: str(true),
       kind: str(true, BLOCKER_KINDS),
-      ref: str(true),
+      ref: str(false), // optional: an `extra`-scope dependency omits the local ref (uses engagementRef)
       reason: str(false),
       resolutionRule: str(false, RESOLUTION_RULES),
       owner: str(false),
+      scope: str(false, BLOCKER_SCOPES),
+      engagementRef: str(false),
     },
   },
   'blocker.resolve': {
