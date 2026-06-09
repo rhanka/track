@@ -1,10 +1,11 @@
 import { execFileSync } from 'node:child_process'
 import { mkdirSync, readFileSync } from 'node:fs'
-import { basename, isAbsolute, join } from 'node:path'
+import { basename, dirname, isAbsolute, join } from 'node:path'
 
 import { readHead } from '../events/head.js'
 import { EventStore } from '../events/store.js'
 import { validate } from '../events/validate.js'
+import { initTrackDir, resolveTrackDir } from './resolve.js'
 import type { EvidenceKind, RunResult } from '../model/acceptance.js'
 import type { BlockerKind, BlockerScope, ResolutionRule } from '../model/blocker.js'
 import type { DecisionKind, Outcome } from '../model/decision.js'
@@ -38,6 +39,17 @@ export interface CliIO {
   cwd: string
   out: (s: string) => void
   err: (s: string) => void
+}
+
+/**
+ * A resolved CLI context: the caller's `io` plus the single `.track/events.jsonl` path resolved ONCE
+ * (nearest-ancestor `.track`, or an explicit `--track-dir`/`TRACK_DIR`) — so every handler reads and
+ * writes the SAME store and a subdir write can never land in a stray sidecar. `io.cwd` is still used
+ * for git/actor and relative file resolution; `eventsPath` is the source of truth for the log.
+ */
+interface Ctx {
+  io: CliIO
+  eventsPath: string
 }
 
 type Flags = Record<string, string | true>
@@ -81,14 +93,11 @@ const BUCKETS_ARG = ['AWAITED', 'DROPPED', 'DONE', 'TO-DO'] as const
 // `n/a` is decision-only; `query` projects non-decision rows, so it would never match.
 const ACCEPTANCES = ['fail', 'waived', 'unknown', 'stale', 'pass'] as const
 
-function trackDir(cwd: string): string {
-  return join(cwd, '.track')
+function eventsPathOf(trackDir: string): string {
+  return join(trackDir, 'events.jsonl')
 }
-function eventsPath(cwd: string): string {
-  return join(trackDir(cwd), 'events.jsonl')
-}
-function store(cwd: string): EventStore {
-  return new EventStore(eventsPath(cwd))
+function store(ctx: Ctx): EventStore {
+  return new EventStore(ctx.eventsPath)
 }
 function gitHead(cwd: string): string {
   try {
@@ -123,8 +132,8 @@ function cliActor(cwd: string): ActorId {
 }
 
 /** A writer Track for CLI commands — attributed to the local user with `cli` provenance (D3). */
-function writeTrack(io: CliIO): Track {
-  return new Track(store(io.cwd), { by: cliActor(io.cwd), prov: CLI_PROV })
+function writeTrack(ctx: Ctx): Track {
+  return new Track(store(ctx), { by: cliActor(ctx.io.cwd), prov: CLI_PROV })
 }
 
 function parseFlags(args: string[]): { positional: string[]; flags: Flags } {
@@ -173,9 +182,38 @@ function fmt(flags: Flags): Format {
   return oneOf(opt(flags, 'format') ?? 'text', ['json', 'text', 'md'], '--format')
 }
 
-export function runCli(argv: string[], io: CliIO): number {
+/**
+ * Pull a global `--track-dir <path>` out of argv BEFORE per-command parsing, so it works regardless
+ * of where the user places it. Returns the value (if any) and the argv with that flag removed.
+ */
+function extractTrackDirFlag(argv: string[]): { trackDirFlag?: string; rest: string[] } {
+  const rest: string[] = []
+  let trackDirFlag: string | undefined
+  for (let i = 0; i < argv.length; i++) {
+    const a = argv[i]!
+    if (a === '--track-dir') {
+      const next = argv[i + 1]
+      if (next !== undefined && !next.startsWith('--')) {
+        trackDirFlag = next
+        i++
+        continue
+      }
+    }
+    rest.push(a)
+  }
+  return trackDirFlag !== undefined ? { trackDirFlag, rest } : { rest }
+}
+
+export function runCli(rawArgv: string[], io: CliIO): number {
+  const { trackDirFlag, rest: argv } = extractTrackDirFlag(rawArgv)
   const cmd = argv[0]
   const rest = argv.slice(1)
+  const trackDirEnv = process.env['TRACK_DIR']
+  const resolveOpts = {
+    cwd: io.cwd,
+    ...(trackDirFlag !== undefined ? { flag: trackDirFlag } : {}),
+    ...(trackDirEnv !== undefined ? { env: trackDirEnv } : {}),
+  }
   try {
     switch (cmd) {
       case '--version':
@@ -183,30 +221,53 @@ export function runCli(argv: string[], io: CliIO): number {
       case 'version':
         io.out(`${VERSION}\n`)
         return 0
-      case 'init':
-        mkdirSync(trackDir(io.cwd), { recursive: true })
-        io.out(`Initialized .track/ in ${io.cwd}\n`)
+      case 'init': {
+        // The ONLY command that creates a `.track` — at cwd/.track (or an explicit override).
+        const dir = initTrackDir(resolveOpts)
+        mkdirSync(dir, { recursive: true })
+        io.out(`Initialized .track/ in ${dirname(dir)}\n`)
         return 0
+      }
+      // Every other command resolves the nearest-ancestor `.track` and FAILS LOUD if none exists. The
+      // USAGE/rc=2 branch for an UNKNOWN command is reached BEFORE resolution (a typo must not be masked
+      // by a "no .track" error), so `resolveTrackDir` runs only for a recognized command.
       case 'item':
-        return cmdItem(rest, io)
       case 'decision':
-        return cmdDecision(rest, io)
       case 'blocker':
-        return cmdBlocker(rest, io)
       case 'accept':
-        return cmdAccept(rest, io)
       case 'priority':
-        return cmdPriority(rest, io)
       case 'report':
-        return cmdReport(rest, io)
       case 'query':
-        return cmdQuery(rest, io)
       case 'validate':
-        return cmdValidate(rest, io)
       case 'branch':
-        return cmdBranch(rest, io)
-      case 'ingest':
-        return cmdIngest(rest, io)
+      case 'ingest': {
+        const ctx: Ctx = { io, eventsPath: eventsPathOf(resolveTrackDir(resolveOpts)) }
+        switch (cmd) {
+          case 'item':
+            return cmdItem(rest, ctx)
+          case 'decision':
+            return cmdDecision(rest, ctx)
+          case 'blocker':
+            return cmdBlocker(rest, ctx)
+          case 'accept':
+            return cmdAccept(rest, ctx)
+          case 'priority':
+            return cmdPriority(rest, ctx)
+          case 'report':
+            return cmdReport(rest, ctx)
+          case 'query':
+            return cmdQuery(rest, ctx)
+          case 'validate':
+            return cmdValidate(rest, ctx)
+          case 'branch':
+            return cmdBranch(rest, ctx)
+          case 'ingest':
+            return cmdIngest(rest, ctx)
+        }
+        // unreachable — the outer case list and this inner switch are identical
+        io.err(USAGE)
+        return 2
+      }
       default:
         io.err(USAGE)
         return 2
@@ -221,10 +282,11 @@ function rowsOut(rows: unknown[], format: Format, io: CliIO): void {
   io.out(format === 'json' ? `${JSON.stringify(rows, null, 2)}\n` : formatRows(rows as never, format))
 }
 
-function cmdItem(args: string[], io: CliIO): number {
+function cmdItem(args: string[], ctx: Ctx): number {
+  const { io } = ctx
   const sub = args[0]
   const { positional, flags } = parseFlags(args.slice(1))
-  const track = writeTrack(io)
+  const track = writeTrack(ctx)
   if (sub === 'new') {
     const id = track.createItem({
       kind: oneOf(req(flags, 'kind'), ITEM_KINDS, '--kind') as ItemKind,
@@ -270,10 +332,11 @@ function cmdItem(args: string[], io: CliIO): number {
   return 2
 }
 
-function cmdDecision(args: string[], io: CliIO): number {
+function cmdDecision(args: string[], ctx: Ctx): number {
+  const { io } = ctx
   const sub = args[0]
   const { positional, flags } = parseFlags(args.slice(1))
-  const track = writeTrack(io)
+  const track = writeTrack(ctx)
   if (sub === 'new') {
     const id = track.createDecision({
       decisionKind: oneOf(req(flags, 'kind'), DECISION_KINDS, '--kind') as DecisionKind,
@@ -313,10 +376,11 @@ function cmdDecision(args: string[], io: CliIO): number {
   return 2
 }
 
-function cmdBlocker(args: string[], io: CliIO): number {
+function cmdBlocker(args: string[], ctx: Ctx): number {
+  const { io } = ctx
   const sub = args[0]
   const { positional, flags } = parseFlags(args.slice(1))
-  const track = writeTrack(io)
+  const track = writeTrack(ctx)
   if (sub === 'raise') {
     const id = track.openBlocker({
       targetId: req(flags, 'target'),
@@ -341,18 +405,25 @@ function cmdBlocker(args: string[], io: CliIO): number {
   }
   if (sub === 'resolve-external') {
     // A local CLI human is the trust root — explicitly unscoped (resolves the engagement's deps everywhere).
+    // WHITELISTED no-op: 0 matches is a genuine no-op (nothing to resolve / idempotent retry) and is the
+    // ONLY case where this command persists nothing — say so explicitly rather than implying a write.
     const ids = track.resolveExternalDependency(req(flags, 'engagement-ref'), 'all-workspaces')
-    io.out(`resolved ${ids.length} external dependency blocker(s)\n`)
+    io.out(
+      ids.length === 0
+        ? `no-op: 0 external dependency blocker(s) matched\n`
+        : `resolved ${ids.length} external dependency blocker(s)\n`,
+    )
     return 0
   }
   io.err('usage: track blocker <raise|resolve|resolve-external>\n')
   return 2
 }
 
-function cmdAccept(args: string[], io: CliIO): number {
+function cmdAccept(args: string[], ctx: Ctx): number {
+  const { io } = ctx
   const sub = args[0]
   const { positional, flags } = parseFlags(args.slice(1))
-  const track = writeTrack(io)
+  const track = writeTrack(ctx)
   if (sub === 'criterion') {
     io.out(`${track.addCriterion(positional[0]!, req(flags, 'statement'))}\n`)
     return 0
@@ -371,7 +442,10 @@ function cmdAccept(args: string[], io: CliIO): number {
     if (from !== undefined) {
       const content = readFileSync(isAbsolute(from) ? from : join(io.cwd, from), 'utf8')
       const format = oneOf(req(flags, 'format'), FROM_FORMATS, '--format')
-      io.out(`ingested ${track.ingestRuns(content, format, { commit, env, runner })} run(s)\n`)
+      // WHITELISTED no-op: an idempotent re-ingest (every asserted result already latest in the log)
+      // records nothing — say "no-op" rather than "ingested 0 run(s)", which reads like a silent write.
+      const n = track.ingestRuns(content, format, { commit, env, runner })
+      io.out(n === 0 ? `no-op: 0 run(s) ingested (already current)\n` : `ingested ${n} run(s)\n`)
       return 0
     }
     track.recordRun(positional[0]!, {
@@ -392,10 +466,11 @@ function cmdAccept(args: string[], io: CliIO): number {
   return 2
 }
 
-function cmdPriority(args: string[], io: CliIO): number {
+function cmdPriority(args: string[], ctx: Ctx): number {
+  const { io } = ctx
   const sub = args[0]
   const { positional, flags } = parseFlags(args.slice(1))
-  const track = writeTrack(io)
+  const track = writeTrack(ctx)
   if (sub === 'assess') {
     const a = track.assessPriority(positional[0]!, {
       userBusinessValue: num(flags, 'ubv'),
@@ -410,10 +485,11 @@ function cmdPriority(args: string[], io: CliIO): number {
   return 2
 }
 
-function cmdReport(args: string[], io: CliIO): number {
+function cmdReport(args: string[], ctx: Ctx): number {
+  const { io } = ctx
   const { flags } = parseFlags(args)
   // Reads go through the shared TrackReader command layer (same path the MCP server uses).
-  const reader = new TrackReader(eventsPath(io.cwd))
+  const reader = new TrackReader(ctx.eventsPath)
   io.out(
     reportText(
       reader,
@@ -428,9 +504,10 @@ function cmdReport(args: string[], io: CliIO): number {
   return 0
 }
 
-function cmdQuery(args: string[], io: CliIO): number {
+function cmdQuery(args: string[], ctx: Ctx): number {
+  const { io } = ctx
   const { flags } = parseFlags(args)
-  const reader = new TrackReader(eventsPath(io.cwd))
+  const reader = new TrackReader(ctx.eventsPath)
   io.out(
     queryText(
       reader,
@@ -452,10 +529,11 @@ function cmdQuery(args: string[], io: CliIO): number {
   return 0
 }
 
-function cmdValidate(args: string[], io: CliIO): number {
+function cmdValidate(args: string[], ctx: Ctx): number {
+  const { io } = ctx
   const { flags } = parseFlags(args)
   void flags
-  const s = store(io.cwd)
+  const s = store(ctx)
   let events
   try {
     events = s.readAll()
@@ -463,7 +541,7 @@ function cmdValidate(args: string[], io: CliIO): number {
     io.out(`INVALID: ${error instanceof Error ? error.message : String(error)}\n`)
     return 1
   }
-  const integrity = validate(events, readHead(eventsPath(io.cwd)))
+  const integrity = validate(events, readHead(ctx.eventsPath))
   const desync = desyncFindings(new Track(s).state(), io.cwd)
   const findings = [...integrity.findings.map((f) => ({ ...f })), ...desync]
   if (findings.length === 0) {
@@ -475,7 +553,8 @@ function cmdValidate(args: string[], io: CliIO): number {
   return 1
 }
 
-function cmdBranch(args: string[], io: CliIO): number {
+function cmdBranch(args: string[], ctx: Ctx): number {
+  const { io } = ctx
   if (args[0] !== 'import') {
     io.err('usage: track branch import <BRANCH.md> [--commit <sha>]\n')
     return 2
@@ -487,7 +566,7 @@ function cmdBranch(args: string[], io: CliIO): number {
     return 2
   }
   const content = readFileSync(isAbsolute(file) ? file : join(io.cwd, file), 'utf8')
-  const track = writeTrack(io)
+  const track = writeTrack(ctx)
   const result = track.importBranch(content, {
     locator: file,
     fileSlug: basename(file).replace(/\.md$/, ''),
@@ -503,7 +582,8 @@ function cmdBranch(args: string[], io: CliIO): number {
  * distinguishable from interactive CLI writes in the audit log. Same shape as `branch import` /
  * `accept run --from`: a local-file adapter, not a network transport.
  */
-function cmdIngest(args: string[], io: CliIO): number {
+function cmdIngest(args: string[], cliCtx: Ctx): number {
+  const { io } = cliCtx
   const { positional, flags } = parseFlags(args)
   const file = positional[0]
   if (file === undefined) {
@@ -527,7 +607,17 @@ function cmdIngest(args: string[], io: CliIO): number {
     workspace,
     prov: { transport: 'import', proposed: false, auth: 'local-user' },
   }
-  const result = ingest(events, ctx, store(io.cwd))
+  const s = store(cliCtx)
+  // `ingest().count` is the INPUT length, not the persisted count (a dedup'd WorkEvent is skipped, not
+  // appended). To classify a genuine no-op we compare the persisted log length before/after: if nothing
+  // new landed, EVERY event was a dedup'd retry — say "no-op" explicitly (WHITELISTED), never imply a write.
+  const before = s.readAll().length
+  const result = ingest(events, ctx, s)
+  const after = s.readAll().length
+  if (after === before) {
+    io.out('no-op: 0 event(s) ingested (already applied)\n')
+    return 0
+  }
   for (const id of result.ids) io.out(`${id ?? '-'}\n`)
   return 0
 }

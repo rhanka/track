@@ -12,9 +12,22 @@ import { dirname } from 'node:path'
 import { canonicalize, materialize } from './canonical.js'
 import { contentHashOf } from './frame.js'
 import { readHead, writeHead } from './head.js'
-import { withFileLock } from './lock.js'
+import { withFileLock, type LockOptions } from './lock.js'
 import type { CommandEvent, EventCore, Sha256, TrackEvent, Ulid } from './types.js'
 import { validate } from './validate.js'
+
+/**
+ * Operational-only lock timeout override (`TRACK_LOCK_TIMEOUT_MS`). Lets a caller cap how long a
+ * contended append waits before failing loud — used by tests and by anyone who prefers a fast fail
+ * over the 10s default. It does NOT touch the frozen event contract (no event shape/hash/seq change),
+ * only how long `withFileLock` blocks. An invalid/absent value falls back to the lock's own default.
+ */
+function lockOptionsFromEnv(): LockOptions {
+  const raw = process.env['TRACK_LOCK_TIMEOUT_MS']
+  if (raw === undefined) return {}
+  const ms = Number(raw)
+  return Number.isFinite(ms) && ms > 0 ? { timeoutMs: ms } : {}
+}
 
 /**
  * Append-only single-writer event store over `.track/events.jsonl` (SPEC §3, §4).
@@ -68,6 +81,7 @@ export class EventStore {
     // fail-closed guard below then turns into a permanent write-DoS for every future writer (see lock.ts).
     return withFileLock(this.filePath, () => {
       const existing = this.readAll()
+      const before = existing.length
       const integrity = validate(existing, readHead(this.filePath))
       if (!integrity.ok) {
         const kinds = integrity.findings.map((f) => f.kind).join(', ')
@@ -114,12 +128,70 @@ export class EventStore {
       }
 
       this.appendAtomic(events)
-      writeHead(this.filePath, {
+      const expectedHead = {
         streamLength: existing.length + events.length,
         lastContentHash: events[events.length - 1]!.contentHash,
-      })
+      }
+      writeHead(this.filePath, expectedHead)
+
+      // P0 AppendReceipt — the load-bearing guard. STILL UNDER THE LOCK, re-read the persisted log and
+      // head and PROVE the write landed. This makes "rc=0 without persistence" structurally impossible:
+      // a no-op `appendAtomic`, a short write, a wrong path, or a torn tail all surface as a THROW here
+      // (CLI → rc=1), never a silent success. Only a verified receipt returns.
+      this.verifyAppend(before, events, expectedHead)
       return events
-    })
+    }, lockOptionsFromEnv())
+  }
+
+  /**
+   * Post-write verification (under the append lock). Re-reads the persisted log + head and asserts:
+   *  (1) the log grew by exactly `events.length` (length); (2) the persisted suffix matches the
+   *  generated events by `id` + `contentHash` (identity); (3) the head's `streamLength` /
+   *  `lastContentHash` match the write; (4) the full persisted stream still `validate`s (integrity).
+   * Any mismatch throws `append verification failed for <path> …` — the receipt the caller can trust.
+   */
+  private verifyAppend(
+    before: number,
+    events: ReadonlyArray<TrackEvent>,
+    expectedHead: { streamLength: number; lastContentHash: Sha256 },
+  ): void {
+    const fail = (reason: string): never => {
+      throw new Error(`append verification failed for ${this.filePath}: ${reason}`)
+    }
+
+    const after = this.readAll()
+    if (after.length !== before + events.length) {
+      fail(`length ${after.length} != before ${before} + ${events.length} (write did not persist)`)
+    }
+
+    const suffix = after.slice(before)
+    for (let i = 0; i < events.length; i++) {
+      const persisted = suffix[i]
+      const expected = events[i]!
+      if (persisted === undefined || persisted.id !== expected.id || persisted.contentHash !== expected.contentHash) {
+        fail(
+          `persisted suffix[${i}] (id=${persisted?.id ?? '<none>'}, hash=${persisted?.contentHash ?? '<none>'}) ` +
+            `!= generated (id=${expected.id}, hash=${expected.contentHash})`,
+        )
+      }
+    }
+
+    const head = readHead(this.filePath)
+    if (
+      head === null ||
+      head.streamLength !== expectedHead.streamLength ||
+      head.lastContentHash !== expectedHead.lastContentHash
+    ) {
+      fail(
+        `head mismatch (persisted ${JSON.stringify(head)} != expected ${JSON.stringify(expectedHead)})`,
+      )
+    }
+
+    const integrity = validate(after, head)
+    if (!integrity.ok) {
+      const kinds = integrity.findings.map((f) => f.kind).join(', ')
+      fail(`persisted stream is invalid (${integrity.findings.length} finding(s): ${kinds})`)
+    }
   }
 
   /**

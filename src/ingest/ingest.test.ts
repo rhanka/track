@@ -209,6 +209,9 @@ describe('track ingest <file> — local CLI verb', () => {
     cliDir = mkdtempSync(join(tmpdir(), 'track-ingest-cli-'))
     out = []
     io = { cwd: cliDir, out: (s) => out.push(s), err: (s) => out.push(s) }
+    // P0: a mutating command no longer auto-creates `.track` — only `init` does. Initialize first.
+    runCli(['init'], io)
+    out.length = 0
   })
   afterEach(() => rmSync(cliDir, { recursive: true, force: true }))
 

@@ -2,6 +2,24 @@
 
 All notable changes to `@sentropic/track`. Format loosely follows [Keep a Changelog](https://keepachangelog.com); this package is pre-1.0 (the **event contract** is frozen, but the library/CLI surface may still evolve additively).
 
+## [0.9.0] — P0: silent write-loss guard + store resolver
+
+### Fixed / Changed (record integrity)
+- **A write command can no longer return rc=0 without persisting.** `EventStore.appendCommand` now performs a
+  post-write **AppendReceipt** verification under the lock (length + suffix `id`/`contentHash` + head +
+  full `validate()`); any mismatch throws (CLI → rc=1). Genuine no-ops say "no-op" explicitly. Closes the P0
+  where `track item new/realize/spec/accept` could return success while writing nothing.
+- **Shared `.track` resolver (CLI + `track-mcp`).** Commands resolve the **nearest-ancestor** `.track`
+  (walking up from cwd), with `--track-dir` / `TRACK_DIR` overrides. **`track init` is the only command that
+  creates a `.track`**; every other command **fails loud** when none is found — no more stray auto-created
+  sidecars from a subdir/worktree cwd.
+
+### Notes
+- **Behavior change:** read commands (`report`/`query`/`validate`) and `track-mcp` now require a resolvable
+  `.track` and fail loud if absent (previously read/served an empty store). Run `track init` first. Frozen
+  event contract intact (additive; the new `TRACK_LOCK_TIMEOUT_MS` is operational-only). Double-reviewed
+  (Codex + Opus pair, converged); spec `docs/plan/P0-write-loss-FIX.md`. 330 tests.
+
 ## [0.8.0] — Bulk resolve-by-engagementRef (M3 deps follow-up)
 
 ### Added
