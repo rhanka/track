@@ -6,9 +6,12 @@
 // module validates every arg itself (enum + type) and surfaces violations as `isError` — matching
 // the CLI's `oneOf` strictness so the two transports never diverge on bad input.
 
+import { join } from 'node:path'
+
 import { Server } from '@modelcontextprotocol/sdk/server/index.js'
 import { CallToolRequestSchema, ListToolsRequestSchema } from '@modelcontextprotocol/sdk/types.js'
 
+import { resolveTrackDirOrNull, type ResolveOptions } from '../cli/resolve.js'
 import { queryText, reportText } from '../read/commands.js'
 import { TrackReader } from '../read/contract.js'
 import type { QueryFilter, ReportOptions } from '../report/build.js'
@@ -164,9 +167,38 @@ export function dispatchReadTool(
   }
 }
 
-/** Build a read-only MCP server bound to one `.track/events.jsonl`. */
-export function createTrackMcpServer(eventsPath: string): Server {
-  const reader = new TrackReader(eventsPath)
+/**
+ * Per-call read binding: the `TrackReader` to dispatch against, plus an optional serve-empty `hint`.
+ * When a `.track` resolves, `hint` is undefined and reads run against the real log. When none resolves
+ * (an unadopted repo), the reader points at a NONEXISTENT path — `EventStore.readAll()`→`[]` /
+ * `readHead`→`null` already yield the honest-empty payloads (empty buckets, `[]`, `{ok:true}`, null,
+ * `{status:'absent'}`) — and `hint` carries an actionable `track init` line as additive transport
+ * content (NOT embedded in the JSON schema). Resolution is LAZY (per call) so a `.track` created after
+ * boot is picked up without a restart. A bad EXPLICIT override throws here → surfaced as `isError`.
+ */
+interface ReadBinding {
+  reader: TrackReader
+  hint?: string
+}
+
+/** Build a read-only MCP server. Accepts a fixed `eventsPath` (tests) or `ResolveOptions` (lazy serve). */
+export function createTrackMcpServer(source: string | ResolveOptions): Server {
+  // Fixed-path form (existing test API): bind one reader, never a hint.
+  // Lazy form (`track-mcp` boot): resolve the store per call so post-boot `track init` is seen.
+  const bind: () => ReadBinding =
+    typeof source === 'string'
+      ? () => ({ reader: new TrackReader(source) })
+      : () => {
+          const trackDir = resolveTrackDirOrNull(source) // throws on a bad explicit override (stays loud)
+          if (trackDir === null) {
+            return {
+              reader: new TrackReader(join(source.cwd, '.track', 'events.jsonl')), // nonexistent ⇒ empty
+              hint: `No .track resolved from ${source.cwd}. Run \`track init\` to create one (the ONLY command that does), or pass --track-dir / TRACK_DIR. Serving an empty view.`,
+            }
+          }
+          return { reader: new TrackReader(join(trackDir, 'events.jsonl')) }
+        }
+
   const server = new Server(
     { name: '@sentropic/track', version: VERSION },
     { capabilities: { tools: {} } },
@@ -176,9 +208,14 @@ export function createTrackMcpServer(eventsPath: string): Server {
 
   server.setRequestHandler(CallToolRequestSchema, (request) => {
     const { name, arguments: args } = request.params
+    let binding: ReadBinding
     try {
-      const text = dispatchReadTool(reader, name, (args ?? {}) as Record<string, unknown>)
-      return { content: [{ type: 'text' as const, text }] }
+      binding = bind() // a bad explicit override throws here → loud isError, not a silent empty-serve
+      const text = dispatchReadTool(binding.reader, name, (args ?? {}) as Record<string, unknown>)
+      const content = [{ type: 'text' as const, text }]
+      // Additive transport hint on a serve-empty read — never embedded in the payload JSON.
+      if (binding.hint !== undefined) content.push({ type: 'text' as const, text: binding.hint })
+      return { content }
     } catch (error) {
       return {
         content: [{ type: 'text' as const, text: error instanceof Error ? error.message : String(error) }],

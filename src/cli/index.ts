@@ -1,11 +1,11 @@
 import { execFileSync } from 'node:child_process'
 import { mkdirSync, readFileSync } from 'node:fs'
-import { basename, dirname, isAbsolute, join } from 'node:path'
+import { basename, dirname, isAbsolute, join, resolve } from 'node:path'
 
 import { readHead } from '../events/head.js'
 import { EventStore } from '../events/store.js'
 import { validate } from '../events/validate.js'
-import { initTrackDir, resolveTrackDir } from './resolve.js'
+import { initTrackDir, resolveTrackDir, resolveTrackDirOrNull } from './resolve.js'
 import type { EvidenceKind, RunResult } from '../model/acceptance.js'
 import type { BlockerKind, BlockerScope, ResolutionRule } from '../model/blocker.js'
 import type { DecisionKind, Outcome } from '../model/decision.js'
@@ -230,7 +230,38 @@ export function runCli(rawArgv: string[], io: CliIO): number {
         io.out(`Initialized .track/ in ${dirname(dir)}\n`)
         return 0
       }
-      // Every other command resolves the nearest-ancestor `.track` and FAILS LOUD if none exists. The
+      // READ commands SERVE-EMPTY (launch/serve alignment): they resolve via the non-throwing
+      // `resolveTrackDirOrNull`, so an unadopted repo yields rc=0 + an honest-empty view + a stderr
+      // `track init` hint, never a boot crash. NEVER creates. A bad EXPLICIT override still throws
+      // (user error → the outer catch → rc=1). The reader over a nonexistent log already reads empty.
+      case 'report':
+      case 'query':
+      case 'validate': {
+        const trackDir = resolveTrackDirOrNull(resolveOpts)
+        if (trackDir === null) {
+          io.err(
+            `track: no .track resolved from ${io.cwd}. Run \`track init\` to create one ` +
+              `(the ONLY command that does), or pass --track-dir / TRACK_DIR. Serving an empty view.\n`,
+          )
+        }
+        // null ⇒ bind a NONEXISTENT cwd/.track/events.jsonl: reads return empty, and no write occurs
+        // (reads never create), so nothing is materialized on disk.
+        const ctx: Ctx = {
+          io,
+          eventsPath: trackDir !== null ? eventsPathOf(trackDir) : eventsPathOf(join(resolve(io.cwd), '.track')),
+        }
+        switch (cmd) {
+          case 'report':
+            return cmdReport(rest, ctx)
+          case 'query':
+            return cmdQuery(rest, ctx)
+          case 'validate':
+            return cmdValidate(rest, ctx, trackDir === null)
+        }
+        io.err(USAGE)
+        return 2
+      }
+      // Every MUTATING command resolves the nearest-ancestor `.track` and FAILS LOUD if none exists. The
       // USAGE/rc=2 branch for an UNKNOWN command is reached BEFORE resolution (a typo must not be masked
       // by a "no .track" error), so `resolveTrackDir` runs only for a recognized command.
       case 'item':
@@ -238,9 +269,6 @@ export function runCli(rawArgv: string[], io: CliIO): number {
       case 'blocker':
       case 'accept':
       case 'priority':
-      case 'report':
-      case 'query':
-      case 'validate':
       case 'branch':
       case 'ingest': {
         const ctx: Ctx = { io, eventsPath: eventsPathOf(resolveTrackDir(resolveOpts)) }
@@ -255,12 +283,6 @@ export function runCli(rawArgv: string[], io: CliIO): number {
             return cmdAccept(rest, ctx)
           case 'priority':
             return cmdPriority(rest, ctx)
-          case 'report':
-            return cmdReport(rest, ctx)
-          case 'query':
-            return cmdQuery(rest, ctx)
-          case 'validate':
-            return cmdValidate(rest, ctx)
           case 'branch':
             return cmdBranch(rest, ctx)
           case 'ingest':
@@ -545,7 +567,7 @@ function cmdQuery(args: string[], ctx: Ctx): number {
   return 0
 }
 
-function cmdValidate(args: string[], ctx: Ctx): number {
+function cmdValidate(args: string[], ctx: Ctx, noStore = false): number {
   const { io } = ctx
   const { flags } = parseFlags(args)
   void flags
@@ -556,6 +578,12 @@ function cmdValidate(args: string[], ctx: Ctx): number {
   } catch (error) {
     io.out(`INVALID: ${error instanceof Error ? error.message : String(error)}\n`)
     return 1
+  }
+  // Serve-empty: no `.track` resolved ⇒ an absent store is an INTEGRAL empty stream (ok:true), with a
+  // no-store warning already on stderr (rc=0). A MALFORMED *existing* log still fails-closed above (rc=1).
+  if (noStore) {
+    io.out(`OK: no .track store — 0 events, integral empty stream\n`)
+    return 0
   }
   const integrity = validate(events, readHead(ctx.eventsPath))
   const desync = desyncFindings(new Track(s).state(), io.cwd)

@@ -4,7 +4,7 @@ import { join } from 'node:path'
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 
-import { resolveTrackDir, TrackDirNotFoundError } from './resolve.js'
+import { resolveTrackDir, resolveTrackDirOrNull, TrackDirNotFoundError } from './resolve.js'
 
 let root: string
 
@@ -70,6 +70,37 @@ describe('resolveTrackDir — nearest-ancestor .track resolution', () => {
   it('an explicit override that does not exist still throws (only init creates)', () => {
     const missing = join(root, 'nope')
     expect(() => resolveTrackDir({ cwd: root, flag: missing })).toThrow(TrackDirNotFoundError)
+    expect(existsSync(missing)).toBe(false)
+  })
+})
+
+describe('resolveTrackDirOrNull — non-throwing read resolver (serve-empty)', () => {
+  it('returns the nearest-ancestor .track when one exists', () => {
+    mkdirSync(join(root, '.track'), { recursive: true })
+    const sub = join(root, 'a', 'b')
+    mkdirSync(sub, { recursive: true })
+    expect(resolveTrackDirOrNull({ cwd: sub })).toBe(join(root, '.track'))
+  })
+
+  it('returns null when no .track exists upward (does NOT create one)', () => {
+    const sub = join(root, 'x', 'y')
+    mkdirSync(sub, { recursive: true })
+    expect(resolveTrackDirOrNull({ cwd: sub })).toBeNull()
+    expect(existsSync(join(sub, '.track'))).toBe(false)
+    expect(existsSync(join(root, '.track'))).toBe(false)
+  })
+
+  it('honors an explicit --track-dir / TRACK_DIR override when it exists', () => {
+    const explicit = join(root, 'custom-track')
+    mkdirSync(explicit, { recursive: true })
+    expect(resolveTrackDirOrNull({ cwd: root, flag: explicit })).toBe(explicit)
+    expect(resolveTrackDirOrNull({ cwd: root, env: explicit })).toBe(explicit)
+  })
+
+  it('STILL throws on a bad explicit override (explicit wrong path = user error, not null)', () => {
+    const missing = join(root, 'nope')
+    expect(() => resolveTrackDirOrNull({ cwd: root, flag: missing })).toThrow(TrackDirNotFoundError)
+    expect(() => resolveTrackDirOrNull({ cwd: root, env: missing })).toThrow(TrackDirNotFoundError)
     expect(existsSync(missing)).toBe(false)
   })
 })

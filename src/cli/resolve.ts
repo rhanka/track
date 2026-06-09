@@ -63,6 +63,30 @@ export function resolveTrackDir(opts: ResolveOptions): string {
   throw new TrackDirNotFoundError(opts.cwd, false)
 }
 
+/**
+ * Read-side resolver for SERVE-EMPTY paths (CLI reads + `track-mcp`). Like `resolveTrackDir`, but
+ * returns `null` instead of throwing when no ancestor `.track` exists — so a long-running server can
+ * boot, and a read command can return an honest-empty view + an init hint, rather than fail loud.
+ * An explicit `--track-dir`/`TRACK_DIR` override that does NOT exist is still a USER error and STILL
+ * throws `TrackDirNotFoundError` (an explicit wrong path is not an unadopted repo). NEVER creates.
+ */
+export function resolveTrackDirOrNull(opts: ResolveOptions): string | null {
+  const override = opts.flag ?? opts.env
+  if (override !== undefined && override.length > 0) {
+    // Explicit override: reuse the throwing resolver so a bad path stays loud (user error).
+    return resolveTrackDir(opts)
+  }
+
+  let cur = resolve(opts.cwd)
+  for (;;) {
+    const candidate = join(cur, '.track')
+    if (existsSync(candidate) && isDir(candidate)) return candidate
+    const parent = dirname(cur)
+    if (parent === cur) return null // reached the filesystem root — unadopted repo
+    cur = parent
+  }
+}
+
 /** The `.track` directory `track init` should CREATE for `cwd` (always `cwd/.track`, or an explicit override). */
 export function initTrackDir(opts: ResolveOptions): string {
   const override = opts.flag ?? opts.env

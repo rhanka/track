@@ -2,6 +2,21 @@
 
 All notable changes to `@sentropic/track`. Format loosely follows [Keep a Changelog](https://keepachangelog.com); this package is pre-1.0 (the **event contract** is frozen, but the library/CLI surface may still evolve additively).
 
+## [0.10.1] — track-mcp graceful boot (ecosystem launch/serve alignment)
+
+### Fixed
+- **`track-mcp` boots unconditionally** (like h2a `mcp-serve`) instead of exiting 1 when no `.track` resolves —
+  0.9.0's store-resolver wrongly gated the MCP boot. The store resolves **lazily per read call**
+  (`--track-dir`→`TRACK_DIR`→nearest-ancestor), so a `.track` created after boot is served with no restart;
+  unresolved reads return honest-empty payloads + a `track init` hint (`isError:false`) and never create a
+  store. CLI read commands (`report`/`query`/`validate`) likewise serve empty + a hint (rc=0) when no `.track`.
+
+### Notes
+- WRITE-path P0 guard untouched: mutating commands keep fail-loud + `init`-only-creator + the `AppendReceipt`
+  verification (`p0-write-loss.test.ts` byte-for-byte unchanged). A bad explicit `--track-dir`/`TRACK_DIR`
+  stays loud; a malformed existing log still validates INVALID. Double-reviewed (Codex + Opus pair, converged);
+  spec `docs/plan/launch-serve-alignment-FIX.md`. 366 tests.
+
 ## [0.10.0] — Workpackage foundation (role + item.reparent + %-rollup)
 
 ### Added
