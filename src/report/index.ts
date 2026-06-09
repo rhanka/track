@@ -9,7 +9,15 @@ export {
   type ReportOptions,
   type ReportRow,
 } from './build.js'
-export { formatReport, formatRows, formatWpTree, type Format } from './format.js'
+export {
+  formatReport,
+  formatRows,
+  formatWpConductor,
+  formatWpTree,
+  wpTotals,
+  type Format,
+  type WpTotals,
+} from './format.js'
 // Workpackages §2 — the %-by-WP rollup forest (pure).
 export { computeWpTree, type WpLeaf, type WpNode } from './rollup.js'
 // Commit-relative blocker openness (v2.2a hybrid-A) — `linked-accepted` derived at projection time.

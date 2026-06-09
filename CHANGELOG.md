@@ -2,6 +2,20 @@
 
 All notable changes to `@sentropic/track`. Format loosely follows [Keep a Changelog](https://keepachangelog.com); this package is pre-1.0 (the **event contract** is frozen, but the library/CLI surface may still evolve additively).
 
+## [0.10.2] — Conductor report: clean `report --wp` (fait / à-faire %·WP / attendus)
+
+### Fixed / Added
+- **`track report --wp` is now a clean 3-table conductor view** — **FAIT** (100% WPs + global `done/total,
+  pct%`), **À-FAIRE (% par WP)** (per-WP `done/active pct%` + open leaves), **ATTENDUS (décision)** (AWAITED /
+  `engagementRef` leaves with a `décision:owner` / `action:agent` disposition). Render fixes: markdown
+  escaping no longer leaks into text output; the doubled `WPn · WPn —` label is stripped; `--wp` shows the
+  structured view only (no redundant flat-bucket dump). `--wp --format json` emits `wpTree` + global
+  `wpTotals`.
+
+### Notes
+- `track report` without `--wp` is byte-for-byte unchanged. Additive; event contract / write path / P0 guard
+  untouched. TDD; 376 tests.
+
 ## [0.10.1] — track-mcp graceful boot (ecosystem launch/serve alignment)
 
 ### Fixed

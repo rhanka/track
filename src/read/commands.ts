@@ -3,22 +3,32 @@
 // the adapter supplying `baselineCommit` (CLI from git HEAD, MCP from a tool argument). This is what
 // makes CLI≡MCP parity STRUCTURAL (one layer), not coincidental.
 
-import { formatReport, formatRows, formatWpTree, type Format } from '../report/format.js'
+import { formatReport, formatRows, formatWpConductor, wpTotals, type Format } from '../report/format.js'
 import type { QueryFilter, ReportOptions } from '../report/build.js'
 import type { TrackReader } from './contract.js'
 
 /**
- * `report` rendered exactly as the CLI renders it (SPEC §7). When `options.wpTree` is set, the
- * Workpackages §2 rollup is appended (Markdown for text/md; carried on `report.wpTree` for json).
+ * `report` rendered exactly as the CLI renders it (SPEC §7).
+ *
+ * Default (no `--wp`): the flat bucket dump, unchanged (back-compat).
+ *
+ * `--wp` (report-revamp): the CONDUCTOR view ONLY — the 3-table FAIT / À-FAIRE(%·WP) / ATTENDUS
+ * status (the owner reports THROUGH it), NOT the flat buckets too. For `json` we carry the structured
+ * `wpTree` plus the global `wpTotals` so a conductor can render programmatically.
  */
 export function reportText(reader: TrackReader, options: ReportOptions, format: Format): string {
   const report = reader.report(options)
-  const base = formatReport(report, format)
-  if (!options.wpTree || report.wpTree === undefined || format === 'json') return base
-  const tree = formatWpTree(report.wpTree)
-  if (tree.length === 0) return base
-  const heading = format === 'md' ? '## WORKPACKAGES' : 'WORKPACKAGES'
-  return `${base}\n${heading}\n${tree}`
+
+  if (options.wpTree && report.wpTree !== undefined) {
+    if (format === 'json') {
+      // Additive: emit the whole report (buckets stay for back-compat) plus the global WP totals.
+      return `${JSON.stringify({ ...report, wpTotals: wpTotals(report.wpTree) }, null, 2)}\n`
+    }
+    // Structured view ONLY — no flat bucket dump in --wp mode.
+    return formatWpConductor(report.wpTree, format)
+  }
+
+  return formatReport(report, format)
 }
 
 /** `query` rendered exactly as the CLI renders it: raw JSON for `json`, else the row formatter. */

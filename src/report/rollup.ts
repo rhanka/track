@@ -8,15 +8,21 @@
 // Parent counts are the SUM of descendant leaves, NEVER the mean of child percentages (Simpson trap).
 // Each node's dotted display label (`WP1`, `WP1.1`) is DERIVED from tree position, never stored.
 
-import type { ItemId, ItemState } from '../model/item.js'
+import type { ItemId, ItemKind, ItemState } from '../model/item.js'
 import type { State } from '../state/fold.js'
 import { bucketOf, type Bucket, type ReportConfig } from './buckets.js'
+import { effectiveOpenBlockersForItem } from './blocker-status.js'
 
 /** A rolled-up leaf under a WP — its bucket drives both the % counts and the `[x]/[ ]` checkbox. */
 export interface WpLeaf {
   id: ItemId
   title: string
   bucket: Bucket
+  kind: ItemKind
+  /** Present ⇒ an h2a ENGAGEMENT backs this leaf (report-revamp: ATTENDUS disposition signal). */
+  engagementRef?: string
+  /** An open blocker on this leaf is `kind:'decision'` ⇒ an owner decision is pending (ATTENDUS). */
+  awaitedOnDecision?: boolean
 }
 
 /** A node in the rolled-up WP forest. `id`/`title` are identity; `label` is the derived dotted code. */
@@ -85,8 +91,23 @@ export function computeWpTree(state: State, config: ReportConfig): WpNode[] {
       for (const child of childrenOf.get(parentId) ?? []) {
         if (isWp(child)) continue // a sub-WP boundary — its leaves count under IT, not here
         const grandkids = childrenOf.get(child.id) ?? []
-        if (grandkids.length === 0) out.push({ id: child.id, title: child.title, bucket: bucketOf(state, child, config) })
-        else walk(child.id) // non-WP container — descend
+        if (grandkids.length === 0) {
+          const bucket = bucketOf(state, child, config)
+          // An open `kind:'decision'` blocker ⇒ an OWNER decision is pending (report-revamp ATTENDUS).
+          const awaitedOnDecision =
+            bucket === 'AWAITED' &&
+            effectiveOpenBlockersForItem(state, child.id, config.baselineCommit).some(
+              (b) => b.kind === 'decision',
+            )
+          out.push({
+            id: child.id,
+            title: child.title,
+            bucket,
+            kind: child.kind,
+            ...(child.engagementRef !== undefined ? { engagementRef: child.engagementRef } : {}),
+            ...(awaitedOnDecision ? { awaitedOnDecision: true } : {}),
+          })
+        } else walk(child.id) // non-WP container — descend
       }
     }
     walk(node)
