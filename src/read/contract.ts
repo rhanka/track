@@ -13,6 +13,9 @@ import { readHead } from '../events/head.js'
 import { EventStore } from '../events/store.js'
 import type { Sha256, TrackEvent } from '../events/types.js'
 import { validate, type IntegrityResult } from '../events/validate.js'
+import type { ItemId } from '../model/item.js'
+import { bucketOf } from '../report/buckets.js'
+import { effectiveOpenBlockersForItem } from '../report/blocker-status.js'
 import {
   buildReport,
   query as runQuery,
@@ -30,7 +33,7 @@ import { fold } from '../state/fold.js'
  * shapes it returns may only GROW (new methods / new optional fields); nothing is removed or
  * repurposed without a major bump. Consumers gate on `reader.contractVersion`.
  */
-export const READ_CONTRACT_VERSION = '1.3.0' // +decision dossier artifacts[] on DecisionRow (M5, additive)
+export const READ_CONTRACT_VERSION = '1.4.0' // +workspaceActivity() poll surface (h2a conductor-launch gating, additive)
 
 /** Provenance of the last `branch.imported` for a locator (drawn from the raw event log). */
 export interface BranchProvenance {
@@ -73,6 +76,48 @@ export interface ExternalDependency {
   engagementRef: string
   openedAt: string
 }
+
+/** Why a workspace item/decision is durably stuck (each reason is one PURE staleness predicate). */
+export type StalledReason =
+  | 'awaited-open-blocker'
+  | 'pending-decision'
+  | 'in-progress-idle'
+  | 'todo-idle'
+
+/** One durably-stuck item/decision, with the timestamp the staleness is measured from. */
+export interface StalledItem {
+  id: ItemId
+  title: string
+  reason: StalledReason
+  /** The `openedAt` / latest-event `at` / creation `at` against which `now − idleMs` was tested. */
+  since: string
+}
+
+/**
+ * A poll-able activity signal for ONE workspace — the read surface an h2a conductor polls for
+ * launch-gating (the signal track promised h2a in the sent RACI reply). PURE over the folded log:
+ * track holds NO clock, so the caller injects `now`/`idleMs`; identical inputs ⇒ identical output.
+ */
+export interface WorkspaceActivity {
+  workspace: string
+  /** Count of items bucketed TO-DO or AWAITED for the workspace (open work; not DONE/DROPPED). */
+  pending: number
+  /** Items/decisions stuck longer than `idleMs` — the disjunction of the 4 staleness predicates. */
+  stalled: StalledItem[]
+  /** Max `event.at` scoped to the workspace (informational — h2a corroborates vs live presence). */
+  latestEventAt?: string
+}
+
+/** Options for {@link TrackReader.workspaceActivity}. `now`/`idleMs` are CALLER-supplied (no clock here). */
+export interface WorkspaceActivityOptions {
+  baselineCommit: string
+  /** ISO-8601 "current" time supplied by the caller — track holds no clock. */
+  now: string
+  /** Staleness window in ms; default 24h ⇒ "stalled" = DURABLY stuck. */
+  idleMs?: number
+}
+
+const DEFAULT_IDLE_MS = 86_400_000 // 24h
 
 /**
  * Read-only, versioned consumption surface over a frozen track log. Holds NO `git` and only reads
@@ -120,6 +165,93 @@ export class TrackReader {
       }
     }
     return out
+  }
+
+  /**
+   * Poll-able activity signal for ONE workspace (h2a conductor-launch gating). PURE: `now`/`idleMs`
+   * are caller-supplied (track holds no clock). Reads the log ONCE; `pending`/staleness reuse the
+   * report logic (`bucketOf`/`effectiveOpenBlockersForItem`) — zero new bucket logic. Read-only.
+   */
+  workspaceActivity(workspace: string, opts: WorkspaceActivityOptions): WorkspaceActivity {
+    const events = this.events()
+    const state = fold(events)
+    const config = { baselineCommit: opts.baselineCommit, requireAccepted: false }
+    const idleMs = opts.idleMs ?? DEFAULT_IDLE_MS
+    const threshold = Date.parse(opts.now) - idleMs // an `at` strictly < this is "durably stuck"
+
+    // Per-aggregate timing from the RAW log (state carries no per-aggregate event timestamps):
+    //   creationAt = the aggregate's first event `at`; latestAt = its max event `at`.
+    // Also the workspace max `at` (latestEventAt). Aggregate→workspace via the item/decision it names.
+    const creationAt = new Map<string, string>()
+    const latestAt = new Map<string, string>()
+    let latestEventAt: string | undefined
+    for (const e of events) {
+      if (!creationAt.has(e.aggregateId)) creationAt.set(e.aggregateId, e.at)
+      const prev = latestAt.get(e.aggregateId)
+      if (prev === undefined || e.at > prev) latestAt.set(e.aggregateId, e.at)
+      // Workspace scope of THIS event = the workspace of the item/decision it targets.
+      const owner =
+        state.items.get(e.aggregateId)?.workspace ?? state.decisions.get(e.aggregateId)?.workspace
+      if (owner === workspace && (latestEventAt === undefined || e.at > latestEventAt)) {
+        latestEventAt = e.at
+      }
+    }
+
+    let pending = 0
+    // First match wins per aggregate (reasons are listed in priority order); an id appears once.
+    const stalled: StalledItem[] = []
+    const isOld = (at: string | undefined): at is string => at !== undefined && Date.parse(at) < threshold
+
+    for (const item of state.items.values()) {
+      if (item.workspace !== workspace) continue
+      if (item.role === 'workpackage') continue // a WP is a container, never a flat leaf (Workpackages §2)
+      const bucket = bucketOf(state, item, config)
+      if (bucket === 'TO-DO' || bucket === 'AWAITED') pending++
+
+      if (bucket === 'AWAITED') {
+        // (1) awaited-open-blocker — oldest open blocker openedAt drives the staleness.
+        const open = effectiveOpenBlockersForItem(state, item.id, config.baselineCommit)
+        const oldestOld = open
+          .map((b) => b.openedAt)
+          .filter((at) => Date.parse(at) < threshold)
+          .sort()[0]
+        if (oldestOld !== undefined) {
+          stalled.push({ id: item.id, title: item.title, reason: 'awaited-open-blocker', since: oldestOld })
+        }
+        continue // AWAITED is exclusive of the in-progress/todo idle predicates below
+      }
+      if (item.realization === 'in-progress') {
+        // (3) in-progress-idle — no event on this aggregate inside the window.
+        const since = latestAt.get(item.id)
+        if (isOld(since)) {
+          stalled.push({ id: item.id, title: item.title, reason: 'in-progress-idle', since })
+        }
+      } else if (item.realization === 'to-do') {
+        // (4) todo-idle — a TO-DO (no open blocker) whose creation predates the window.
+        const since = creationAt.get(item.id)
+        if (isOld(since)) {
+          stalled.push({ id: item.id, title: item.title, reason: 'todo-idle', since })
+        }
+      }
+    }
+
+    for (const d of state.decisions.values()) {
+      if (d.workspace !== workspace) continue
+      // (2) pending-decision — outcome still pending/deferred AND last touched before the window.
+      if (d.outcome === 'pending' || d.outcome === 'deferred') {
+        const since = latestAt.get(d.id)
+        if (isOld(since)) {
+          stalled.push({ id: d.id, title: d.title, reason: 'pending-decision', since })
+        }
+      }
+    }
+
+    return {
+      workspace,
+      pending,
+      stalled,
+      ...(latestEventAt !== undefined ? { latestEventAt } : {}),
+    }
   }
 
   /** Latest VALID `branch.imported` provenance for `locator`, or `undefined`. */

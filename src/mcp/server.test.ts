@@ -53,6 +53,7 @@ describe('MCP read server — tool surface', () => {
       'track_query',
       'track_report',
       'track_validate',
+      'track_workspace_activity',
     ])
   })
 
@@ -99,7 +100,24 @@ describe('MCP read server — semantics', () => {
     dispatchReadTool(reader, 'track_validate', {})
     dispatchReadTool(reader, 'track_branch_provenance', { locator: 'x' })
     dispatchReadTool(reader, 'track_freshness', { locator: 'x', content: '# y' })
+    dispatchReadTool(reader, 'track_workspace_activity', {
+      workspace: 'ws',
+      baselineCommit: 'c1',
+      now: '2026-06-05T10:00:00.000Z',
+    })
     expect(new EventStore(eventsPath).readAll().length).toBe(before)
+  })
+
+  it('track_workspace_activity == the library result (same args)', () => {
+    const args = { workspace: 'ws', baselineCommit: 'c1', now: '2026-06-05T10:00:00.000Z' }
+    expect(dispatchReadTool(reader, 'track_workspace_activity', args)).toBe(
+      JSON.stringify(reader.workspaceActivity('ws', { baselineCommit: 'c1', now: args.now }), null, 2),
+    )
+  })
+
+  it('track_workspace_activity rejects missing required args (workspace, now)', () => {
+    expect(() => dispatchReadTool(reader, 'track_workspace_activity', { baselineCommit: 'c1', now: 'x' })).toThrow(/workspace/)
+    expect(() => dispatchReadTool(reader, 'track_workspace_activity', { workspace: 'ws', baselineCommit: 'c1' })).toThrow(/now/)
   })
 })
 

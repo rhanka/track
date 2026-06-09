@@ -2,6 +2,20 @@
 
 All notable changes to `@sentropic/track`. Format loosely follows [Keep a Changelog](https://keepachangelog.com); this package is pre-1.0 (the **event contract** is frozen, but the library/CLI surface may still evolve additively).
 
+## [0.10.4] — `workspaceActivity` read (h2a conductor-launch signal)
+
+### Added
+- **`TrackReader.workspaceActivity(workspace, {baselineCommit, now, idleMs})`** + the read MCP tool
+  **`track_workspace_activity`** — the poll-able signal track promised h2a for conductor-launch gating:
+  `{pending, stalled[], latestEventAt}`. `pending` = TO-DO+AWAITED items for the workspace; `stalled` = a
+  per-aggregate disjunction of 4 pure predicates (`awaited-open-blocker`, `pending-decision`,
+  `in-progress-idle`, `todo-idle`) measured against caller-supplied `now`/`idleMs` (default 24h — track holds
+  no clock); `latestEventAt` = workspace max event time. Pure, read-only, side-effect-free.
+
+### Notes
+- Additive; `READ_CONTRACT_VERSION` 1.3.0 → 1.4.0. h2a polls + decides + launches (track records + exposes,
+  never emits). 410 tests.
+
 ## [0.10.3] — Decision-artifact record contract (`Dossier.artifacts[]` + `decision.add-artifact`)
 
 ### Added

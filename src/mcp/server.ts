@@ -84,6 +84,20 @@ export const READ_TOOLS = [
     description: 'Open external (scope:extra) dependencies awaiting an h2a ENGAGEMENT, as JSON [{blockerId, targetId, engagementRef, openedAt}]. What an h2a bridge watches to resolve when an engagement settles.',
     inputSchema: { type: 'object', properties: {} },
   },
+  {
+    name: 'track_workspace_activity',
+    description: 'Poll-able activity signal for ONE workspace (h2a conductor-launch gating), as JSON {workspace, pending, stalled[], latestEventAt?}. PURE: the caller supplies `now` (and optional `idleMs`, default 24h) — track holds no clock. `pending` = TO-DO+AWAITED count; `stalled` = items/decisions durably stuck (awaited-open-blocker | pending-decision | in-progress-idle | todo-idle).',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        workspace: { type: 'string', description: 'The workspace to scope the signal to.' },
+        baselineCommit: { type: 'string', description: 'Commit AWAITED is evaluated against.' },
+        now: { type: 'string', description: 'Caller-supplied ISO-8601 "current" time (track holds no clock).' },
+        idleMs: { type: 'number', description: 'Staleness window in ms (default 86400000 = 24h).' },
+      },
+      required: ['workspace', 'baselineCommit', 'now'],
+    },
+  },
 ] as const
 
 function reqStr(args: Record<string, unknown>, key: string): string {
@@ -103,6 +117,13 @@ function optStr(args: Record<string, unknown>, key: string): string | undefined 
   const v = args[key]
   if (v === undefined) return undefined
   if (typeof v !== 'string') throw new Error(`tool argument "${key}" must be a string`)
+  return v
+}
+
+function optNum(args: Record<string, unknown>, key: string): number | undefined {
+  const v = args[key]
+  if (v === undefined) return undefined
+  if (typeof v !== 'number' || !Number.isFinite(v)) throw new Error(`tool argument "${key}" must be a number`)
   return v
 }
 
@@ -158,6 +179,18 @@ export function dispatchReadTool(
       return JSON.stringify(reader.validate(), null, 2)
     case 'track_external_deps':
       return JSON.stringify(reader.externalDependencies(), null, 2)
+    case 'track_workspace_activity': {
+      const idleMs = optNum(args, 'idleMs')
+      return JSON.stringify(
+        reader.workspaceActivity(reqStr(args, 'workspace'), {
+          baselineCommit: reqStr(args, 'baselineCommit'),
+          now: reqStr(args, 'now'),
+          ...(idleMs !== undefined ? { idleMs } : {}),
+        }),
+        null,
+        2,
+      )
+    }
     case 'track_branch_provenance':
       return JSON.stringify(reader.branchProvenance(reqStr(args, 'locator')) ?? null, null, 2)
     case 'track_freshness':

@@ -4,5 +4,10 @@ export {
   StaleSidecarError,
   TrackReader,
   type BranchProvenance,
+  type ExternalDependency,
   type Freshness,
+  type StalledItem,
+  type StalledReason,
+  type WorkspaceActivity,
+  type WorkspaceActivityOptions,
 } from './contract.js'
