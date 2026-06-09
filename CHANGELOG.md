@@ -2,6 +2,20 @@
 
 All notable changes to `@sentropic/track`. Format loosely follows [Keep a Changelog](https://keepachangelog.com); this package is pre-1.0 (the **event contract** is frozen, but the library/CLI surface may still evolve additively).
 
+## [0.10.8] — `--commit HEAD`/ref resolution (acceptance footgun fix)
+
+### Fixed
+- **`track report --commit HEAD --require-accepted` now works.** `--commit` (on `report`/`query`/`accept run`/
+  `branch import`/`item ls`) is normalized through git at the CLI boundary — `HEAD`, branch names, and short
+  SHAs resolve to the full SHA before the (literal) acceptance-freshness compare, so an explicit `--commit
+  HEAD` matches a run recorded at that commit (consistent with the no-flag default). A full SHA passes
+  through; a non-git dir / bad ref falls back to the literal value (no crash). Reported by a peer conductor
+  (graphify) who hit exactly this.
+
+### Notes
+- CLI-boundary only — `src/accept/status.ts`'s literal compare (the correctness invariant) is untouched. Event
+  contract / write path / P0 guard untouched. 447 tests.
+
 ## [0.10.7] — durable workspace-id (h2a-aligned, byte-identical)
 
 ### Added

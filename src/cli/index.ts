@@ -123,6 +123,31 @@ function gitHead(cwd: string): string {
   }
 }
 
+/**
+ * CLI-boundary normalization for `--commit <c>`. The acceptance baseline is compared LITERALLY in
+ * `src/accept/status.ts` (a recorded run's `commit` must equal the report's `baselineCommit`), so the
+ * two ends must agree on the SAME string. The omitted default already resolves HEAD via `gitHead`,
+ * but an EXPLICIT `--commit HEAD` (or a branch / short SHA) used to reach the compare verbatim — never
+ * matching a run recorded under the resolved 40-char SHA → criterion `stale`, item never accepts.
+ *
+ * So: undefined → `gitHead(cwd)` (current HEAD SHA, same as the default). Otherwise `git rev-parse <c>`
+ * resolves `HEAD`, symbolic refs, and short SHAs to the full SHA; a full SHA passes through unchanged.
+ * If rev-parse fails (not a git repo / bad ref) we return `c` VERBATIM — never crash, and preserve the
+ * pre-existing behavior for non-git dirs and odd literal tokens (e.g. test fixtures like `c1`).
+ */
+function resolveCommit(cwd: string, c: string | undefined): string {
+  if (c === undefined) return gitHead(cwd)
+  try {
+    return execFileSync('git', ['rev-parse', '--verify', '--end-of-options', `${c}^{commit}`], {
+      cwd,
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'ignore'],
+    }).trim()
+  } catch {
+    return c
+  }
+}
+
 // D3: CLI writes are attributed to the LOCAL USER (never the reserved `'system'`), with `cli`
 // provenance — so the immutable log honestly distinguishes a human-CLI write from an agent one.
 const CLI_PROV: Provenance = { transport: 'cli', proposed: false, auth: 'local-user' }
@@ -396,7 +421,7 @@ function cmdItem(args: string[], ctx: Ctx): number {
         ...(opt(flags, 'kind') !== undefined ? { kind: oneOf(req(flags, 'kind'), ITEM_KINDS, '--kind') } : {}),
         ...(opt(flags, 'workspace') !== undefined ? { workspace: req(flags, 'workspace') } : {}),
       },
-      { baselineCommit: opt(flags, 'commit') ?? gitHead(io.cwd) },
+      { baselineCommit: resolveCommit(io.cwd, opt(flags, 'commit')) },
     )
     rowsOut(rows, fmt(flags), io)
     return 0
@@ -542,7 +567,7 @@ function cmdAccept(args: string[], ctx: Ctx): number {
     return 0
   }
   if (sub === 'run') {
-    const commit = opt(flags, 'commit') ?? gitHead(io.cwd)
+    const commit = resolveCommit(io.cwd, opt(flags, 'commit'))
     const env = opt(flags, 'env') ?? 'ci'
     const runner = opt(flags, 'runner') ?? 'cli'
     const from = opt(flags, 'from')
@@ -601,7 +626,7 @@ function cmdReport(args: string[], ctx: Ctx): number {
     reportText(
       reader,
       {
-        baselineCommit: opt(flags, 'commit') ?? gitHead(io.cwd),
+        baselineCommit: resolveCommit(io.cwd, opt(flags, 'commit')),
         requireAccepted: flags['require-accepted'] === true,
         decisions: flags['decisions'] === true,
         wpTree: flags['wp'] === true,
@@ -631,7 +656,7 @@ function cmdQuery(args: string[], ctx: Ctx): number {
         ? { acceptance: oneOf(req(flags, 'acceptance'), ACCEPTANCES, '--acceptance') as never }
         : {}),
       },
-      { baselineCommit: opt(flags, 'commit') ?? gitHead(io.cwd) },
+      { baselineCommit: resolveCommit(io.cwd, opt(flags, 'commit')) },
       fmt(flags),
     ),
   )
@@ -685,7 +710,7 @@ function cmdBranch(args: string[], ctx: Ctx): number {
   const result = track.importBranch(content, {
     locator: file,
     fileSlug: basename(file).replace(/\.md$/, ''),
-    commit: opt(flags, 'commit') ?? gitHead(io.cwd),
+    commit: resolveCommit(io.cwd, opt(flags, 'commit')),
   })
   io.out(`Imported ${result.branchSlug}: ${result.created} created, ${result.updated} updated\n`)
   return 0
