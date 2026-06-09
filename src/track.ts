@@ -74,6 +74,11 @@ export interface TrackOptions {
   prov?: Provenance
 }
 
+/** Resolution scope for `resolveExternalDependency` — REQUIRED so unscoped resolution is never implicit.
+ *  `{workspace}` = pin to one workspace (the ingest channel's containment); `'all-workspaces'` = a local
+ *  CLI human (the trust root) explicitly opting out of the pin. */
+export type ResolveScope = { workspace: string } | 'all-workspaces'
+
 export interface OpenBlockerInput {
   targetId: ItemId
   kind: BlockerKind
@@ -347,6 +352,36 @@ export class Track {
       blockerId,
       ...(blocker.engagementRef !== undefined ? { engagementRef: blocker.engagementRef } : {}),
     })
+  }
+
+  /**
+   * Resolve ALL open `extra`-scope dependencies referencing `engagementRef`, as ONE atomic batch — the bulk
+   * path for an h2a bridge when an ENGAGEMENT settles (one engagement may block N items). IDEMPOTENT: a
+   * retry with nothing open left to resolve is a no-op returning `[]`. Returns the resolved blockerIds.
+   *
+   * `scope` is REQUIRED and **fail-closed by construction**: the ingest channel passes `{workspace}`
+   * (restricts resolution to deps whose target is in that workspace — a pinned channel can never reach
+   * another workspace's deps); a local CLI human, who is the trust root, opts into `'all-workspaces'`
+   * EXPLICITLY. There is no implicit unscoped path, so a caller that forgets the pin fails to compile
+   * rather than silently clearing every workspace's deps.
+   */
+  resolveExternalDependency(engagementRef: string, scope: ResolveScope): BlockerId[] {
+    // Runtime fail-closed (defends against a JS / `as any` caller): the ONLY unscoped path is the literal
+    // `'all-workspaces'`. A scope object without a concrete workspace string throws rather than silently
+    // resolving every workspace's deps.
+    if (scope !== 'all-workspaces' && (typeof scope !== 'object' || scope === null || typeof scope.workspace !== 'string' || scope.workspace.length === 0)) {
+      throw new DomainError("resolveExternalDependency: scope must be {workspace:<non-empty string>} or 'all-workspaces'")
+    }
+    const workspace = scope === 'all-workspaces' ? undefined : scope.workspace
+    const state = this.state()
+    const parts: EventPart[] = []
+    for (const b of state.blockers.values()) {
+      if (!b.open || b.kind !== 'dependency' || b.scope !== 'extra' || b.engagementRef !== engagementRef) continue
+      if (workspace !== undefined && state.items.get(b.targetId)?.workspace !== workspace) continue
+      parts.push({ aggregate: 'blocker', aggregateId: b.id, type: 'blocker.resolved', payload: { blockerId: b.id, engagementRef } })
+    }
+    if (parts.length > 0) this.emitBatch(parts)
+    return parts.map((p) => p.aggregateId)
   }
 
   // ---- Acceptance (SPEC §2.4) ----

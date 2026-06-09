@@ -2,6 +2,24 @@
 
 All notable changes to `@sentropic/track`. Format loosely follows [Keep a Changelog](https://keepachangelog.com); this package is pre-1.0 (the **event contract** is frozen, but the library/CLI surface may still evolve additively).
 
+## [0.8.0] — Bulk resolve-by-engagementRef (M3 deps follow-up)
+
+### Added
+- **`track.resolveExternalDependency(engagementRef, scope)`** + the **`blocker.resolve-external`** WorkEvent
+  kind + the CLI verb **`track blocker resolve-external --engagement-ref <e>`** — resolves ALL open external
+  (`scope:'extra'`) dependencies referencing an h2a ENGAGEMENT as **one atomic batch**, so a bridge clears
+  the N deps of one settled engagement in a single, idempotent call. `scope` is **required and fail-closed**:
+  the ingest channel passes `{workspace}` (containment — a pinned channel can never resolve another
+  workspace's deps); a local CLI human opts into `'all-workspaces'` explicitly; an unscoped object throws at
+  both compile- and run-time.
+
+### Notes
+- Additive (a new ingest-contract WorkEvent kind; no new event type — it emits the existing
+  `blocker.resolved`, now carrying `engagementRef`; the frozen event contract is intact). Idempotent (a retry
+  resolves nothing) and binding (a `signed`/`local-user` channel only). Double-reviewed
+  (`docs/reviews/lot-D-resolve-by-engagement-{codex,opus}.md`). Closes the deferred M3 deps follow-up — the
+  in-track deps/RACI/contractualization story is now whole.
+
 ## [0.7.0] — h2a-bridge read surface (M3 deps/RACI plan complete)
 
 ### Added

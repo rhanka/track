@@ -175,6 +175,11 @@ export function mapWorkEvent(ev: WorkEvent): MappedCommand {
     case 'blocker.resolve':
       args = [p['blockerId']]
       break
+    case 'blocker.resolve-external':
+      // resolveExternalDependency(engagementRef, {workspace}) — the workspace pin is supplied by `ingest`
+      // from the channel context (containment), not the WorkEvent.
+      args = [p['engagementRef']]
+      break
   }
 
   return { kind, method, settles, payload: p, args, ...(clientToken !== undefined ? { clientToken } : {}) }

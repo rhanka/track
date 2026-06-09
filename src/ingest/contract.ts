@@ -37,6 +37,7 @@ export const WORK_EVENT_KINDS = [
   'priority.assess',
   'blocker.raise',
   'blocker.resolve',
+  'blocker.resolve-external',
 ] as const
 export type WorkEventKind = (typeof WORK_EVENT_KINDS)[number]
 
@@ -207,5 +208,10 @@ export const WORK_EVENT_SCHEMA: Record<WorkEventKind, KindSchema> = {
     method: 'resolveBlocker',
     settles: 'always',
     fields: { blockerId: str(true) },
+  },
+  'blocker.resolve-external': {
+    method: 'resolveExternalDependency',
+    settles: 'always', // a settling write — the bridge channel must be authenticated (signed/local-user)
+    fields: { engagementRef: str(true) },
   },
 }

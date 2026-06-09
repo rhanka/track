@@ -56,6 +56,7 @@ const USAGE = `usage: track <command>
   decision disposition <itemId> <orientation|commitment> <required|skipped|not-applicable>
   blocker raise --target <id> --kind <decision|dependency> [--ref <id>] [--reason <r>] [--rule <linked-done|linked-accepted|manual>] [--scope <intra|extra>] [--engagement-ref <e>]
   blocker resolve <blockerId>
+  blocker resolve-external --engagement-ref <e>
   accept criterion <itemId> --statement <s>
   accept link <criterionId> --kind <unit|integration|e2e|manual> --locator <l>
   accept run <evidenceId> --result <pass|fail> [--commit <c>] [--env <e>] [--runner <r>]
@@ -338,7 +339,13 @@ function cmdBlocker(args: string[], io: CliIO): number {
     io.out('ok\n')
     return 0
   }
-  io.err('usage: track blocker <raise|resolve>\n')
+  if (sub === 'resolve-external') {
+    // A local CLI human is the trust root — explicitly unscoped (resolves the engagement's deps everywhere).
+    const ids = track.resolveExternalDependency(req(flags, 'engagement-ref'), 'all-workspaces')
+    io.out(`resolved ${ids.length} external dependency blocker(s)\n`)
+    return 0
+  }
+  io.err('usage: track blocker <raise|resolve|resolve-external>\n')
   return 2
 }
 

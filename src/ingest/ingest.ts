@@ -101,6 +101,10 @@ function resolveWorkspace(cmd: MappedCommand, state: State): { create: boolean; 
       const b = state.blockers.get(p['blockerId'] as string)
       return { create: false, workspace: b ? item(b.targetId) : undefined }
     }
+    case 'blocker.resolve-external':
+      // Containment is enforced INSIDE resolveExternalDependency (it filters to the channel workspace) —
+      // this kind affects N blockers, not one resolvable target, so there is no single workspace to gate here.
+      return { create: false, workspace: undefined }
   }
 }
 
@@ -155,8 +159,9 @@ function authorize(cmd: MappedCommand, ctx: IngestContext, state: State): void {
 }
 
 /** Typed dispatch to the Track facade. Args were validated/normalized by `mapWorkEvent`. Returns an
- *  assigned id for the creating kinds, else undefined. */
-function applyCommand(track: Track, cmd: MappedCommand): string | undefined {
+ *  assigned id for the creating kinds, else undefined. `ctx` supplies the workspace pin for kinds whose
+ *  containment is enforced inside the facade method (e.g. the bulk `blocker.resolve-external`). */
+function applyCommand(track: Track, cmd: MappedCommand, ctx: IngestContext): string | undefined {
   const a = cmd.args
   switch (cmd.kind) {
     case 'item.create':
@@ -195,6 +200,10 @@ function applyCommand(track: Track, cmd: MappedCommand): string | undefined {
       return track.openBlocker(a[0] as OpenBlockerInput)
     case 'blocker.resolve':
       track.resolveBlocker(a[0] as string)
+      return undefined
+    case 'blocker.resolve-external':
+      // The channel workspace pins resolution to this workspace's deps (containment, required by type).
+      track.resolveExternalDependency(a[0] as string, { workspace: ctx.workspace })
       return undefined
   }
 }
@@ -273,7 +282,7 @@ export function ingest(events: readonly WorkEvent[], ctx: IngestContext, store: 
       continue
     }
     authorize(cmd, ctx, track.state()) // fresh fold each iteration (re-fold after each apply)
-    const id = track.withClientToken(cmd.clientToken, () => applyCommand(track, cmd)) ?? null
+    const id = track.withClientToken(cmd.clientToken, () => applyCommand(track, cmd, ctx)) ?? null
     if (cmd.clientToken !== undefined) seen.set(cmd.clientToken, id) // intra-stream duplicates also skip
     ids.push(id)
   }

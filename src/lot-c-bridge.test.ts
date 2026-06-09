@@ -10,6 +10,7 @@ import type { WorkEventKind } from './ingest/contract.js'
 import { ingest, type IngestContext } from './ingest/ingest.js'
 import { dispatchReadTool } from './mcp/server.js'
 import { TrackReader } from './read/contract.js'
+import { Track } from './track.js'
 
 // The bridge's signed channel (it verified the h2a engagement settled, then writes the resolve).
 const BRIDGE: Provenance = { transport: 'http', proposed: false, auth: 'signed', principal: 'bridge:h2a', sig: { alg: 'Ed25519', value: 'c2ln', by: 'nhi-bridge' } }
@@ -91,5 +92,57 @@ describe('Lot C — h2a bridge: a signed channel resolves an EXTERNAL dependency
     const out = JSON.parse(dispatchReadTool(reader, 'track_external_deps', {}))
     expect(out).toEqual(reader.externalDependencies()) // byte-parity with the library surface
     expect(store.readAll().length).toBe(before) // side-effect-free
+  })
+})
+
+describe('Lot C+ — bulk resolve-by-engagementRef (one engagement → N deps)', () => {
+  it('resolveExternalDependency clears all open extra deps for an engagement as one atomic batch, idempotently', () => {
+    const t = new Track(store, { by: 'human:x' })
+    const a = t.createItem({ kind: 'feature', title: 'A', workspace: 'ws' })
+    const b = t.createItem({ kind: 'feature', title: 'B', workspace: 'ws' })
+    t.openBlocker({ targetId: a, kind: 'dependency', scope: 'extra', engagementRef: 'eng-1', reason: '' })
+    t.openBlocker({ targetId: b, kind: 'dependency', scope: 'extra', engagementRef: 'eng-1', reason: '' })
+    t.openBlocker({ targetId: a, kind: 'dependency', scope: 'extra', engagementRef: 'eng-OTHER', reason: '' })
+
+    const resolved = t.resolveExternalDependency('eng-1', 'all-workspaces')
+    expect(resolved.length).toBe(2)
+    expect(reader.externalDependencies().map((d) => d.engagementRef)).toEqual(['eng-OTHER']) // only eng-1 cleared
+    const resolves = store.readAll().filter((e) => e.type === 'blocker.resolved')
+    expect(resolves.length).toBe(2)
+    for (const e of resolves) expect((e.payload as { engagementRef?: string }).engagementRef).toBe('eng-1')
+    expect(new Set(resolves.map((e) => e.cmdId)).size).toBe(1) // ONE atomic batch
+    expect((resolves[0]!.cmd as { n: number }).n).toBe(2)
+    expect(t.resolveExternalDependency('eng-1', 'all-workspaces')).toEqual([]) // idempotent — a retry resolves nothing
+    expect(reader.validate().ok).toBe(true)
+  })
+
+  it('refuses an unscoped scope object at runtime (only the explicit "all-workspaces" is unscoped)', () => {
+    const t = new Track(store, { by: 'human:x' })
+    // a JS / `as any` caller that drops the pin must THROW, never silently resolve all workspaces
+    expect(() => t.resolveExternalDependency('eng', {} as never)).toThrow(/scope must be/)
+    expect(() => t.resolveExternalDependency('eng', { workspace: undefined } as never)).toThrow(/scope must be/)
+  })
+
+  it('an unauthenticated channel CANNOT bulk-resolve (it is a settling write)', () => {
+    const local: IngestContext = { by: 'human:x', workspace: 'ws', prov: LOCAL }
+    const item = ingest([ev('item.create', { kind: 'feature', title: 'A', workspace: 'ws' })], local, store).ids[0]!
+    ingest([ev('blocker.raise', { targetId: item, kind: 'dependency', scope: 'extra', engagementRef: 'eng-u', reason: '' })], local, store)
+    const unauth: IngestContext = { by: 'x', workspace: 'ws', prov: { transport: 'import', proposed: true, auth: 'unauthenticated' } }
+    expect(() => ingest([ev('blocker.resolve-external', { engagementRef: 'eng-u' })], unauth, store)).toThrow(/binding write/)
+  })
+
+  it('via the signed ingest channel, resolve-external respects workspace containment', () => {
+    const W: IngestContext = { by: 'bridge:h2a', workspace: 'W', prov: BRIDGE }
+    const V: IngestContext = { by: 'human:x', workspace: 'V', prov: LOCAL }
+    const wItem = ingest([ev('item.create', { kind: 'feature', title: 'W', workspace: 'W' })], W, store).ids[0]!
+    ingest([ev('blocker.raise', { targetId: wItem, kind: 'dependency', scope: 'extra', engagementRef: 'eng-x', reason: '' })], W, store)
+    const vItem = ingest([ev('item.create', { kind: 'feature', title: 'V', workspace: 'V' })], V, store).ids[0]!
+    ingest([ev('blocker.raise', { targetId: vItem, kind: 'dependency', scope: 'extra', engagementRef: 'eng-x', reason: '' })], V, store)
+
+    // a W-pinned signed bridge resolves eng-x → only the W dep clears; the V dep stays open (containment)
+    ingest([ev('blocker.resolve-external', { engagementRef: 'eng-x' })], W, store)
+    const stillOpen = reader.externalDependencies()
+    expect(stillOpen.length).toBe(1)
+    expect(stillOpen[0]!.targetId).toBe(vItem)
   })
 })
