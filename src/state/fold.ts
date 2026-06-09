@@ -10,6 +10,7 @@ import type {
   DecisionCreatedPayload,
   DecisionState,
   Dossier,
+  DossierArtifact,
   Outcome,
 } from '../model/decision.js'
 import { isSettled } from '../model/decision.js'
@@ -173,6 +174,20 @@ function applyEvent(state: State, event: TrackEvent): void {
     case 'dossier.revised': {
       const decision = state.decisions.get(event.aggregateId)
       if (decision) decision.dossier = (event.payload as { dossier: Dossier }).dossier
+      break
+    }
+
+    case 'decision.artifact-added': {
+      // M5 — append ONE artifact to the decision's dossier.artifacts[] (the existing dossier is left
+      // intact; no whole-dossier rewrite). Legality (union shape) is checked at append.
+      const decision = state.decisions.get(event.aggregateId)
+      if (decision) {
+        const artifact = (event.payload as { artifact: DossierArtifact }).artifact
+        decision.dossier = {
+          ...decision.dossier,
+          artifacts: [...(decision.dossier.artifacts ?? []), artifact],
+        }
+      }
       break
     }
 

@@ -29,6 +29,11 @@ export const EVENT_TYPES = [
   // recreate). Past-tense persisted name, mirroring `item.create`→`item.created` (WorkEvent kind
   // `item.reparent`). Additive: absent on every pre-WP event ⇒ zero hash/seq/bucket change.
   'item.reparented',
+  // M5 (decision-presentation) — append ONE DossierArtifact to a decision's `dossier.artifacts[]` on the
+  // EXISTING decision aggregate (next seq, no whole-dossier rewrite). Past-tense persisted name, mirroring
+  // `item.reparent`→`item.reparented` (WorkEvent kind `decision.add-artifact`). Additive: absent on every
+  // pre-M5 event ⇒ zero hash/seq/bucket change.
+  'decision.artifact-added',
 ] as const
 export type EventType = (typeof EVENT_TYPES)[number]
 

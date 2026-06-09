@@ -30,6 +30,7 @@ export const WORK_EVENT_KINDS = [
   'item.realize',
   'decision.create',
   'decision.dossier',
+  'decision.add-artifact',
   'decision.outcome',
   'decision.disposition',
   'acceptance.criterion',
@@ -147,6 +148,15 @@ export const WORK_EVENT_SCHEMA: Record<WorkEventKind, KindSchema> = {
     method: 'reviseDossier',
     settles: 'never',
     fields: { decisionId: str(true), dossier: { type: 'object', required: true } },
+  },
+  'decision.add-artifact': {
+    // M5 — append ONE record-only DossierArtifact to a decision's dossier. Binding (`always`): a false
+    // comprehension marker is trust-sensitive ⇒ requires auth ∈ {local-user, signed}. The `artifact`
+    // discriminated-union SHAPE is validated fail-closed in the facade (assertDossierArtifact); the
+    // envelope schema only checks it is an object (the flat FieldSpec cannot express a union).
+    method: 'addDecisionArtifact',
+    settles: 'always',
+    fields: { decisionId: str(true), artifact: { type: 'object', required: true } },
   },
   'decision.outcome': {
     method: 'setOutcome',

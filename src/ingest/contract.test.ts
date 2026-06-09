@@ -14,6 +14,7 @@ describe('WorkEvent contract surface', () => {
       'item.realize',
       'decision.create',
       'decision.dossier',
+      'decision.add-artifact',
       'decision.outcome',
       'decision.disposition',
       'acceptance.criterion',
@@ -49,6 +50,7 @@ describe('WorkEvent contract surface', () => {
         required: ['decisionKind', 'dossier', 'targets', 'title', 'workspace'],
       },
       'decision.dossier': { method: 'reviseDossier', settles: 'never', required: ['decisionId', 'dossier'] },
+      'decision.add-artifact': { method: 'addDecisionArtifact', settles: 'always', required: ['artifact', 'decisionId'] },
       'decision.outcome': { method: 'setOutcome', settles: 'always', required: ['decisionId', 'to'] },
       'decision.disposition': {
         method: 'setDisposition',

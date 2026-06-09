@@ -10,7 +10,7 @@
 // State is re-folded each iteration, so an id created earlier in the same batch resolves to ctx.workspace.
 
 import type { RunResult } from '../model/acceptance.js'
-import type { Dossier, Outcome } from '../model/decision.js'
+import type { Dossier, DossierArtifact, Outcome } from '../model/decision.js'
 import type { Disposition, Gate, ItemId, Realization, SpecStatus } from '../model/item.js'
 import type { ItemCreatedPayload } from '../model/item.js'
 import type { DecisionCreatedPayload } from '../model/decision.js'
@@ -87,6 +87,7 @@ function resolveWorkspace(cmd: MappedCommand, state: State): { create: boolean; 
       return { create: false, workspace: item(p['itemId']) }
     case 'decision.outcome':
     case 'decision.dossier':
+    case 'decision.add-artifact':
       return { create: false, workspace: state.decisions.get(p['decisionId'] as ItemId)?.workspace }
     case 'acceptance.link':
     case 'acceptance.waive': {
@@ -188,6 +189,10 @@ function applyCommand(track: Track, cmd: MappedCommand, ctx: IngestContext): str
       return track.createDecision(a[0] as DecisionCreatedPayload)
     case 'decision.dossier':
       track.reviseDossier(a[0] as ItemId, a[1] as Dossier)
+      return undefined
+    case 'decision.add-artifact':
+      // The clientToken is already in scope via the ingest seam's withClientToken (do not double-pass).
+      track.addDecisionArtifact(a[0] as ItemId, a[1] as DossierArtifact)
       return undefined
     case 'decision.outcome':
       track.setOutcome(a[0] as ItemId, a[1] as Outcome)

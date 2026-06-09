@@ -1,7 +1,7 @@
 import { acceptanceStatus } from '../accept/status.js'
 import type { ActorId } from '../events/types.js'
 import type { AcceptanceStatus } from '../model/acceptance.js'
-import type { DecisionKind, Outcome } from '../model/decision.js'
+import type { DecisionKind, DossierArtifact, Outcome } from '../model/decision.js'
 import type { ItemId, ItemKind, ItemRole, ItemState, Realization } from '../model/item.js'
 import type { State } from '../state/fold.js'
 import { BUCKETS, bucketOf, type Bucket, type ReportConfig } from './buckets.js'
@@ -29,6 +29,9 @@ export interface DecisionRow {
   realization: Realization
   outcome: Outcome
   accountable?: ActorId // the decision sponsor (D6)
+  // M5 (additive) — record-only pointers to an h2a decision dossier / rendered view / mockup, the read
+  // surface the DS render consumes. Present iff the decision has appended artifacts.
+  artifacts?: DossierArtifact[]
 }
 
 export interface Report {
@@ -100,6 +103,7 @@ export function buildReport(state: State, options: ReportOptions): Report {
       realization: d.realization,
       outcome: d.outcome,
       ...(d.accountable !== undefined ? { accountable: d.accountable } : {}),
+      ...(d.dossier.artifacts !== undefined ? { artifacts: d.dossier.artifacts } : {}),
     }))
   }
   return report

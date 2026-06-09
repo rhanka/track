@@ -24,12 +24,16 @@ export {
   type ResolutionRule,
 } from './blocker.js'
 export {
+  assertDossierArtifact,
   assertOutcomeTransition,
   isSettled,
+  type AddArtifactPayload,
+  type ComprehensionEvidence,
   type DecisionCreatedPayload,
   type DecisionKind,
   type DecisionState,
   type Dossier,
+  type DossierArtifact,
   type Option,
   type Outcome,
   type QAEntry,

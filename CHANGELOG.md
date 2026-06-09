@@ -2,6 +2,21 @@
 
 All notable changes to `@sentropic/track`. Format loosely follows [Keep a Changelog](https://keepachangelog.com); this package is pre-1.0 (the **event contract** is frozen, but the library/CLI surface may still evolve additively).
 
+## [0.10.3] — Decision-artifact record contract (`Dossier.artifacts[]` + `decision.add-artifact`)
+
+### Added
+- **`Dossier.artifacts[]`** — a record-only discriminated-union pointer to an h2a decision dossier
+  (`h2a-decision-dossier` {negotiationRef, dossierHash, comprehension[]} | `rendered-view` | `mockup`).
+  `ComprehensionEvidence` names the **attester (the decider)** in the payload — distinct from the channel
+  `prov.principal` (the relaying bridge) — closing the confused-deputy. Track **records, never verifies**.
+- **`decision.add-artifact`** WorkEvent + **`decision.artifact-added`** event — appends one artifact to a
+  decision's dossier on its own aggregate (no rewrite; next seq; existing hashes untouched);
+  `clientToken`-idempotent; binding-gated (`local-user`/`signed`); workspace-contained; fail-closed union.
+
+### Notes
+- Additive; `READ_CONTRACT_VERSION` 1.2.0 → 1.3.0. Pair-reviewed spec
+  `docs/plan/M5-decision-presentation-DESIGN.md`. 396 tests. Completes the in-track record side of WP5.
+
 ## [0.10.2] — Conductor report: clean `report --wp` (fait / à-faire %·WP / attendus)
 
 ### Fixed / Added

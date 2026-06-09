@@ -130,6 +130,11 @@ export function mapWorkEvent(ev: WorkEvent): MappedCommand {
     case 'decision.dossier':
       args = [p['decisionId'], p['dossier']]
       break
+    case 'decision.add-artifact':
+      // addDecisionArtifact(decisionId, artifact, clientToken?) — the union shape is validated in the
+      // facade (fail-closed). clientToken is threaded by `ingest` via withClientToken, not as an arg.
+      args = [p['decisionId'], p['artifact']]
+      break
     case 'decision.outcome':
       args = [p['decisionId'], p['to']]
       break

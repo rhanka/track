@@ -30,7 +30,7 @@ import { fold } from '../state/fold.js'
  * shapes it returns may only GROW (new methods / new optional fields); nothing is removed or
  * repurposed without a major bump. Consumers gate on `reader.contractVersion`.
  */
-export const READ_CONTRACT_VERSION = '1.2.0' // +role/wpTree rollup + query({role}) (Workpackages §2, additive)
+export const READ_CONTRACT_VERSION = '1.3.0' // +decision dossier artifacts[] on DecisionRow (M5, additive)
 
 /** Provenance of the last `branch.imported` for a locator (drawn from the raw event log). */
 export interface BranchProvenance {

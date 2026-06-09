@@ -28,8 +28,10 @@ import {
   type ResolutionRule,
 } from './model/blocker.js'
 import {
+  assertDossierArtifact,
   assertOutcomeTransition,
   type DecisionCreatedPayload,
+  type DossierArtifact,
   type Dossier,
   type Outcome,
 } from './model/decision.js'
@@ -302,6 +304,29 @@ export class Track {
       throw new DomainError(`unknown decision ${decisionId}`)
     }
     this.emit('decision', decisionId, 'dossier.revised', { dossier })
+  }
+
+  /**
+   * Append ONE record-only `DossierArtifact` to a decision's `dossier.artifacts[]` (M5 §3.2) — a
+   * pointer to an h2a decision dossier / rendered view / mockup. APPEND-ONLY: emits
+   * `decision.artifact-added` on the EXISTING decision aggregate (next seq, no whole-dossier rewrite,
+   * existing hashes untouched), avoiding the lost-update hazard of a `reviseDossier` read-modify-write.
+   * The union is fail-closed (`assertDossierArtifact`). Track RECORDS the artifact (incl. any named
+   * `ComprehensionEvidence`) but NEVER verifies an attestation — the attester (`evidence.subject`) is
+   * in the PAYLOAD, distinct from the channel `prov.principal` (the bridge/relayer). Binding-gated +
+   * workspace-contained at the ingest seam; `clientToken` idempotency via `withClientToken`.
+   */
+  addDecisionArtifact(decisionId: ItemId, artifact: DossierArtifact, clientToken?: string): void {
+    if (!this.state().decisions.has(decisionId)) {
+      throw new DomainError(`unknown decision ${decisionId}`)
+    }
+    const validated = assertDossierArtifact(artifact)
+    const emit = (): void => this.emit('decision', decisionId, 'decision.artifact-added', { artifact: validated })
+    // Stamp a CALLER-supplied token (the facade path). When called via the ingest seam the token is
+    // already in scope (withClientToken), so a `clientToken` arg is omitted and we must NOT clobber it
+    // with `withClientToken(undefined, …)`.
+    if (clientToken !== undefined) this.withClientToken(clientToken, emit)
+    else emit()
   }
 
   /**
