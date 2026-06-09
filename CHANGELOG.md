@@ -2,6 +2,22 @@
 
 All notable changes to `@sentropic/track`. Format loosely follows [Keep a Changelog](https://keepachangelog.com); this package is pre-1.0 (the **event contract** is frozen, but the library/CLI surface may still evolve additively).
 
+## [0.10.5] — `present-decision` skill (track plugin) + `decision add-artifact` CLI
+
+### Added
+- **`present-decision` skill** (`skills/present-decision/`, tool-neutral) — the **agent→human**
+  decision-presentation method: a stakes-calibrated, anti-bias decision dossier with a **self-audit gate**
+  (FACT/JUDGMENT tags · count-symmetry on pros · a required "strongest case against my recommendation" ·
+  pre-mortem · presenter-interest disclosure), persisted owner criteria, composition with the Codex+Opus
+  double-instruction and `track report --wp`, and recording via track. Distinct from h2a (inter-agent
+  presenter). Ships in the track plugin (auto-discovered at `<plugin-root>/skills/`); multi-agent install via
+  the forthcoming `track install-skills`.
+- **`track decision add-artifact <id> --kind …`** CLI — wires the shipped 0.10.3 `decision.add-artifact`
+  (fail-closed union; `--client-token` idempotency), so the skill can record a presented decision's artifact.
+
+### Notes
+- Additive; event contract / write path / P0 guard untouched. 415 tests.
+
 ## [0.10.4] — `workspaceActivity` read (h2a conductor-launch signal)
 
 ### Added

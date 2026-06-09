@@ -8,7 +8,7 @@ import { validate } from '../events/validate.js'
 import { initTrackDir, resolveTrackDir, resolveTrackDirOrNull } from './resolve.js'
 import type { EvidenceKind, RunResult } from '../model/acceptance.js'
 import type { BlockerKind, BlockerScope, ResolutionRule } from '../model/blocker.js'
-import type { DecisionKind, Outcome } from '../model/decision.js'
+import type { DecisionKind, DossierArtifact, Outcome } from '../model/decision.js'
 import { DomainError, type Disposition, type Gate, type ItemKind, type ItemRole, type Realization, type SpecStatus } from '../model/item.js'
 import type { Bucket } from '../report/buckets.js'
 import { formatRows, type Format } from '../report/format.js'
@@ -68,6 +68,7 @@ const USAGE = `usage: track <command>
   decision outcome <decisionId> <go|no-go|deferred>
   decision dossier <decisionId> --context <c>
   decision disposition <itemId> <orientation|commitment> <required|skipped|not-applicable>
+  decision add-artifact <decisionId> --kind <h2a-decision-dossier|rendered-view|mockup> [--negotiation-ref <n>] [--dossier-hash <h>] [--view-ref <v>] [--source-dossier-hash <h>] [--label <l>] [--client-token <t>]
   blocker raise --target <id> --kind <decision|dependency> [--ref <id>] [--reason <r>] [--rule <linked-done|linked-accepted|manual>] [--scope <intra|extra>] [--engagement-ref <e>]
   blocker resolve <blockerId>
   blocker resolve-external --engagement-ref <e>
@@ -94,6 +95,10 @@ const FROM_FORMATS = ['junit', 'json'] as const
 const BUCKETS_ARG = ['AWAITED', 'DROPPED', 'DONE', 'TO-DO'] as const
 // `n/a` is decision-only; `query` projects non-decision rows, so it would never match.
 const ACCEPTANCES = ['fail', 'waived', 'unknown', 'stale', 'pass'] as const
+// The DossierArtifact discriminator (M5 §3.1). CLI-local: the union SHAPE is validated fail-closed in the
+// facade (`assertDossierArtifact`); this only gates the surface flag so an unknown --kind fails at the
+// CLI boundary rather than assembling a half-built artifact.
+const DOSSIER_ARTIFACT_KINDS = ['h2a-decision-dossier', 'rendered-view', 'mockup'] as const
 
 function eventsPathOf(trackDir: string): string {
   return join(trackDir, 'events.jsonl')
@@ -408,7 +413,41 @@ function cmdDecision(args: string[], ctx: Ctx): number {
     io.out('ok\n')
     return 0
   }
-  io.err('usage: track decision <new|outcome|dossier|disposition>\n')
+  if (sub === 'add-artifact') {
+    // Append ONE record-only DossierArtifact (M5 §3.2) — a pointer to an h2a decision dossier / rendered
+    // view / mockup. The CLI assembles the discriminated branch from flags by --kind; `addDecisionArtifact`
+    // validates fail-closed (assertDossierArtifact), so a malformed union throws → rc=1. `--client-token`
+    // gives append-once idempotency. The CLI relays comprehension[] only via the ingest seam, never here:
+    // a local human deciding in chat is NOT a signed h2a attestation, so the CLI does not fake one.
+    const decisionId = positional[0]!
+    const kind = oneOf(opt(flags, 'kind'), DOSSIER_ARTIFACT_KINDS, '--kind')
+    // Assemble the discriminated branch from flags by --kind, but DON'T pre-validate the branch-specific
+    // fields here: `assertDossierArtifact` (inside addDecisionArtifact) is the SINGLE fail-closed authority
+    // for the union (it owns the exact "requires a dossierHash"/"requires a viewRef" wording), so a missing
+    // field surfaces the union error verbatim — CLI/facade/ingest stay in lockstep. `as DossierArtifact` is
+    // the assembly cast; the runtime check is the validator's.
+    const artifact = {
+      kind,
+      ...(opt(flags, 'negotiation-ref') !== undefined ? { negotiationRef: opt(flags, 'negotiation-ref') } : {}),
+      ...(opt(flags, 'dossier-hash') !== undefined ? { dossierHash: opt(flags, 'dossier-hash') } : {}),
+      ...(opt(flags, 'view-ref') !== undefined ? { viewRef: opt(flags, 'view-ref') } : {}),
+      ...(opt(flags, 'source-dossier-hash') !== undefined ? { sourceDossierHash: opt(flags, 'source-dossier-hash') } : {}),
+      ...(opt(flags, 'label') !== undefined ? { label: opt(flags, 'label') } : {}),
+    } as DossierArtifact
+    const clientToken = opt(flags, 'client-token')
+    // Idempotency (v2.3c) at the CLI boundary: the facade stamps the token onto the event but does NOT
+    // itself dedup (that is the ingest seam's job; the CLI is the local primary writer). So a retried
+    // `--client-token` must be skipped HERE, or it would append twice. Mirror the seam: if any prior event
+    // already carries this token, it landed — no-op, rc=0. Touches no contract and no write guard.
+    if (clientToken !== undefined && store(ctx).readAll().some((e) => e.clientToken === clientToken)) {
+      io.out('no-op: client-token already applied\n')
+      return 0
+    }
+    track.addDecisionArtifact(decisionId, artifact, clientToken)
+    io.out('ok\n')
+    return 0
+  }
+  io.err('usage: track decision <new|outcome|dossier|disposition|add-artifact>\n')
   return 2
 }
 

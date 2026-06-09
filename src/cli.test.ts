@@ -212,6 +212,85 @@ describe('CLI input validation + review fixes (Lot 7)', () => {
     expect(dossier.options).toHaveLength(1) // preserved, not erased
   })
 
+  it('decision add-artifact appends a rendered-view (parity with the lib/ingest path)', () => {
+    runCli(['init'], io)
+    const store = new EventStore(join(dir, '.track', 'events.jsonl'))
+    const track = new Track(store)
+    const t = track.createItem({ kind: 'feature', title: 't', workspace: 'ws' })
+    const d = track.createDecision({
+      decisionKind: 'orientation',
+      title: 'x',
+      workspace: 'ws',
+      targets: [t],
+      dossier: { context: 'c', options: [], qa: [] },
+    })
+    out.length = 0
+    expect(
+      runCli(
+        ['decision', 'add-artifact', d, '--kind', 'rendered-view', '--view-ref', 'track://dossier/1', '--source-dossier-hash', 'sha256:abc', '--label', 'card'],
+        io,
+      ),
+    ).toBe(0)
+    const dossier = new Track(store).state().decisions.get(d)!.dossier
+    expect(dossier.context).toBe('c') // existing dossier untouched (append, not rewrite)
+    expect(dossier.artifacts).toEqual([
+      { kind: 'rendered-view', viewRef: 'track://dossier/1', sourceDossierHash: 'sha256:abc', label: 'card' },
+    ])
+  })
+
+  it('decision add-artifact appends an h2a-decision-dossier (negotiation-ref + dossier-hash)', () => {
+    runCli(['init'], io)
+    const store = new EventStore(join(dir, '.track', 'events.jsonl'))
+    const track = new Track(store)
+    const t = track.createItem({ kind: 'feature', title: 't', workspace: 'ws' })
+    const d = track.createDecision({ decisionKind: 'orientation', title: 'x', workspace: 'ws', targets: [t], dossier: { context: '', options: [], qa: [] } })
+    out.length = 0
+    expect(
+      runCli(['decision', 'add-artifact', d, '--kind', 'h2a-decision-dossier', '--negotiation-ref', 'neg-1', '--dossier-hash', 'sha256:x'], io),
+    ).toBe(0)
+    const dossier = new Track(store).state().decisions.get(d)!.dossier
+    expect(dossier.artifacts).toEqual([{ kind: 'h2a-decision-dossier', negotiationRef: 'neg-1', dossierHash: 'sha256:x' }])
+  })
+
+  it('decision add-artifact rejects a malformed union (exit 1)', () => {
+    runCli(['init'], io)
+    const store = new EventStore(join(dir, '.track', 'events.jsonl'))
+    const track = new Track(store)
+    const t = track.createItem({ kind: 'feature', title: 't', workspace: 'ws' })
+    const d = track.createDecision({ decisionKind: 'orientation', title: 'x', workspace: 'ws', targets: [t], dossier: { context: '', options: [], qa: [] } })
+    out.length = 0
+    // h2a-decision-dossier with no dossier-hash → fail-closed
+    expect(runCli(['decision', 'add-artifact', d, '--kind', 'h2a-decision-dossier', '--negotiation-ref', 'neg-1'], io)).toBe(1)
+    expect(out.join('')).toContain('dossierHash')
+    out.length = 0
+    // rendered-view with no view-ref → fail-closed
+    expect(runCli(['decision', 'add-artifact', d, '--kind', 'rendered-view'], io)).toBe(1)
+    expect(out.join('')).toContain('viewRef')
+    // nothing was appended
+    expect(new Track(store).state().decisions.get(d)!.dossier.artifacts).toBeUndefined()
+  })
+
+  it('decision add-artifact honors --client-token idempotency (appends once)', () => {
+    runCli(['init'], io)
+    const store = new EventStore(join(dir, '.track', 'events.jsonl'))
+    const track = new Track(store)
+    const t = track.createItem({ kind: 'feature', title: 't', workspace: 'ws' })
+    const d = track.createDecision({ decisionKind: 'orientation', title: 'x', workspace: 'ws', targets: [t], dossier: { context: '', options: [], qa: [] } })
+    const args = ['decision', 'add-artifact', d, '--kind', 'rendered-view', '--view-ref', 'track://dossier/1', '--client-token', 'tok-1']
+    out.length = 0
+    expect(runCli(args, io)).toBe(0)
+    expect(runCli(args, io)).toBe(0) // re-send with same token
+    const dossier = new Track(store).state().decisions.get(d)!.dossier
+    expect(dossier.artifacts).toEqual([{ kind: 'rendered-view', viewRef: 'track://dossier/1' }]) // appended ONCE
+  })
+
+  it('decision usage names add-artifact', () => {
+    runCli(['init'], io)
+    out.length = 0
+    expect(runCli(['decision', 'bogus-sub'], io)).toBe(2)
+    expect(out.join('')).toContain('add-artifact')
+  })
+
   it('validate flags a referenced markdown with no H1', () => {
     runCli(['init'], io)
     writeFileSync(join(dir, 'prose.md'), 'no heading here\n')
