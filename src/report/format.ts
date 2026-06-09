@@ -1,5 +1,6 @@
 import { BUCKETS } from './buckets.js'
 import type { Report, ReportRow } from './build.js'
+import type { WpNode } from './rollup.js'
 
 export type Format = 'json' | 'text' | 'md'
 
@@ -74,6 +75,30 @@ export function formatReport(report: Report, format: Format): string {
     }
   }
   return lines.join('\n').trimEnd() + '\n'
+}
+
+/**
+ * Render the WP rollup forest as Markdown in agent-stats' shape (Workpackages §2):
+ *   - **WP1 · <title>** (done/total, pct%)
+ *     - **WP1.1 · <title>** (done/total, pct%)
+ *       - [x] <leaf>   / [ ] <leaf>
+ * `total` = `active` (DONE+TO-DO+AWAITED); DROPPED leaves are shown with `[~]` and excluded from %.
+ * `pct` is `n/a` for a 0/0 node (never 100%). Titles are markdown-escaped (no formatting injection).
+ */
+export function formatWpTree(tree: readonly WpNode[]): string {
+  const lines: string[] = []
+  const pct = (p: number | 'n/a'): string => (p === 'n/a' ? 'n/a' : `${p}%`)
+  const render = (node: WpNode, depth: number): void => {
+    const indent = '  '.repeat(depth)
+    lines.push(`${indent}- **${node.label} · ${title(node.title, 'md')}** (${node.done}/${node.active}, ${pct(node.pct)})`)
+    for (const leaf of node.leaves) {
+      const box = leaf.bucket === 'DONE' ? '[x]' : leaf.bucket === 'DROPPED' ? '[~]' : '[ ]'
+      lines.push(`${indent}  - ${box} ${title(leaf.title, 'md')}`)
+    }
+    for (const child of node.children) render(child, depth + 1)
+  }
+  for (const node of tree) render(node, 0)
+  return lines.join('\n') + (lines.length > 0 ? '\n' : '')
 }
 
 export function formatRows(rows: ReportRow[], format: Format): string {

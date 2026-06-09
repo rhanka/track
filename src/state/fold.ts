@@ -90,6 +90,7 @@ function applyEvent(state: State, event: TrackEvent): void {
         realization: 'to-do',
         disposition: { orientation: 'required', commitment: 'required' },
         ...(payload.parentId !== undefined ? { parentId: payload.parentId } : {}),
+        ...(payload.role !== undefined ? { role: payload.role } : {}),
         ...(payload.sourceKey !== undefined ? { sourceKey: payload.sourceKey } : {}),
         ...(payload.body !== undefined ? { body: payload.body } : {}),
         ...(payload.links !== undefined ? { links: payload.links } : {}),
@@ -98,6 +99,18 @@ function applyEvent(state: State, event: TrackEvent): void {
         ...(payload.engagementRef !== undefined ? { engagementRef: payload.engagementRef } : {}),
       }
       state.items.set(item.id, item)
+      break
+    }
+
+    case 'item.reparented': {
+      // Set/clear parentId on the EXISTING item aggregate (Workpackages §2). Absent parentId ⇒ detach
+      // to root. Legality (exists/same-workspace/no-self/no-cycle) is checked at append (Track.reparentItem).
+      const item = state.items.get(event.aggregateId)
+      if (item) {
+        const parentId = (event.payload as { parentId?: ItemId }).parentId
+        if (parentId !== undefined) item.parentId = parentId
+        else delete item.parentId
+      }
       break
     }
 

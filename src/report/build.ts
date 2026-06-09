@@ -2,9 +2,10 @@ import { acceptanceStatus } from '../accept/status.js'
 import type { ActorId } from '../events/types.js'
 import type { AcceptanceStatus } from '../model/acceptance.js'
 import type { DecisionKind, Outcome } from '../model/decision.js'
-import type { ItemId, ItemKind, ItemState, Realization } from '../model/item.js'
+import type { ItemId, ItemKind, ItemRole, ItemState, Realization } from '../model/item.js'
 import type { State } from '../state/fold.js'
 import { BUCKETS, bucketOf, type Bucket, type ReportConfig } from './buckets.js'
+import { computeWpTree, type WpNode } from './rollup.js'
 
 export interface ReportRow {
   id: ItemId
@@ -17,6 +18,7 @@ export interface ReportRow {
   priority?: number
   accountable?: ActorId // RACI-A (Lot A) — surfaced for "who is answerable for this item"
   engagementRef?: string // present ⇒ an h2a contract backs this item
+  role?: ItemRole // present ⇒ a workpackage (Workpackages §2) — excluded from the flat buckets
 }
 
 export interface DecisionRow {
@@ -32,12 +34,16 @@ export interface DecisionRow {
 export interface Report {
   buckets: Record<Bucket, ReportRow[]>
   decisions?: DecisionRow[]
+  /** Workpackages §2 — the %-by-WP rollup forest. Present iff `ReportOptions.wpTree` (additive, opt-in). */
+  wpTree?: WpNode[]
 }
 
 export interface ReportOptions {
   baselineCommit: string
   requireAccepted?: boolean
   decisions?: boolean
+  /** Include the WP rollup forest on `report.wpTree` (Workpackages §2). Absent ⇒ unchanged behavior. */
+  wpTree?: boolean
 }
 
 function toRow(state: State, item: ItemState, config: ReportConfig): ReportRow {
@@ -52,6 +58,7 @@ function toRow(state: State, item: ItemState, config: ReportConfig): ReportRow {
     ...(item.priority !== undefined ? { priority: item.priority.score } : {}),
     ...(item.accountable !== undefined ? { accountable: item.accountable } : {}),
     ...(item.engagementRef !== undefined ? { engagementRef: item.engagementRef } : {}),
+    ...(item.role !== undefined ? { role: item.role } : {}),
   }
 }
 
@@ -73,12 +80,17 @@ export function buildReport(state: State, options: ReportOptions): Report {
   }
   const buckets: Record<Bucket, ReportRow[]> = { AWAITED: [], DROPPED: [], DONE: [], 'TO-DO': [] }
   for (const item of state.items.values()) {
+    // Workpackages §2 — a WP is a container, not a leaf: keep it out of the flat buckets entirely so
+    // it can never be mis-counted as a TO-DO leaf (the false-% bug the design warns about). The WP
+    // forest is surfaced separately on `report.wpTree`.
+    if (item.role === 'workpackage') continue
     const row = toRow(state, item, config)
     buckets[row.bucket].push(row)
   }
   for (const bucket of BUCKETS) buckets[bucket].sort(byPriority)
 
   const report: Report = { buckets }
+  if (options.wpTree) report.wpTree = computeWpTree(state, config)
   if (options.decisions) {
     report.decisions = [...state.decisions.values()].map((d) => ({
       id: d.id,
@@ -101,14 +113,31 @@ export interface QueryFilter {
   bucket?: Bucket
   realization?: Realization
   acceptance?: AcceptanceStatus
+  /** Workpackages §2 — select container items. Without it, WP items stay EXCLUDED (unchanged behavior). */
+  role?: ItemRole
 }
 
 /** Flat, filtered view over the report rows (SPEC §6 `query`). */
 export function query(state: State, filter: QueryFilter, options: ReportOptions): ReportRow[] {
+  // Source rows in the SAME bucket order as before (each bucket internally priority-sorted) so existing
+  // query results are byte-identical. WP containers are excluded from the buckets; a `role` filter
+  // reaches them via a separate, priority-sorted projection appended after the bucket rows.
   const report = buildReport(state, options)
-  const rows = BUCKETS.flatMap((bucket) => report.buckets[bucket])
+  let rows = BUCKETS.flatMap((bucket) => report.buckets[bucket])
+  if (filter.role !== undefined) {
+    const config: ReportConfig = {
+      baselineCommit: options.baselineCommit,
+      requireAccepted: options.requireAccepted ?? false,
+    }
+    const wpRows = [...state.items.values()]
+      .filter((i) => i.role !== undefined)
+      .map((i) => toRow(state, i, config))
+      .sort(byPriority)
+    rows = [...rows, ...wpRows]
+  }
   return rows.filter(
     (r) =>
+      (filter.role === undefined || r.role === filter.role) &&
       (filter.kind === undefined || r.kind === filter.kind) &&
       (filter.workspace === undefined || r.workspace === filter.workspace) &&
       (filter.bucket === undefined || r.bucket === filter.bucket) &&

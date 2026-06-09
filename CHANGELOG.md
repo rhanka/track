@@ -2,6 +2,25 @@
 
 All notable changes to `@sentropic/track`. Format loosely follows [Keep a Changelog](https://keepachangelog.com); this package is pre-1.0 (the **event contract** is frozen, but the library/CLI surface may still evolve additively).
 
+## [0.10.0] — Workpackage foundation (role + item.reparent + %-rollup)
+
+### Added
+- **`role:"workpackage"` marker** (additive optional field) — a workpackage is a parent `Item` marked by
+  `role`, never inferred from kind/children. `WP1 → WP1.1 → todo` via `parentId` (arbitrary depth).
+- **`item.reparent`** WorkEvent kind + **`item.reparented`** event — re-parent an existing item (set/clear
+  `parentId`) on its own aggregate (no recreate; next seq; existing hashes untouched); binding-gated
+  (`local-user`/`signed`), self/parent/cross-workspace/**cycle** guarded. Organizes a flat backlog into WPs.
+- **`%`-by-WP rollup** (`report --wp`): per WP/sub-WP, `done/active` over transitive non-WP leaves
+  (`active = DONE+TO-DO+AWAITED`, DROPPED shown separately), **summed, never mean-of-percentages**,
+  `0/0 ⇒ n/a`; dotted display labels (`WP1.1`) derived from tree position; agent-stats-shaped Markdown.
+  `query --role`.
+
+### Notes
+- All additive — no existing event/hash/seq/bucket/query change; `READ_CONTRACT_VERSION` 1.1.0 → 1.2.0.
+  Double-reviewed by the Codex + Opus pair (converged), grounded in a fleet scan (gold precedent: agent-stats);
+  spec `docs/plan/workpackages-DESIGN.md`. 352 tests. Known gap: the "a WP's parent must be a WP" guard is
+  deferred to the backlog-structuring lot.
+
 ## [0.9.0] — P0: silent write-loss guard + store resolver
 
 ### Fixed / Changed (record integrity)

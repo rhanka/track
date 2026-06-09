@@ -77,6 +77,9 @@ function resolveWorkspace(cmd: MappedCommand, state: State): { create: boolean; 
       // setRealization resolves items ∪ decisions (a decision has a prep/realization axis); resolving
       // only against items would leave a foreign-workspace DECISION reachable — a containment bypass.
       return { create: false, workspace: item(p['itemId']) ?? state.decisions.get(p['itemId'] as ItemId)?.workspace }
+    case 'item.reparent':
+      // The CHILD item is the mutated aggregate; the new parent is checked via affectedTargetWorkspaces.
+      return { create: false, workspace: item(p['itemId']) }
     case 'item.spec':
     case 'acceptance.criterion':
     case 'priority.assess':
@@ -123,6 +126,12 @@ function affectedTargetWorkspaces(cmd: MappedCommand, state: State): Array<strin
       const dec = state.decisions.get(cmd.payload['decisionId'] as ItemId)
       return dec ? dec.targets.map((t) => wsOf(t)) : []
     }
+    case 'item.reparent': {
+      // The NEW parent is mutated-by-reference (it gains a child); a W-pinned channel must not reach a
+      // V-parent. Resolved from folded state (undefined ⇒ absent/detach, no containment check needed).
+      const parentId = cmd.payload['parentId']
+      return parentId !== undefined ? [wsOf(parentId as ItemId)] : []
+    }
     default:
       return []
   }
@@ -166,6 +175,9 @@ function applyCommand(track: Track, cmd: MappedCommand, ctx: IngestContext): str
   switch (cmd.kind) {
     case 'item.create':
       return track.createItem(a[0] as ItemCreatedPayload)
+    case 'item.reparent':
+      track.reparentItem(a[0] as ItemId, a[1] as ItemId | undefined)
+      return undefined
     case 'item.spec':
       track.setSpec(a[0] as ItemId, a[1] as SpecStatus)
       return undefined

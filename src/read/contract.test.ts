@@ -103,7 +103,7 @@ afterEach(() => {
 
 describe('read contract — version + curated surface (snapshot gate)', () => {
   it('exposes a stable semver and the documented read methods', () => {
-    expect(READ_CONTRACT_VERSION).toBe('1.1.0')
+    expect(READ_CONTRACT_VERSION).toBe('1.2.0')
     expect(reader.contractVersion).toBe(READ_CONTRACT_VERSION)
     const api = reader as unknown as Record<string, unknown>
     for (const m of ['report', 'query', 'validate', 'branchProvenance', 'freshness', 'requireFresh', 'externalDependencies']) {

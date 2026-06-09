@@ -16,6 +16,7 @@ import { VERSION } from '../version.js'
 
 // Allowed enum values — the single source for BOTH the advertised schema and runtime validation.
 const KINDS = ['feature', 'bug', 'chore'] as const
+const ROLES = ['workpackage'] as const // Workpackages §2 — container marker filter
 const BUCKETS = ['AWAITED', 'DROPPED', 'DONE', 'TO-DO'] as const
 const REALIZATIONS = ['to-do', 'in-progress', 'done', 'cancelled', 'rejected'] as const
 const ACCEPTANCES = ['pass', 'fail', 'unknown', 'stale', 'waived'] as const
@@ -43,6 +44,7 @@ export const READ_TOOLS = [
       properties: {
         baselineCommit: { type: 'string' },
         kind: { type: 'string', enum: KINDS },
+        role: { type: 'string', enum: ROLES },
         workspace: { type: 'string' },
         bucket: { type: 'string', enum: BUCKETS },
         realization: { type: 'string', enum: REALIZATIONS },
@@ -137,6 +139,8 @@ export function dispatchReadTool(
       const filter: QueryFilter = {}
       const kind = optEnum(args, 'kind', KINDS)
       if (kind !== undefined) filter.kind = kind
+      const role = optEnum(args, 'role', ROLES)
+      if (role !== undefined) filter.role = role
       const workspace = optStr(args, 'workspace')
       if (workspace !== undefined) filter.workspace = workspace
       const bucket = optEnum(args, 'bucket', BUCKETS)

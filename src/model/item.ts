@@ -5,6 +5,13 @@ export type ItemId = Ulid
 export type BlockerId = Ulid
 
 export type ItemKind = 'feature' | 'bug' | 'chore' | 'decision'
+/**
+ * An optional, additive container marker (Workpackages design §2). A workpackage is `kind:'chore'`
+ * + `role:'workpackage'` — WP-ness comes ONLY from this field, never inferred from kind, children, a
+ * `wp:` sourceKey, or a link. Orthogonal/optional like `accountable`/`engagementRef` ⇒ zero hash
+ * change, explicit, queryable, rename-stable. (A durable public `code?` label is deferred.)
+ */
+export type ItemRole = 'workpackage'
 export type SpecStatus = 'to-specify' | 'specified'
 export type Realization = 'to-do' | 'in-progress' | 'done' | 'cancelled' | 'rejected'
 
@@ -32,6 +39,7 @@ export interface ItemState {
   disposition: Record<Gate, Disposition> // per-gate disposition (SPEC §2.10)
   priority?: PriorityAssessment // latest assessment, live sort key (SPEC §2.8)
   parentId?: ItemId
+  role?: ItemRole // additive container marker (Workpackages §2); present ⇒ a workpackage
   sourceKey?: string
   body?: string
   links?: Link[]
@@ -48,6 +56,7 @@ export interface ItemCreatedPayload {
   title: string
   workspace: string
   parentId?: ItemId
+  role?: ItemRole
   sourceKey?: string
   body?: string
   links?: Link[]

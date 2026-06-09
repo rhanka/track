@@ -9,6 +9,7 @@ describe('WorkEvent contract surface', () => {
     expect(INGEST_CONTRACT_VERSION).toBe('1.0.0')
     expect([...WORK_EVENT_KINDS]).toEqual([
       'item.create',
+      'item.reparent',
       'item.spec',
       'item.realize',
       'decision.create',
@@ -39,6 +40,7 @@ describe('WorkEvent contract surface', () => {
     )
     expect(surface).toEqual({
       'item.create': { method: 'createItem', settles: 'never', required: ['kind', 'title', 'workspace'] },
+      'item.reparent': { method: 'reparentItem', settles: 'always', required: ['itemId'] },
       'item.spec': { method: 'setSpec', settles: 'never', required: ['itemId', 'to'] },
       'item.realize': { method: 'setRealization', settles: 'realize-terminal', required: ['itemId', 'to'] },
       'decision.create': {

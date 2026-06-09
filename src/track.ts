@@ -145,6 +145,37 @@ export class Track {
     return itemId
   }
 
+  /**
+   * Move an item under a new parent — or detach it to root when `parentId` is omitted (Workpackages
+   * §2). Appends `item.reparented` on the EXISTING item aggregate (next seq, no recreate; existing
+   * hashes untouched). Guards (all reject with DomainError BEFORE any append): the item exists; the
+   * parent exists if given; both share the SAME workspace; no self-parent; no cycle (the new parent
+   * must not be the item or a transitive descendant of it). Binding-gated at the ingest seam.
+   */
+  reparentItem(itemId: ItemId, parentId?: ItemId): void {
+    const state = this.state()
+    const item = state.items.get(itemId)
+    if (!item) throw new DomainError(`unknown item ${itemId}`)
+    if (parentId !== undefined) {
+      if (parentId === itemId) throw new DomainError(`cannot reparent item ${itemId} under itself`)
+      const parent = state.items.get(parentId)
+      if (!parent) throw new DomainError(`unknown parent item ${parentId}`)
+      if (parent.workspace !== item.workspace) {
+        throw new DomainError(
+          `cannot reparent across workspaces: item ${itemId} is in "${item.workspace}", parent ${parentId} is in "${parent.workspace}"`,
+        )
+      }
+      // Cycle guard: walk the prospective parent's ancestry; reaching `itemId` would close a loop.
+      for (let cursor: ItemId | undefined = parentId; cursor !== undefined; ) {
+        if (cursor === itemId) {
+          throw new DomainError(`cannot reparent item ${itemId} under its own descendant ${parentId} (cycle)`)
+        }
+        cursor = state.items.get(cursor)?.parentId
+      }
+    }
+    this.emit('item', itemId, 'item.reparented', parentId !== undefined ? { parentId } : {})
+  }
+
   setSpec(itemId: ItemId, to: SpecStatus): void {
     assertSpecTransition(this.requireItem(itemId), to)
     this.emit('item', itemId, 'spec.transition', { to })

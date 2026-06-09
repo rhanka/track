@@ -20,10 +20,12 @@ export const RESOLUTION_RULES = ['linked-done', 'linked-accepted', 'manual'] as 
 export const EVIDENCE_KINDS = ['unit', 'integration', 'e2e', 'manual'] as const
 export const RESULTS = ['pass', 'fail'] as const
 export const BLOCKER_SCOPES = ['intra', 'extra'] as const // Lot A — dependency blocker scope
+export const ITEM_ROLES = ['workpackage'] as const // Workpackages §2 — additive container marker
 
 // --- kinds -------------------------------------------------------------------------------------------
 export const WORK_EVENT_KINDS = [
   'item.create',
+  'item.reparent',
   'item.spec',
   'item.realize',
   'decision.create',
@@ -100,12 +102,20 @@ export const WORK_EVENT_SCHEMA: Record<WorkEventKind, KindSchema> = {
       title: str(true),
       workspace: str(true),
       parentId: str(false),
+      role: str(false, ITEM_ROLES), // Workpackages §2 — additive container marker
       body: str(false),
       sourceKey: str(false),
       accountable: str(false),
       responsible: { type: 'string[]', required: false },
       engagementRef: str(false),
     },
+  },
+  'item.reparent': {
+    // Workpackages §2 — move/detach an item. Binding (`always`): moving work between WPs is
+    // trust-sensitive ⇒ requires auth ∈ {local-user, signed}. parentId absent ⇒ detach to root.
+    method: 'reparentItem',
+    settles: 'always',
+    fields: { itemId: str(true), parentId: str(false) },
   },
   'item.spec': {
     method: 'setSpec',

@@ -25,6 +25,10 @@ export const EVENT_TYPES = [
   'decision.outcome',
   'priority.assessed',
   'branch.imported',
+  // Workpackages §2 — set/clear an item's parentId on the EXISTING item aggregate (next seq, no
+  // recreate). Past-tense persisted name, mirroring `item.create`→`item.created` (WorkEvent kind
+  // `item.reparent`). Additive: absent on every pre-WP event ⇒ zero hash/seq/bucket change.
+  'item.reparented',
 ] as const
 export type EventType = (typeof EVENT_TYPES)[number]
 

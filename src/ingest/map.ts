@@ -114,6 +114,10 @@ export function mapWorkEvent(ev: WorkEvent): MappedCommand {
       // createItem(ItemCreatedPayload) — validated payload already IS the (links-free) shape.
       args = [{ ...p }]
       break
+    case 'item.reparent':
+      // reparentItem(itemId, parentId?) — parentId is undefined when absent (detach to root).
+      args = [p['itemId'], p['parentId']]
+      break
     case 'item.spec':
       args = [p['itemId'], p['to']]
       break

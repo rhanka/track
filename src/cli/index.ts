@@ -9,7 +9,7 @@ import { initTrackDir, resolveTrackDir } from './resolve.js'
 import type { EvidenceKind, RunResult } from '../model/acceptance.js'
 import type { BlockerKind, BlockerScope, ResolutionRule } from '../model/blocker.js'
 import type { DecisionKind, Outcome } from '../model/decision.js'
-import { DomainError, type Disposition, type Gate, type ItemKind, type Realization, type SpecStatus } from '../model/item.js'
+import { DomainError, type Disposition, type Gate, type ItemKind, type ItemRole, type Realization, type SpecStatus } from '../model/item.js'
 import type { Bucket } from '../report/buckets.js'
 import { formatRows, type Format } from '../report/format.js'
 import { Track } from '../track.js'
@@ -22,6 +22,7 @@ import {
   EVIDENCE_KINDS,
   GATES,
   ITEM_KINDS,
+  ITEM_ROLES,
   OUTCOMES,
   REALIZE_TARGETS,
   RESOLUTION_RULES,
@@ -57,7 +58,8 @@ type Flags = Record<string, string | true>
 const USAGE = `usage: track <command>
   --version | -v
   init
-  item new --kind <feature|bug|chore> --title <t> --workspace <w> [--body <b>] [--parent <id>] [--accountable <a>] [--responsible <a,a>] [--engagement-ref <e>]
+  item new --kind <feature|bug|chore> --title <t> --workspace <w> [--body <b>] [--parent <id>] [--role workpackage] [--accountable <a>] [--responsible <a,a>] [--engagement-ref <e>]
+  item reparent <itemId> [--parent <pid>] [--detach]
   item spec <itemId> <to-specify|specified>
   item realize <itemId> <in-progress|done|cancelled>
   item show <itemId>
@@ -75,8 +77,8 @@ const USAGE = `usage: track <command>
   accept run --from <report> --format <junit|json> [--commit <c>] [--env <e>] [--runner <r>]
   accept waive <criterionId> --reason <r>
   priority assess <itemId> --ubv <n> --tc <n> --rr <n> --js <n>
-  report [--decisions] [--require-accepted] [--format json|text|md] [--commit <sha>]
-  query [--kind <k>] [--workspace <w>] [--bucket <AWAITED|DROPPED|DONE|TO-DO>] [--realization <r>] [--acceptance <a>] [--format json|text|md] [--commit <sha>]
+  report [--decisions] [--require-accepted] [--wp] [--format json|text|md] [--commit <sha>]
+  query [--kind <k>] [--role workpackage] [--workspace <w>] [--bucket <AWAITED|DROPPED|DONE|TO-DO>] [--realization <r>] [--acceptance <a>] [--format json|text|md] [--commit <sha>]
   validate [--commit <sha>]
   branch import <BRANCH.md> [--commit <sha>]
   ingest <file.jsonl> --workspace <w>
@@ -294,6 +296,7 @@ function cmdItem(args: string[], ctx: Ctx): number {
       workspace: req(flags, 'workspace'),
       ...(opt(flags, 'body') !== undefined ? { body: req(flags, 'body') } : {}),
       ...(opt(flags, 'parent') !== undefined ? { parentId: req(flags, 'parent') } : {}),
+      ...(opt(flags, 'role') !== undefined ? { role: oneOf(req(flags, 'role'), ITEM_ROLES, '--role') as ItemRole } : {}),
       ...(opt(flags, 'accountable') !== undefined ? { accountable: req(flags, 'accountable') } : {}),
       ...(opt(flags, 'responsible') !== undefined
         ? { responsible: req(flags, 'responsible').split(',').map((s) => s.trim()).filter(Boolean) }
@@ -301,6 +304,17 @@ function cmdItem(args: string[], ctx: Ctx): number {
       ...(opt(flags, 'engagement-ref') !== undefined ? { engagementRef: req(flags, 'engagement-ref') } : {}),
     })
     io.out(`${id}\n`)
+    return 0
+  }
+  if (sub === 'reparent') {
+    // `--parent <pid>` moves; `--detach` (or neither) detaches to root (Workpackages §2).
+    const detach = flags['detach'] === true
+    const parent = opt(flags, 'parent')
+    if (parent !== undefined && detach) {
+      throw new DomainError('item reparent: use --parent <pid> OR --detach, not both')
+    }
+    track.reparentItem(positional[0]!, detach ? undefined : parent)
+    io.out('ok\n')
     return 0
   }
   if (sub === 'spec') {
@@ -328,7 +342,7 @@ function cmdItem(args: string[], ctx: Ctx): number {
     rowsOut(rows, fmt(flags), io)
     return 0
   }
-  io.err('usage: track item <new|spec|realize|show|ls>\n')
+  io.err('usage: track item <new|reparent|spec|realize|show|ls>\n')
   return 2
 }
 
@@ -497,6 +511,7 @@ function cmdReport(args: string[], ctx: Ctx): number {
         baselineCommit: opt(flags, 'commit') ?? gitHead(io.cwd),
         requireAccepted: flags['require-accepted'] === true,
         decisions: flags['decisions'] === true,
+        wpTree: flags['wp'] === true,
       },
       fmt(flags),
     ),
@@ -513,6 +528,7 @@ function cmdQuery(args: string[], ctx: Ctx): number {
       reader,
       {
       ...(opt(flags, 'kind') !== undefined ? { kind: oneOf(req(flags, 'kind'), ITEM_KINDS, '--kind') } : {}),
+      ...(opt(flags, 'role') !== undefined ? { role: oneOf(req(flags, 'role'), ITEM_ROLES, '--role') as ItemRole } : {}),
       ...(opt(flags, 'workspace') !== undefined ? { workspace: req(flags, 'workspace') } : {}),
       ...(opt(flags, 'bucket') !== undefined ? { bucket: oneOf(req(flags, 'bucket'), BUCKETS_ARG, '--bucket') as Bucket } : {}),
       ...(opt(flags, 'realization') !== undefined
