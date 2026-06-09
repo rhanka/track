@@ -5,6 +5,7 @@ import { basename, dirname, isAbsolute, join, resolve } from 'node:path'
 import { readHead } from '../events/head.js'
 import { EventStore } from '../events/store.js'
 import { validate } from '../events/validate.js'
+import { cmdInstallSkills } from './install-skills.js'
 import { initTrackDir, resolveTrackDir, resolveTrackDirOrNull } from './resolve.js'
 import type { EvidenceKind, RunResult } from '../model/acceptance.js'
 import type { BlockerKind, BlockerScope, ResolutionRule } from '../model/blocker.js'
@@ -83,6 +84,7 @@ const USAGE = `usage: track <command>
   validate [--commit <sha>]
   branch import <BRANCH.md> [--commit <sha>]
   ingest <file.jsonl> --workspace <w>
+  install-skills --host <claude|codex|gemini|agy|all> [--scope user|project] [--force]
 `
 
 // Write enums (ITEM_KINDS, SPEC_TARGETS, REALIZE_TARGETS, DECISION_KINDS, OUTCOMES, GATES, DISPOSITIONS,
@@ -235,6 +237,10 @@ export function runCli(rawArgv: string[], io: CliIO): number {
         io.out(`Initialized .track/ in ${dirname(dir)}\n`)
         return 0
       }
+      case 'install-skills':
+        // Deploys the in-repo `skills/` bundle onto a host agent's native location ON DEMAND. It
+        // touches no `.track` store, so it dispatches alongside `init` (before store resolution).
+        return cmdInstallSkills(rest, io)
       // READ commands SERVE-EMPTY (launch/serve alignment): they resolve via the non-throwing
       // `resolveTrackDirOrNull`, so an unadopted repo yields rc=0 + an honest-empty view + a stderr
       // `track init` hint, never a boot crash. NEVER creates. A bad EXPLICIT override still throws

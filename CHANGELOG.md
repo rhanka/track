@@ -2,6 +2,19 @@
 
 All notable changes to `@sentropic/track`. Format loosely follows [Keep a Changelog](https://keepachangelog.com); this package is pre-1.0 (the **event contract** is frozen, but the library/CLI surface may still evolve additively).
 
+## [0.10.6] — `track install-skills` (multi-agent skill deploy)
+
+### Added
+- **`track install-skills --host <claude|codex|gemini|agy|all> [--scope user|project] [--force]`** — deploys
+  the plugin's `present-decision` skill onto the 3 agents on demand (modeled on h2a's installer): claude →
+  `~/.claude/skills/`, codex → `~/.codex/skills/` (+ a bounded `AGENTS.md` pointer on `--scope project`),
+  gemini/agy → `~/.gemini/commands/present-decision.toml` (translated). Single source = the in-repo `skills/`;
+  graceful + idempotent (a differing file is reported and skipped unless `--force`); never creates an absent
+  repo entry-point. Completes the multi-agent decision-presentation story.
+
+### Notes
+- Additive; event contract / write path / P0 guard untouched. 428 tests.
+
 ## [0.10.5] — `present-decision` skill (track plugin) + `decision add-artifact` CLI
 
 ### Added
