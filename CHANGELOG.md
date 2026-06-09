@@ -2,6 +2,21 @@
 
 All notable changes to `@sentropic/track`. Format loosely follows [Keep a Changelog](https://keepachangelog.com); this package is pre-1.0 (the **event contract** is frozen, but the library/CLI surface may still evolve additively).
 
+## [0.10.7] — durable workspace-id (h2a-aligned, byte-identical)
+
+### Added
+- **`computeDurableWorkspaceId(rootCommitSHA, worktreeRelPath)`** + **`durableWorkspaceId(cwd)`** + the CLI
+  **`track workspace-id`** — the PATH- and MACHINE-independent workspace id, **byte-identical to h2a 0.63.0**:
+  `'ws:' + sha256hex(rootCommitSHA + '\n' + worktreeRelPath)` (rootCommitSHA = `git rev-list --max-parents=0
+  HEAD`, multiple roots sorted+comma-joined; worktreeRelPath = '' for the main worktree else the
+  linked-worktree name; non-git → undefined). h2a's published test vectors are pinned as the **conformance
+  gate** (green). The same id keys track's `workspaceActivity(...)` poll and h2a's conductor resolver, so the
+  same logical repo correlates across cwd moves and local↔remote.
+
+### Notes
+- Additive (a derivation helper + CLI; does not yet change how ingest sets `workspace`). Event contract /
+  write path / P0 guard untouched. 442 tests.
+
 ## [0.10.6] — `track install-skills` (multi-agent skill deploy)
 
 ### Added

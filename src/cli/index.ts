@@ -35,6 +35,7 @@ import { ingest, type IngestContext } from '../ingest/ingest.js'
 import { TrackReader } from '../read/contract.js'
 import { queryText, reportText } from '../read/commands.js'
 import { VERSION } from '../version.js'
+import { durableWorkspaceId } from '../workspace-id.js'
 import { desyncFindings } from './desync.js'
 
 export interface CliIO {
@@ -85,6 +86,7 @@ const USAGE = `usage: track <command>
   branch import <BRANCH.md> [--commit <sha>]
   ingest <file.jsonl> --workspace <w>
   install-skills --host <claude|codex|gemini|agy|all> [--scope user|project] [--force]
+  workspace-id [--cwd <path>]
 `
 
 // Write enums (ITEM_KINDS, SPEC_TARGETS, REALIZE_TARGETS, DECISION_KINDS, OUTCOMES, GATES, DISPOSITIONS,
@@ -241,6 +243,11 @@ export function runCli(rawArgv: string[], io: CliIO): number {
         // Deploys the in-repo `skills/` bundle onto a host agent's native location ON DEMAND. It
         // touches no `.track` store, so it dispatches alongside `init` (before store resolution).
         return cmdInstallSkills(rest, io)
+      case 'workspace-id':
+        // Prints the durable, multi-worktree workspace id (WP4) for the repo at `--cwd` (default
+        // io.cwd). A PURE read of git metadata — touches no `.track` store, so it dispatches here
+        // alongside `init`/`install-skills`, before store resolution.
+        return cmdWorkspaceId(rest, io)
       // READ commands SERVE-EMPTY (launch/serve alignment): they resolve via the non-throwing
       // `resolveTrackDirOrNull`, so an unadopted repo yields rc=0 + an honest-empty view + a stderr
       // `track init` hint, never a boot crash. NEVER creates. A bad EXPLICIT override still throws
@@ -315,6 +322,25 @@ export function runCli(rawArgv: string[], io: CliIO): number {
 
 function rowsOut(rows: unknown[], format: Format, io: CliIO): void {
   io.out(format === 'json' ? `${JSON.stringify(rows, null, 2)}\n` : formatRows(rows as never, format))
+}
+
+/**
+ * `track workspace-id [--cwd <path>]` — print the durable, machine- & path-independent workspace id
+ * (WP4) for the git repo at `--cwd` (default the CLI cwd). On a git repo it prints `ws:<sha256>` (rc=0);
+ * a non-git dir is out of scope, so it prints an honest stderr line + rc=1 (no machine+path fallback).
+ * Touches no `.track` store.
+ */
+function cmdWorkspaceId(args: string[], io: CliIO): number {
+  const { flags } = parseFlags(args)
+  const target = opt(flags, 'cwd') ?? io.cwd
+  const cwd = isAbsolute(target) ? target : resolve(io.cwd, target)
+  const id = durableWorkspaceId(cwd)
+  if (id === undefined) {
+    io.err(`track: not a git repo — no durable workspace id (${cwd})\n`)
+    return 1
+  }
+  io.out(`${id}\n`)
+  return 0
 }
 
 function cmdItem(args: string[], ctx: Ctx): number {
