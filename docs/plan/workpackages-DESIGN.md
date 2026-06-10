@@ -21,11 +21,23 @@ in a 3-agent Sonnet scan of ~158 fleet repos (gold precedent: `~/src/agent-stats
 | **WP3 · Write Surfaces & Ingest** | every authenticated way bytes enter — CLI, the `WorkEvent` ingest seam, MCP, the signed HTTP channel, `branch import` | not the chain rules (WP1); not who-may-write policy (WP4) |
 | **WP4 · Multi-Agent Coordination (h2a / worktrees / RACI)** | track-as-record in a multi-agent, multi-worktree fabric — engagement refs, RACI, who-may-update, the `workspaceActivity` signal, stable worktree-id, the h2a bridge | track never coordinates/decides/schedules; contract body stays in h2a |
 | **WP5 · Decision Support (dossiers / presentation / mockups)** | the record-side of decision aids — `Dossier.artifacts[]`, comprehension evidence, sponsor (D6-B), the decision-presentation skill, **D5 mockup referents** | presentation *logic* = h2a (EVO-9); *render* = DS (WP6). track holds pointers + evidence |
-| **WP6 · Surfacing / Embeddable Views (DS-owned)** | the embeddable-view contract that renders track's `report` + the dossier in sentropic (M5) | not track's to define — DS-owned (D5); track states input shapes only |
+| **WP6 · Surfacing / Canevas Views (track + chat-ui co-design)** | M5 = the `report` + decision-dossier views as **CANEVAS** (editable, live, bidirectional) embedded in sentropic's chat-ui | not DS-owned (DS = skins/themes only); the chat-ui *host* = sentropic; annotation/"cerclage" = mermaid-editor/diag |
 
-**D5 recovered (was lost):** D5 = *live design-system mockups as a decision aid* — record-of-decision in
-**WP5** (`Dossier.artifacts[] kind:'mockup'`), build dependency in **WP6/DS**. Distinct from M5 (the render
-contract, WP6).
+**M5 is a CANEVAS, NOT a DS render (owner-corrected 2026-06-10; earlier "DS-owned" framing was wrong).**
+"canevas" = an **editable, live, bidirectional** view: the AI pushes updates AND the human creates/validates
+actions *via the view*; the decision dossier supports **live spec amendment with a human/machine diff trace**.
+Ownership splits: **track is the heavy part** — the live data, the action model, and the diff / provenance
+(human vs machine) / reversibility / audit are *exactly* track's event-sourced nature; **sentropic chat-ui** =
+the canevas host (a `CanvasTemplate`/LiveDocument provider, `SPEC_EVOL_CHAT_CANVAS`); **mermaid-editor/diag** =
+the annotation/"cerclage" capability to reuse; **DS** = only the skins/themes. Reads already ship via
+`@sentropic/track/read` (`TrackReader`) + the read MCP. **D5** is the negotiation of this reusable embeddable
+canevas module (track ↔ chat-ui), **not** a design-system decision. (Source: owner, sentropic 2026-06-09 —
+"la viz de kanban qui devrait être un canevas … idem pour le décision dossier … amendement live de spec avec
+trace du diff humain/machine".)
+
+**D5 (the other half) — live mockups as a decision aid:** record-of-decision in **WP5**
+(`Dossier.artifacts[] kind:'mockup'`); the mockups themselves are design exploration (DS-adjacent). Distinct
+from M5 (the canevas views, WP6).
 **"M5-wiring" renamed** → *"Decision-artifact record contract"* (`Dossier.artifacts[]` + `decision.add-artifact`,
 record-only pointer; see `M5-decision-presentation-DESIGN.md`). Lives in **WP5**.
 
