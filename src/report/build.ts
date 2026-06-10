@@ -2,7 +2,7 @@ import { acceptanceStatus } from '../accept/status.js'
 import type { ActorId } from '../events/types.js'
 import type { AcceptanceStatus } from '../model/acceptance.js'
 import type { DecisionKind, DossierArtifact, Outcome } from '../model/decision.js'
-import type { ItemId, ItemKind, ItemRole, ItemState, Realization } from '../model/item.js'
+import { isRoleContainer, type ItemId, type ItemKind, type ItemRole, type ItemState, type Realization } from '../model/item.js'
 import type { State } from '../state/fold.js'
 import { BUCKETS, bucketOf, type Bucket, type ReportConfig } from './buckets.js'
 import { computeWpTree, type WpNode } from './rollup.js'
@@ -83,10 +83,10 @@ export function buildReport(state: State, options: ReportOptions): Report {
   }
   const buckets: Record<Bucket, ReportRow[]> = { AWAITED: [], DROPPED: [], DONE: [], 'TO-DO': [] }
   for (const item of state.items.values()) {
-    // Workpackages §2 — a WP is a container, not a leaf: keep it out of the flat buckets entirely so
-    // it can never be mis-counted as a TO-DO leaf (the false-% bug the design warns about). The WP
-    // forest is surfaced separately on `report.wpTree`.
-    if (item.role === 'workpackage') continue
+    // Workpackages §2 / Scope §B(a) — a WP or spec-phase is a container, not a leaf: keep it out of the
+    // flat buckets entirely so it can never be mis-counted as a TO-DO leaf (the false-% bug the design
+    // warns about). The container forest is surfaced separately on `report.wpTree`.
+    if (isRoleContainer(item)) continue
     const row = toRow(state, item, config)
     buckets[row.bucket].push(row)
   }

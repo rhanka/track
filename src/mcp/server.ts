@@ -19,7 +19,7 @@ import { VERSION } from '../version.js'
 
 // Allowed enum values — the single source for BOTH the advertised schema and runtime validation.
 const KINDS = ['feature', 'bug', 'chore'] as const
-const ROLES = ['workpackage'] as const // Workpackages §2 — container marker filter
+const ROLES = ['workpackage', 'spec-phase'] as const // Workpackages §2 / Scope §B(a) — container marker filter
 const BUCKETS = ['AWAITED', 'DROPPED', 'DONE', 'TO-DO'] as const
 const REALIZATIONS = ['to-do', 'in-progress', 'done', 'cancelled', 'rejected'] as const
 const ACCEPTANCES = ['pass', 'fail', 'unknown', 'stale', 'waived'] as const
@@ -104,6 +104,22 @@ export const READ_TOOLS = [
     inputSchema: {
       type: 'object',
       properties: { wpRef: { type: 'string', description: 'Filter to runs for this WP/phase item id.' } },
+    },
+  },
+  {
+    name: 'track_scope_validate',
+    description: 'Scope §B(b) — PURE, read-only, fail-closed, ADVISORY scope validation, as JSON {status:pass|fail|stale|missing, findings[], perWp[], scopeRevisionHash?}. NEVER glob-matches (string-level set logic), NEVER ingests, NEVER a commit gate. Flags scope-undeclared / incoherent (allowed∩forbidden) / illegal-nesting / claim-out-of-phase, and surfaces the latest ingested VerificationRun verdict per WP (read, never recomputed). If `content`+`locator` are supplied, requireFresh runs FIRST (a stale/altered/not-imported sidecar ⇒ status:stale, no partial verdict). Optional opt-in inferDeliveredOutOfScope.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        workspace: { type: 'string', description: 'The workspace whose WP/spec-phase scope is validated.' },
+        baselineCommit: { type: 'string', description: 'Commit AWAITED/realization-active are evaluated against.' },
+        content: { type: 'string', description: 'Live BRANCH.md content for the fail-closed freshness gate (with locator).' },
+        locator: { type: 'string', description: 'BRANCH.md locator for the fail-closed freshness gate (with content).' },
+        claimedItemId: { type: 'string', description: 'Optional claimed item id — flagged if not a descendant of a declared phase.' },
+        inferDeliveredOutOfScope: { type: 'boolean', description: 'Opt-in: flag a done WP whose latest verification is a violation (a read flag).' },
+      },
+      required: ['workspace', 'baselineCommit'],
     },
   },
   {
@@ -210,6 +226,24 @@ export function dispatchReadTool(
     case 'track_verification_runs': {
       const wpRef = optStr(args, 'wpRef')
       return JSON.stringify(reader.verificationRuns(wpRef), null, 2)
+    }
+    case 'track_scope_validate': {
+      const content = optStr(args, 'content')
+      const locator = optStr(args, 'locator')
+      const claimedItemId = optStr(args, 'claimedItemId')
+      const inferDeliveredOutOfScope = optBool(args, 'inferDeliveredOutOfScope')
+      return JSON.stringify(
+        reader.scopeValidate({
+          workspace: reqStr(args, 'workspace'),
+          baselineCommit: reqStr(args, 'baselineCommit'),
+          ...(content !== undefined ? { content } : {}),
+          ...(locator !== undefined ? { locator } : {}),
+          ...(claimedItemId !== undefined ? { claimedItemId } : {}),
+          ...(inferDeliveredOutOfScope !== undefined ? { inferDeliveredOutOfScope } : {}),
+        }),
+        null,
+        2,
+      )
     }
     case 'track_validate':
       return JSON.stringify(reader.validate(), null, 2)

@@ -11,7 +11,7 @@
 
 import type { RunResult } from '../model/acceptance.js'
 import type { Dossier, DossierArtifact, Outcome } from '../model/decision.js'
-import type { Disposition, Gate, ItemId, Realization, SpecStatus } from '../model/item.js'
+import type { Disposition, Gate, ItemId, Realization, ScopeDecl, SpecStatus } from '../model/item.js'
 import type { ItemCreatedPayload } from '../model/item.js'
 import type { DecisionCreatedPayload } from '../model/decision.js'
 import type { WsjfInputs } from '../model/priority.js'
@@ -85,6 +85,9 @@ function resolveWorkspace(cmd: MappedCommand, state: State): { create: boolean; 
     case 'acceptance.criterion':
     case 'priority.assess':
     case 'decision.disposition':
+    case 'scope.declare':
+      // Scope §B(a) — declareScope mutates the named item aggregate; contained by the item's workspace
+      // (a W-pinned channel can't declare scope on a V item). Resolved from folded state.
       return { create: false, workspace: item(p['itemId']) }
     case 'decision.outcome':
     case 'decision.dossier':
@@ -235,6 +238,11 @@ function applyCommand(track: Track, cmd: MappedCommand, ctx: IngestContext): str
       // recordVerification(payload, {workspace}) — the channel workspace pins the synthetic aggregate for a
       // wpRef-absent run; clientToken is already in scope via withClientToken (do not double-pass). Scope §B(c).
       track.recordVerification(a[0] as VerificationRecordedPayload, { workspace: ctx.workspace })
+      return undefined
+    case 'scope.declare':
+      // declareScope(itemId, scope) — the clientToken is already in scope via withClientToken (do not
+      // double-pass); the ScopeDecl shape is re-asserted in the facade (assertScopeDecl). Scope §B(a).
+      track.declareScope(a[0] as ItemId, a[1] as ScopeDecl)
       return undefined
   }
 }

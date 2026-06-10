@@ -10,7 +10,7 @@ import { initTrackDir, resolveTrackDir, resolveTrackDirOrNull } from './resolve.
 import type { EvidenceKind, RunResult } from '../model/acceptance.js'
 import type { BlockerKind, BlockerScope, ResolutionRule } from '../model/blocker.js'
 import type { DecisionKind, DossierArtifact, Outcome } from '../model/decision.js'
-import { DomainError, type Disposition, type Gate, type ItemKind, type ItemRole, type Realization, type SpecStatus } from '../model/item.js'
+import { DomainError, type Disposition, type Gate, type ItemKind, type ItemRole, type Realization, type ScopeDecl, type SpecStatus } from '../model/item.js'
 import type { Bucket } from '../report/buckets.js'
 import { formatRows, type Format } from '../report/format.js'
 import { Track } from '../track.js'
@@ -61,8 +61,9 @@ type Flags = Record<string, string | true>
 const USAGE = `usage: track <command>
   --version | -v
   init
-  item new --kind <feature|bug|chore> --title <t> --workspace <w> [--body <b>] [--parent <id>] [--role workpackage] [--accountable <a>] [--responsible <a,a>] [--engagement-ref <e>]
+  item new --kind <feature|bug|chore> --title <t> --workspace <w> [--body <b>] [--parent <id>] [--role <workpackage|spec-phase>] [--accountable <a>] [--responsible <a,a>] [--engagement-ref <e>]
   item reparent <itemId> [--parent <pid>] [--detach]
+  item scope-declare <itemId> [--allowed <glob,glob>] [--forbidden <...>] [--conditional <...>] [--scope <json>]
   item spec <itemId> <to-specify|specified>
   item realize <itemId> <in-progress|done|cancelled>
   item show <itemId>
@@ -84,6 +85,7 @@ const USAGE = `usage: track <command>
   report [--decisions] [--require-accepted] [--wp] [--level <spec|plan|wp|lot|task>] [--format json|text|md] [--commit <sha>]
   query [--kind <k>] [--role workpackage] [--workspace <w>] [--bucket <AWAITED|DROPPED|DONE|TO-DO>] [--realization <r>] [--acceptance <a>] [--format json|text|md] [--commit <sha>]
   workspace-activity --workspace <id> [--baseline-commit <sha>] [--now <iso>] [--idle-ms <ms>] [--format json|text]
+  scope validate --workspace <id> [--baseline-commit <sha>] [--content <path>] [--locator <l>] [--claimed-item <id>] [--infer-delivered-out-of-scope] [--format json|text]
   validate [--commit <sha>]
   branch import <BRANCH.md> [--commit <sha>]
   ingest <file.jsonl> --workspace <w>
@@ -282,6 +284,7 @@ export function runCli(rawArgv: string[], io: CliIO): number {
       case 'report':
       case 'query':
       case 'validate':
+      case 'scope':
       case 'workspace-activity': {
         const trackDir = resolveTrackDirOrNull(resolveOpts)
         if (trackDir === null) {
@@ -303,6 +306,8 @@ export function runCli(rawArgv: string[], io: CliIO): number {
             return cmdQuery(rest, ctx)
           case 'validate':
             return cmdValidate(rest, ctx, trackDir === null)
+          case 'scope':
+            return cmdScope(rest, ctx)
           case 'workspace-activity':
             return cmdWorkspaceActivity(rest, ctx)
         }
@@ -406,6 +411,40 @@ function cmdItem(args: string[], ctx: Ctx): number {
     io.out('ok\n')
     return 0
   }
+  if (sub === 'scope-declare') {
+    // Scope §B(a) — declare INERT path-scope globs on a WP/spec-phase. A comma-separated glob list per
+    // axis (`--allowed`/`--forbidden`/`--conditional`), OR a `--scope <json>` object; the two are
+    // mutually exclusive. The facade validates the shape fail-closed (assertScopeDecl) and rejects a
+    // non-role item. track STORES globs, NEVER matches them.
+    const globs = (v: string | undefined): string[] | undefined =>
+      v === undefined ? undefined : v.split(',').map((s) => s.trim()).filter(Boolean)
+    const jsonInput = opt(flags, 'scope')
+    let scope: ScopeDecl
+    if (jsonInput !== undefined) {
+      if (opt(flags, 'allowed') !== undefined || opt(flags, 'forbidden') !== undefined || opt(flags, 'conditional') !== undefined) {
+        throw new DomainError('item scope-declare: use --scope <json> OR --allowed/--forbidden/--conditional, not both')
+      }
+      let parsed: unknown
+      try {
+        parsed = JSON.parse(jsonInput)
+      } catch {
+        throw new DomainError('item scope-declare: --scope must be valid JSON')
+      }
+      scope = parsed as ScopeDecl
+    } else {
+      const allowed = globs(opt(flags, 'allowed'))
+      const forbidden = globs(opt(flags, 'forbidden'))
+      const conditional = globs(opt(flags, 'conditional'))
+      scope = {
+        ...(allowed !== undefined ? { allowed } : {}),
+        ...(forbidden !== undefined ? { forbidden } : {}),
+        ...(conditional !== undefined ? { conditional } : {}),
+      }
+    }
+    track.declareScope(positional[0]!, scope)
+    io.out('ok\n')
+    return 0
+  }
   if (sub === 'spec') {
     track.setSpec(positional[0]!, oneOf(positional[1], SPEC_TARGETS, 'spec') as SpecStatus)
     io.out('ok\n')
@@ -431,7 +470,7 @@ function cmdItem(args: string[], ctx: Ctx): number {
     rowsOut(rows, fmt(flags), io)
     return 0
   }
-  io.err('usage: track item <new|reparent|spec|realize|show|ls>\n')
+  io.err('usage: track item <new|reparent|scope-declare|spec|realize|show|ls>\n')
   return 2
 }
 
@@ -721,6 +760,54 @@ function cmdWorkspaceActivity(args: string[], ctx: Ctx): number {
   lines.push(`latestEventAt: ${activity.latestEventAt ?? '-'}`)
   io.out(`${lines.join('\n')}\n`)
   return 0
+}
+
+/**
+ * `track scope validate --workspace <id> --baseline-commit <sha> [--content <path>] [--locator <l>]
+ * [--claimed-item <id>] [--infer-delivered-out-of-scope] [--format json|text]` — Scope §B(b). A PURE,
+ * read-only, fail-closed, ADVISORY validation over `TrackReader.scopeValidate`. Routed through the
+ * serve-empty read path. The rc is ADVISORY: 0 even on semantic findings (it is NOT a commit gate);
+ * non-zero ONLY when the sidecar is stale (fail-closed) or an error is thrown. `--content` is a FILE
+ * path read at the CLI boundary (the library takes the content string); `--baseline-commit` resolves
+ * via resolveCommit (so HEAD/refs work).
+ */
+function cmdScope(args: string[], ctx: Ctx): number {
+  const { io } = ctx
+  if (args[0] !== 'validate') {
+    io.err('usage: track scope validate --workspace <id> --baseline-commit <sha> [--content <path>] [--locator <l>] [--claimed-item <id>] [--infer-delivered-out-of-scope] [--format json|text]\n')
+    return 2
+  }
+  const { flags } = parseFlags(args.slice(1))
+  const workspace = opt(flags, 'workspace')
+  if (workspace === undefined) {
+    io.err('usage: track scope validate --workspace <id> --baseline-commit <sha> [--content <path>] [--locator <l>] [--claimed-item <id>] [--infer-delivered-out-of-scope] [--format json|text]\n')
+    return 2
+  }
+  const format = oneOf(opt(flags, 'format') ?? 'text', ['json', 'text'], '--format')
+  const contentPath = opt(flags, 'content')
+  const content = contentPath !== undefined ? readFileSync(isAbsolute(contentPath) ? contentPath : join(io.cwd, contentPath), 'utf8') : undefined
+  const reader = new TrackReader(ctx.eventsPath)
+  const result = reader.scopeValidate({
+    workspace,
+    baselineCommit: resolveCommit(io.cwd, opt(flags, 'baseline-commit')),
+    ...(content !== undefined ? { content } : {}),
+    ...(opt(flags, 'locator') !== undefined ? { locator: req(flags, 'locator') } : {}),
+    ...(opt(flags, 'claimed-item') !== undefined ? { claimedItemId: req(flags, 'claimed-item') } : {}),
+    ...(flags['infer-delivered-out-of-scope'] === true ? { inferDeliveredOutOfScope: true } : {}),
+  })
+  if (format === 'json') {
+    io.out(`${JSON.stringify(result, null, 2)}\n`)
+  } else {
+    const lines = [`status: ${result.status}`]
+    for (const w of result.perWp) {
+      const ev = w.evidenceStatus !== undefined ? ` evidence:${w.evidenceStatus}` : ''
+      lines.push(`${w.label} ${w.wpId} ${w.declared ? 'declared' : 'undeclared'} ${w.semanticStatus}${ev}`)
+    }
+    for (const f of result.findings) lines.push(`finding: ${f.code}${f.wpId !== undefined ? ` (${f.wpId})` : ''} — ${f.message}`)
+    io.out(`${lines.join('\n')}\n`)
+  }
+  // ADVISORY rc: a stale sidecar is fail-closed (rc=1); semantic findings are advisory (rc=0).
+  return result.status === 'stale' ? 1 : 0
 }
 
 function cmdValidate(args: string[], ctx: Ctx, noStore = false): number {

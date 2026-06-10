@@ -20,7 +20,7 @@ export const RESOLUTION_RULES = ['linked-done', 'linked-accepted', 'manual'] as 
 export const EVIDENCE_KINDS = ['unit', 'integration', 'e2e', 'manual'] as const
 export const RESULTS = ['pass', 'fail'] as const
 export const BLOCKER_SCOPES = ['intra', 'extra'] as const // Lot A — dependency blocker scope
-export const ITEM_ROLES = ['workpackage'] as const // Workpackages §2 — additive container marker
+export const ITEM_ROLES = ['workpackage', 'spec-phase'] as const // Workpackages §2 / Scope §B(a) — container markers
 export const VERDICTS = ['clean', 'violation', 'conditional'] as const // Scope §B(c) — path verdict
 
 // --- kinds -------------------------------------------------------------------------------------------
@@ -43,6 +43,7 @@ export const WORK_EVENT_KINDS = [
   'blocker.resolve',
   'blocker.resolve-external',
   'scope.verification', // Scope §B(c) — record a path-scope VerificationRun (evidence-only)
+  'scope.declare', // Scope §B(a) — declare INERT path-scope globs on a WP/spec-phase
 ] as const
 export type WorkEventKind = (typeof WORK_EVENT_KINDS)[number]
 
@@ -105,7 +106,8 @@ export const WORK_EVENT_SCHEMA: Record<WorkEventKind, KindSchema> = {
       title: str(true),
       workspace: str(true),
       parentId: str(false),
-      role: str(false, ITEM_ROLES), // Workpackages §2 — additive container marker
+      role: str(false, ITEM_ROLES), // Workpackages §2 / Scope §B(a) — container marker
+      scope: { type: 'object', required: false }, // Scope §B(a) — INERT path globs; shape re-asserted in the facade
       body: str(false),
       sourceKey: str(false),
       accountable: str(false),
@@ -252,5 +254,14 @@ export const WORK_EVENT_SCHEMA: Record<WorkEventKind, KindSchema> = {
       wpRef: str(false),
       violations: { type: 'string[]', required: false },
     },
+  },
+  'scope.declare': {
+    // Scope §B(a) — declare INERT path-scope globs on a WP/spec-phase. Binding (`always`): a scope
+    // declaration governs the harness path verdict ⇒ trust-sensitive, requires auth ∈ {local-user, signed}.
+    // The flat FieldSpec checks `scope` is an object; the `{allowed?,forbidden?,conditional?}` string[]
+    // shape is re-asserted fail-closed in the facade (assertScopeDecl). track STORES globs, NEVER matches.
+    method: 'declareScope',
+    settles: 'always',
+    fields: { itemId: str(true), scope: { type: 'object', required: true } },
   },
 }

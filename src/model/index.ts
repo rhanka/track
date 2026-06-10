@@ -2,17 +2,22 @@
 export {
   DomainError,
   assertRealizationTransition,
+  assertRoleNesting,
+  assertScopeDecl,
   assertSpecTransition,
+  isRoleContainer,
   type BlockerId,
   type Disposition,
   type Gate,
   type ItemCreatedPayload,
   type ItemId,
   type ItemKind,
+  type ItemRole,
   type ItemState,
   type Link,
   type Realization,
   type RealizationCause,
+  type ScopeDecl,
   type SpecStatus,
 } from './item.js'
 export {

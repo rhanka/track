@@ -195,6 +195,12 @@ export function mapWorkEvent(ev: WorkEvent): MappedCommand {
       // channel context, and clientToken is threaded via withClientToken (not an arg). Scope §B(c).
       args = [{ ...p }]
       break
+    case 'scope.declare':
+      // declareScope(itemId, scope, clientToken?) — the `scope` object's {allowed?,forbidden?,conditional?}
+      // shape is re-asserted in the facade (assertScopeDecl); clientToken is threaded via withClientToken
+      // (not an arg). Scope §B(a).
+      args = [p['itemId'], p['scope']]
+      break
   }
 
   return { kind, method, settles, payload: p, args, ...(clientToken !== undefined ? { clientToken } : {}) }

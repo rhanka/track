@@ -52,6 +52,7 @@ describe('MCP read server — tool surface', () => {
       'track_freshness',
       'track_query',
       'track_report',
+      'track_scope_validate',
       'track_status',
       'track_validate',
       'track_verification_runs',

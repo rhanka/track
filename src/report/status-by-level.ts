@@ -12,7 +12,7 @@
 // done/active/dropped/pct via the shared `tally()` (SUM of leaves, never mean-of-pcts); dropped excluded
 // from the denominator; 0/0 ⇒ 'n/a'. Reuses `bucketOf`/`tally`/the WP-forest shape verbatim.
 
-import type { ItemId, ItemState } from '../model/item.js'
+import { isRoleContainer, type ItemId, type ItemState } from '../model/item.js'
 import type { State } from '../state/fold.js'
 import { bucketOf, type Bucket, type ReportConfig } from './buckets.js'
 import { tally, type WpLeaf } from './rollup.js'
@@ -38,7 +38,8 @@ export interface StatusGroup {
   pct: number | 'n/a'
 }
 
-const isWp = (item: ItemState): boolean => item.role === 'workpackage'
+// A CONTAINER node (workpackage OR spec-phase) — descended through, never a leaf (Scope §B(a)).
+const isWp = (item: ItemState): boolean => isRoleContainer(item)
 
 /** Roll a set of leaf buckets up to a group status (first match wins, mirroring `bucketOf` precedence). */
 function rollupStatus(leaves: readonly WpLeaf[]): GroupStatus {

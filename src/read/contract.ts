@@ -13,7 +13,7 @@ import { readHead } from '../events/head.js'
 import { EventStore } from '../events/store.js'
 import type { Sha256, TrackEvent } from '../events/types.js'
 import { validate, type IntegrityResult } from '../events/validate.js'
-import type { ItemId } from '../model/item.js'
+import { isRoleContainer, type ItemId } from '../model/item.js'
 import type { VerificationRun } from '../model/verification.js'
 import { bucketOf } from '../report/buckets.js'
 import { statusByLevel, type StatusGroup, type StatusLevel } from '../report/status-by-level.js'
@@ -27,6 +27,11 @@ import {
   type ReportRow,
 } from '../report/build.js'
 import { fold } from '../state/fold.js'
+import {
+  scopeValidate as runScopeValidate,
+  type ScopeValidateInput,
+  type ScopeValidateResult,
+} from './scope-validate.js'
 
 /**
  * Semver of the skill-facing READ contract.
@@ -35,7 +40,7 @@ import { fold } from '../state/fold.js'
  * shapes it returns may only GROW (new methods / new optional fields); nothing is removed or
  * repurposed without a major bump. Consumers gate on `reader.contractVersion`.
  */
-export const READ_CONTRACT_VERSION = '1.5.0' // +verificationRuns() evidence read + statusByLevel() projection (Scope §A/§B, additive)
+export const READ_CONTRACT_VERSION = '1.6.0' // +scopeValidate() advisory read (Scope §B(b), additive)
 
 /** Provenance of the last `branch.imported` for a locator (drawn from the raw event log). */
 export interface BranchProvenance {
@@ -194,6 +199,44 @@ export class TrackReader {
   }
 
   /**
+   * Scope §B(b) — `track scope validate`: a PURE, read-only, fail-closed, ADVISORY validation of the
+   * declarative scope state. It NEVER glob-matches (string-level set logic), NEVER ingests, NEVER appends,
+   * and is NEVER a commit gate.
+   *
+   * FAIL-CLOSED: when `content`+`locator` are supplied, `requireFresh` runs FIRST (REUSING the shipped
+   * mechanism) — a stale / altered / not-imported sidecar throws `StaleSidecarError`, surfaced here as
+   * `{status:'stale', findings:[], perWp:[]}` with NO partial verdict (never a silent fallback). When no
+   * sidecar is given, the validation runs directly over the folded log.
+   *
+   * Validates (semantic, pure): every realization-active WP/spec-phase has a `scope` (else 'scope-undeclared');
+   * no allowed∩forbidden string overlap ('incoherent'); legal spec-phase nesting ('illegal-nesting'); an
+   * optional claimed item is a descendant of a declared phase ('claim-out-of-phase'). Surfaces the latest
+   * ingested VerificationRun verdict per WP (READ, never recomputed). Optional opt-in 'delivered-out-of-scope'.
+   */
+  scopeValidate(
+    opts: ScopeValidateInput & { content?: string; locator?: string },
+  ): ScopeValidateResult {
+    const events = this.events()
+    // FAIL-CLOSED gate FIRST: a supplied sidecar must be fresh + integral, or no verdict is produced.
+    if (opts.content !== undefined && opts.locator !== undefined) {
+      try {
+        this.requireFresh(opts.content, opts.locator)
+      } catch (error) {
+        if (error instanceof StaleSidecarError) {
+          return { status: 'stale', findings: [], perWp: [] }
+        }
+        throw error
+      }
+    }
+    return runScopeValidate(fold(events), {
+      workspace: opts.workspace,
+      baselineCommit: opts.baselineCommit,
+      ...(opts.inferDeliveredOutOfScope !== undefined ? { inferDeliveredOutOfScope: opts.inferDeliveredOutOfScope } : {}),
+      ...(opts.claimedItemId !== undefined ? { claimedItemId: opts.claimedItemId } : {}),
+    })
+  }
+
+  /**
    * Poll-able activity signal for ONE workspace (h2a conductor-launch gating). PURE: `now`/`idleMs`
    * are caller-supplied (track holds no clock). Reads the log ONCE; `pending`/staleness reuse the
    * report logic (`bucketOf`/`effectiveOpenBlockersForItem`) — zero new bucket logic. Read-only.
@@ -230,7 +273,7 @@ export class TrackReader {
 
     for (const item of state.items.values()) {
       if (item.workspace !== workspace) continue
-      if (item.role === 'workpackage') continue // a WP is a container, never a flat leaf (Workpackages §2)
+      if (isRoleContainer(item)) continue // a WP/spec-phase is a container, never a flat leaf (Scope §B(a))
       const bucket = bucketOf(state, item, config)
       if (bucket === 'TO-DO' || bucket === 'AWAITED') pending++
 

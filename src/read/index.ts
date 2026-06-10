@@ -14,3 +14,14 @@ export {
 // Scope §A/§B — projection/evidence types re-exported for skill consumers of the read contract.
 export { type GroupStatus, type StatusGroup, type StatusLevel } from '../report/status-by-level.js'
 export { type VerificationRun, type Verdict } from '../model/verification.js'
+// Scope §B(b) — the advisory scope-validate read surface.
+export {
+  type EvidenceStatus,
+  type PerWp,
+  type ScopeFinding,
+  type ScopeFindingCode,
+  type ScopeValidateInput,
+  type ScopeValidateResult,
+  type ScopeValidateStatus,
+  type SemanticStatus,
+} from './scope-validate.js'

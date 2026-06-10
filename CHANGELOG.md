@@ -2,6 +2,28 @@
 
 All notable changes to `@sentropic/track`. Format loosely follows [Keep a Changelog](https://keepachangelog.com); this package is pre-1.0 (the **event contract** is frozen, but the library/CLI surface may still evolve additively).
 
+## [0.11.1] — Scope branch: declarative scope state (a) + `track scope validate` (b)
+
+### Added
+- **Declarative scope state (a).** `ItemRole` widened to `'workpackage' | 'spec-phase'` (a spec-phase nests
+  only under a WP/phase; centralized `assertRoleNesting`); additive `scope?: ScopeDecl {allowed?, forbidden?,
+  conditional?}` of **inert path globs** (track stores strings, **never glob-matches**); `scope.declare`
+  WorkEvent → `scope.declared` event on the existing item aggregate (binding-gated, role+workspace guard).
+  CLI `item new --role spec-phase`, `item scope-declare <id> --allowed/--forbidden/--conditional`. The rollup
+  excludes spec-phase from leaf counts (container, like a WP).
+- **`track scope validate` (b) — PURE read, advisory, fail-closed.** `TrackReader.scopeValidate` + CLI +
+  MCP `track_scope_validate`. Runs `requireFresh` FIRST (stale/altered/not-imported → `StaleSidecarError` ⇒
+  `status:'stale'`, **no partial verdict** — reuses the shipped mechanism). Semantic-only: `scope-undeclared`,
+  `incoherent` (allowed∩forbidden set overlap, **never glob-matching**), `illegal-nesting`,
+  `claim-out-of-phase`, opt-in `delivered-out-of-scope` (OFF). Surfaces the latest ingested VerificationRun
+  per WP (read, never recompute). **rc is advisory — never a commit gate**; never ingests/appends.
+
+### Notes
+- Completes the track side of the rhanka-ratified scope-ownership (a/b/c shipped: c=0.11.0, a+b here). The
+  doc-authority inversion (BRANCH.md → projection) remains a separate gated policy step (cross-repo).
+  Additive: `INGEST_CONTRACT_VERSION` unchanged (additive kind), `READ_CONTRACT_VERSION` 1.5.0 → 1.6.0; old
+  logs byte-identical. 532 tests.
+
 ## [0.11.0] — Shared trunk: VerificationRun ingestion + `status(level)` (harness seam + scope)
 
 ### Added

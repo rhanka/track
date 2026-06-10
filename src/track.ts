@@ -37,6 +37,8 @@ import {
 } from './model/decision.js'
 import {
   assertRealizationTransition,
+  assertRoleNesting,
+  assertScopeDecl,
   assertSpecTransition,
   DomainError,
   type BlockerId,
@@ -47,6 +49,7 @@ import {
   type ItemState,
   type Link,
   type Realization,
+  type ScopeDecl,
   type SpecStatus,
 } from './model/item.js'
 import { assertVerificationRun, type VerificationRecordedPayload } from './model/verification.js'
@@ -143,18 +146,14 @@ export class Track {
     if (input.kind === 'decision') {
       throw new DomainError('use createDecision for kind:"decision" (Lot 3) — it needs targets, a dossier, and an atomic blocker batch (SPEC §2.5)')
     }
-    // WP-under-WP invariant (Workpackages DESIGN §2): a workpackage created WITH a parent may only be
-    // parented under another workpackage. A parentless WP (root) and a non-WP leaf under anything stay
-    // allowed. Unknown-parent is left to fold/report (createItem does not validate parent existence —
-    // branch-import sets parentId before the parent has folded), so we guard ONLY when the parent is
-    // present in state AND is not a WP.
-    if (input.role === 'workpackage' && input.parentId !== undefined) {
+    // Role nesting invariant (Scope §B(a)): a WP nests only under a WP; a spec-phase only under a WP or
+    // spec-phase; a non-role leaf under anything. A parentless container (root) and a non-role leaf under
+    // anything stay allowed. Unknown-parent is left to fold/report (createItem does not validate parent
+    // existence — branch-import sets parentId before the parent has folded), so we guard ONLY when the
+    // parent is present in state.
+    if (input.role !== undefined && input.parentId !== undefined) {
       const parent = this.state().items.get(input.parentId)
-      if (parent !== undefined && parent.role !== 'workpackage') {
-        throw new DomainError(
-          `cannot create workpackage under non-workpackage ${input.parentId}: a workpackage may only nest under a workpackage (DESIGN §2)`,
-        )
-      }
+      if (parent !== undefined) assertRoleNesting(input.role, parent.role, '<new>', input.parentId)
     }
     const itemId = this.newId()
     this.emit('item', itemId, 'item.created', { ...input })
@@ -181,15 +180,11 @@ export class Track {
           `cannot reparent across workspaces: item ${itemId} is in "${item.workspace}", parent ${parentId} is in "${parent.workspace}"`,
         )
       }
-      // WP-under-WP invariant (Workpackages DESIGN §2): a `role:'workpackage'` item may only nest under
-      // another workpackage. A NON-WP leaf may still parent under a WP or a leaf (back-compat with
-      // branch-import's feature→chore). Detaching a WP to root (parentId undefined) stays allowed (this
-      // block only runs when a parent is given).
-      if (item.role === 'workpackage' && parent.role !== 'workpackage') {
-        throw new DomainError(
-          `cannot reparent workpackage ${itemId} under non-workpackage ${parentId}: a workpackage may only nest under a workpackage (DESIGN §2)`,
-        )
-      }
+      // Role nesting invariant (Scope §B(a)): a `role:'workpackage'` item may only nest under another
+      // workpackage; a `role:'spec-phase'` only under a workpackage or spec-phase. A non-role leaf may
+      // still parent under a container or a leaf (back-compat with branch-import's feature→chore).
+      // Detaching to root (parentId undefined) stays allowed (this block only runs when a parent is given).
+      assertRoleNesting(item.role, parent.role, itemId, parentId)
       // Cycle guard: walk the prospective parent's ancestry; reaching `itemId` would close a loop.
       for (let cursor: ItemId | undefined = parentId; cursor !== undefined; ) {
         if (cursor === itemId) {
@@ -199,6 +194,28 @@ export class Track {
       }
     }
     this.emit('item', itemId, 'item.reparented', parentId !== undefined ? { parentId } : {})
+  }
+
+  /**
+   * Scope §B(a) — set/replace the declarative scope (INERT path globs) on a WP/spec-phase. Appends
+   * `scope.declared` on the EXISTING item aggregate (next seq, no recreate; existing hashes untouched),
+   * mirroring `item.reparent`→`item.reparented`. Fold sets/replaces `item.scope`. Guards (reject with
+   * DomainError BEFORE any append): the item exists AND is role∈{workpackage,spec-phase}. The ScopeDecl
+   * shape is validated fail-closed (assertScopeDecl). track STORES the globs, NEVER matches them.
+   * Binding-gated (Settles:'always') + workspace-contained at the ingest seam; clientToken via withClientToken.
+   */
+  declareScope(itemId: ItemId, scope: ScopeDecl, clientToken?: string): void {
+    const item = this.state().items.get(itemId)
+    if (!item) throw new DomainError(`unknown item ${itemId}`)
+    if (item.role !== 'workpackage' && item.role !== 'spec-phase') {
+      throw new DomainError(
+        `cannot declare scope on item ${itemId}: scope is only declarable on a workpackage or spec-phase (Scope §B(a))`,
+      )
+    }
+    const validated = assertScopeDecl(scope)
+    const emit = (): void => this.emit('item', itemId, 'scope.declared', { scope: validated })
+    if (clientToken !== undefined) this.withClientToken(clientToken, emit)
+    else emit()
   }
 
   setSpec(itemId: ItemId, to: SpecStatus): void {

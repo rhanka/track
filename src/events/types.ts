@@ -43,6 +43,11 @@ export const EVENT_TYPES = [
   // (the verb→past-tense convention). Folds into `state.verificationRuns` and touches NO realization/
   // bucket logic. Additive: absent on every pre-scope event ⇒ zero hash/seq/bucket change.
   'scope.verification-recorded',
+  // Scope §B(a) — set/replace the declarative scope (INERT path globs) on a WP/spec-phase, on the EXISTING
+  // item aggregate (next seq, no recreate). Past-tense persisted name, mirroring `scope.verification`→
+  // `scope.verification-recorded` (WorkEvent kind `scope.declare`). Folds `item.scope`; touches NO
+  // realization/bucket logic. Additive: absent on every pre-scope event ⇒ zero hash/seq/bucket change.
+  'scope.declared',
 ] as const
 export type EventType = (typeof EVENT_TYPES)[number]
 

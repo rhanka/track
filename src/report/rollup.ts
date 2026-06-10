@@ -8,7 +8,7 @@
 // Parent counts are the SUM of descendant leaves, NEVER the mean of child percentages (Simpson trap).
 // Each node's dotted display label (`WP1`, `WP1.1`) is DERIVED from tree position, never stored.
 
-import type { ItemId, ItemKind, ItemState } from '../model/item.js'
+import { isRoleContainer, type ItemId, type ItemKind, type ItemState } from '../model/item.js'
 import type { State } from '../state/fold.js'
 import { bucketOf, type Bucket, type ReportConfig } from './buckets.js'
 import { effectiveOpenBlockersForItem } from './blocker-status.js'
@@ -44,9 +44,9 @@ export interface WpNode {
   children: WpNode[]
 }
 
-/** A non-WP leaf reachable from a WP (a non-WP item with no non-WP… actually: any non-WP item). */
+/** A CONTAINER node (workpackage OR spec-phase) — descended through, never a leaf (Scope §B(a)). */
 function isWp(item: ItemState): boolean {
-  return item.role === 'workpackage'
+  return isRoleContainer(item)
 }
 
 /**

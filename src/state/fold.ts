@@ -23,6 +23,7 @@ import type {
   ItemId,
   ItemState,
   Realization,
+  ScopeDecl,
   SpecStatus,
 } from '../model/item.js'
 import type { VerificationRecordedPayload, VerificationRun } from '../model/verification.js'
@@ -100,6 +101,7 @@ function applyEvent(state: State, event: TrackEvent): void {
         disposition: { orientation: 'required', commitment: 'required' },
         ...(payload.parentId !== undefined ? { parentId: payload.parentId } : {}),
         ...(payload.role !== undefined ? { role: payload.role } : {}),
+        ...(payload.scope !== undefined ? { scope: payload.scope } : {}),
         ...(payload.sourceKey !== undefined ? { sourceKey: payload.sourceKey } : {}),
         ...(payload.body !== undefined ? { body: payload.body } : {}),
         ...(payload.links !== undefined ? { links: payload.links } : {}),
@@ -143,6 +145,15 @@ function applyEvent(state: State, event: TrackEvent): void {
         ...(payload.engagementRef !== undefined ? { engagementRef: payload.engagementRef } : {}),
       }
       state.decisions.set(decision.id, decision)
+      break
+    }
+
+    case 'scope.declared': {
+      // Scope §B(a) — set/replace the declarative scope on the EXISTING WP/spec-phase aggregate (latest
+      // wins in stream order). Role legality is checked at append (Track.declareScope). INERT: track
+      // stores the path globs, NEVER matches them; touches no realization/bucket logic.
+      const item = state.items.get(event.aggregateId)
+      if (item) item.scope = (event.payload as { scope: ScopeDecl }).scope
       break
     }
 
