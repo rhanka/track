@@ -67,10 +67,13 @@ export function formatReport(report: Report, format: Format): string {
     lines.push(heading('DECISIONS', report.decisions.length, format))
     for (const d of report.decisions) {
       const t = title(d.title, format)
+      // D6-B (WP5): surface the sponsor (= `accountable`, D6 resolved) when present. Additive — a
+      // decision without a sponsor renders exactly as before (no trailing segment).
+      const sponsor = d.accountable !== undefined ? ` · sponsor:${d.accountable}` : ''
       lines.push(
         format === 'md'
-          ? `- **${t}** — ${d.decisionKind} · ${d.realization} · outcome:${d.outcome}`
-          : `  - ${t} [${d.decisionKind}, ${d.realization}, outcome:${d.outcome}]`,
+          ? `- **${t}** — ${d.decisionKind} · ${d.realization} · outcome:${d.outcome}${sponsor}`
+          : `  - ${t} [${d.decisionKind}, ${d.realization}, outcome:${d.outcome}${d.accountable !== undefined ? `, sponsor:${d.accountable}` : ''}]`,
       )
     }
   }

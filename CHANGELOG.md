@@ -2,6 +2,20 @@
 
 All notable changes to `@sentropic/track`. Format loosely follows [Keep a Changelog](https://keepachangelog.com); this package is pre-1.0 (the **event contract** is frozen, but the library/CLI surface may still evolve additively).
 
+## [0.10.10] — WP-under-WP guard + decision sponsor surfaced (D6-B)
+
+### Added / Fixed
+- **WP-under-WP invariant** (the deferred 0.10.0 gap): `reparentItem`/`createItem` now reject parenting a
+  `role:'workpackage'` item under a non-workpackage (a WP nests only under a WP; a leaf may still nest under a
+  WP or a leaf; detach-to-root allowed). Covers the `item.reparent` ingest path (same facade guard).
+- **Decision sponsor (D6-B) surfaced end-to-end.** `accountable` already *was* the decision sponsor (M3 Lot A
+  superseded the reserved `sponsor` field) and was wired through ingest/CLI/read-JSON; this adds the missing
+  human-readable ` · sponsor:<actor>` segment in the `report --decisions` text/md render (present-only).
+
+### Notes
+- Additive; no new field, no `READ_CONTRACT_VERSION` bump (sponsor was already on the read surface); event
+  contract / write path / P0 guard untouched. 464 tests. Completes WP1's deferred guard + WP5's D6-B.
+
 ## [0.10.9] — `propose-workpackages` skill + multi-skill install
 
 ### Added

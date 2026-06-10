@@ -154,6 +154,61 @@ describe('WP foundation — item.reparent (additive event on the existing item a
   })
 })
 
+// ---- 2a. WP-under-WP invariant (deferred gap, DESIGN §2) ---------------------------------------
+
+describe('WP foundation — a workpackage nests only under a workpackage (DESIGN §2)', () => {
+  it('rejects a WP reparented under a NON-WP item', () => {
+    const leaf = t.createItem({ kind: 'chore', title: 'leaf', workspace: 'ws' })
+    const wp = t.createItem({ kind: 'chore', title: 'WP', workspace: 'ws', role: 'workpackage' })
+    expect(() => t.reparentItem(wp, leaf)).toThrow(DomainError)
+    expect(() => t.reparentItem(wp, leaf)).toThrow(/workpackage may only nest under a workpackage/)
+  })
+
+  it('allows a WP reparented under another WP', () => {
+    const parentWp = t.createItem({ kind: 'chore', title: 'WP1', workspace: 'ws', role: 'workpackage' })
+    const childWp = t.createItem({ kind: 'chore', title: 'WP1.1', workspace: 'ws', role: 'workpackage' })
+    t.reparentItem(childWp, parentWp)
+    expect(t.state().items.get(childWp)!.parentId).toBe(parentWp)
+    expect(integral()).toBe(true)
+  })
+
+  it('allows a NON-WP leaf reparented under a WP (unchanged back-compat)', () => {
+    const wp = t.createItem({ kind: 'chore', title: 'WP', workspace: 'ws', role: 'workpackage' })
+    const leaf = t.createItem({ kind: 'chore', title: 'leaf', workspace: 'ws' })
+    t.reparentItem(leaf, wp)
+    expect(t.state().items.get(leaf)!.parentId).toBe(wp)
+    expect(integral()).toBe(true)
+  })
+
+  it('allows a NON-WP leaf reparented under another leaf (unchanged — feature→chore)', () => {
+    const feature = t.createItem({ kind: 'feature', title: 'f', workspace: 'ws' })
+    const chore = t.createItem({ kind: 'chore', title: 'c', workspace: 'ws' })
+    t.reparentItem(chore, feature)
+    expect(t.state().items.get(chore)!.parentId).toBe(feature)
+    expect(integral()).toBe(true)
+  })
+
+  it('allows a WP detached to root (parentId undefined)', () => {
+    const parentWp = t.createItem({ kind: 'chore', title: 'WP1', workspace: 'ws', role: 'workpackage' })
+    const childWp = t.createItem({ kind: 'chore', title: 'WP1.1', workspace: 'ws', role: 'workpackage', parentId: parentWp })
+    t.reparentItem(childWp)
+    expect(t.state().items.get(childWp)!.parentId).toBeUndefined()
+    expect(integral()).toBe(true)
+  })
+
+  it('rejects creating a WP with a NON-WP parent', () => {
+    const leaf = t.createItem({ kind: 'chore', title: 'leaf', workspace: 'ws' })
+    expect(() => t.createItem({ kind: 'chore', title: 'WP', workspace: 'ws', role: 'workpackage', parentId: leaf })).toThrow(DomainError)
+  })
+
+  it('allows creating a WP with a WP parent', () => {
+    const parentWp = t.createItem({ kind: 'chore', title: 'WP1', workspace: 'ws', role: 'workpackage' })
+    const childWp = t.createItem({ kind: 'chore', title: 'WP1.1', workspace: 'ws', role: 'workpackage', parentId: parentWp })
+    expect(t.state().items.get(childWp)!.parentId).toBe(parentWp)
+    expect(integral()).toBe(true)
+  })
+})
+
 // ---- 2b. ingest binding gate for item.reparent ------------------------------------------------
 
 describe('WP foundation — item.reparent via ingest (binding, parity-gated, contained)', () => {
@@ -204,6 +259,16 @@ describe('WP foundation — item.reparent via ingest (binding, parity-gated, con
     expect(() =>
       ingest([ev('item.reparent', { itemId: childA, parentId: wpA })], ctx({ workspace: 'wsB' }), s),
     ).toThrow()
+  })
+
+  it('rejects a WP reparented under a NON-WP item (WP-under-WP guard funnels through reparentItem)', () => {
+    const s = new EventStore(join(dir, 'wp-under-nonwp', '.track', 'events.jsonl'))
+    const c = ctx({ newId: counter() }) // ONE shared id generator so leaf/wp get distinct ids
+    const leaf = ingest([ev('item.create', { kind: 'chore', title: 'leaf', workspace: 'ws' })], c, s).ids[0] as string
+    const wp = ingest([ev('item.create', { kind: 'chore', title: 'WP', workspace: 'ws', role: 'workpackage' })], c, s).ids[0] as string
+    expect(() => ingest([ev('item.reparent', { itemId: wp, parentId: leaf })], c, s)).toThrow(
+      /workpackage may only nest under a workpackage/,
+    )
   })
 })
 

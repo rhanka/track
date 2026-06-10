@@ -11,6 +11,8 @@ import type { EventCore, Provenance, TrackEvent } from './events/types.js'
 import { validate } from './events/validate.js'
 import { ingest, type IngestContext } from './ingest/ingest.js'
 import { DomainError } from './model/item.js'
+import { TrackReader } from './read/contract.js'
+import { reportText } from './read/commands.js'
 import { Track } from './track.js'
 import { runCli, type CliIO } from './cli/index.js'
 
@@ -234,5 +236,77 @@ describe('Lot A — CLI flags', () => {
     expect(item.accountable).toBe('human:a')
     expect(item.responsible).toEqual(['agent:c', 'human:b'])
     expect(item.engagementRef).toBe('eng-7')
+  })
+})
+
+// ---- D6-B: first-class decision sponsor = accountable (WP5) ------------------------------------
+// v2.3b §8: D6 RESOLVED — the decision's `accountable` IS the sponsor (supersedes the reserved
+// separate `sponsor` field, which is dropped). These wire it end-to-end on the DECISION path.
+
+describe('D6-B — decision sponsor (= accountable) surfaced end-to-end', () => {
+  const cli = (...argv: string[]): { code: number; out: string } => {
+    const out: string[] = []
+    const io: CliIO = { cwd: dir, out: (s) => out.push(s), err: (s) => out.push(s) }
+    return { code: runCli(argv, io), out: out.join('') }
+  }
+
+  it('track decision new --accountable <actor> persists the sponsor', () => {
+    expect(cli('init').code).toBe(0)
+    const itm = cli('item', 'new', '--kind', 'feature', '--title', 'T', '--workspace', 'ws').out.trim()
+    const out = cli('decision', 'new', '--kind', 'orientation', '--title', 'D', '--workspace', 'ws', '--targets', itm, '--accountable', 'human:carol').out
+    const decId = out.trim().split('\n').pop()!
+    const dec = new Track(new EventStore(eventsPath)).state().decisions.get(decId)!
+    expect(dec.accountable).toBe('human:carol')
+  })
+
+  it('round-trips through fold + the read contract: report({decisions}) exposes accountable (the sponsor)', () => {
+    const itm = t.createItem({ kind: 'feature', title: 'T', workspace: 'ws' })
+    const d = t.createDecision({
+      decisionKind: 'orientation',
+      title: 'D',
+      workspace: 'ws',
+      targets: [itm],
+      dossier: { context: '', options: [], qa: [] },
+      accountable: 'human:dave',
+    })
+    const reader = new TrackReader(eventsPath)
+    const row = reader.report({ baselineCommit: 'c1', decisions: true }).decisions!.find((r) => r.id === d)!
+    expect(row.accountable).toBe('human:dave')
+  })
+
+  it('renders the sponsor in report --decisions text/md (present), and omits it when absent', () => {
+    const itm = t.createItem({ kind: 'feature', title: 'T', workspace: 'ws' })
+    t.createDecision({ decisionKind: 'orientation', title: 'Sponsored', workspace: 'ws', targets: [itm], dossier: { context: '', options: [], qa: [] }, accountable: 'human:carol' })
+    t.createDecision({ decisionKind: 'orientation', title: 'Unsponsored', workspace: 'ws', targets: [itm], dossier: { context: '', options: [], qa: [] } })
+    const reader = new TrackReader(eventsPath)
+    const text = reportText(reader, { baselineCommit: 'c1', decisions: true }, 'text')
+    expect(text).toContain('sponsor:human:carol')
+    const sponsoredLine = text.split('\n').find((l) => l.includes('Sponsored') && !l.includes('Unsponsored'))!
+    expect(sponsoredLine).toContain('sponsor:human:carol')
+    const unsponsoredLine = text.split('\n').find((l) => l.includes('Unsponsored'))!
+    expect(unsponsoredLine).not.toContain('sponsor:')
+  })
+
+  it('CLI ≡ ingest parity: decision.create carries accountable identically to --accountable', () => {
+    const itm = t.createItem({ kind: 'feature', title: 'T', workspace: 'ws' })
+    const ctx: IngestContext = { by: 'human:t', workspace: 'ws', prov: { transport: 'import', proposed: false, auth: 'local-user' } }
+    const d = ingest(
+      [{ v: 1, kind: 'decision.create', payload: { decisionKind: 'orientation', title: 'D', workspace: 'ws', targets: [itm], dossier: { context: '', options: [], qa: [] }, accountable: 'human:erin' } }],
+      ctx,
+      store,
+    ).ids[0]!
+    expect(t.state().decisions.get(d)!.accountable).toBe('human:erin')
+  })
+
+  it('absent --accountable ⇒ undefined (additive, hash-neutral on the decision.created event)', () => {
+    const itm = t.createItem({ kind: 'feature', title: 'T', workspace: 'ws' })
+    const d = t.createDecision({ decisionKind: 'orientation', title: 'D', workspace: 'ws', targets: [itm], dossier: { context: '', options: [], qa: [] } })
+    expect(t.state().decisions.get(d)!.accountable).toBeUndefined()
+    const createdEvent = store.readAll().find((e) => e.type === 'decision.created')!
+    expect('accountable' in (createdEvent.payload as Record<string, unknown>)).toBe(false)
+    const reader = new TrackReader(eventsPath)
+    const row = reader.report({ baselineCommit: 'c1', decisions: true }).decisions!.find((r) => r.id === d)!
+    expect('accountable' in row).toBe(false)
+    expect(integral()).toBe(true)
   })
 })

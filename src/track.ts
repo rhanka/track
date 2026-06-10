@@ -142,6 +142,19 @@ export class Track {
     if (input.kind === 'decision') {
       throw new DomainError('use createDecision for kind:"decision" (Lot 3) — it needs targets, a dossier, and an atomic blocker batch (SPEC §2.5)')
     }
+    // WP-under-WP invariant (Workpackages DESIGN §2): a workpackage created WITH a parent may only be
+    // parented under another workpackage. A parentless WP (root) and a non-WP leaf under anything stay
+    // allowed. Unknown-parent is left to fold/report (createItem does not validate parent existence —
+    // branch-import sets parentId before the parent has folded), so we guard ONLY when the parent is
+    // present in state AND is not a WP.
+    if (input.role === 'workpackage' && input.parentId !== undefined) {
+      const parent = this.state().items.get(input.parentId)
+      if (parent !== undefined && parent.role !== 'workpackage') {
+        throw new DomainError(
+          `cannot create workpackage under non-workpackage ${input.parentId}: a workpackage may only nest under a workpackage (DESIGN §2)`,
+        )
+      }
+    }
     const itemId = this.newId()
     this.emit('item', itemId, 'item.created', { ...input })
     return itemId
@@ -165,6 +178,15 @@ export class Track {
       if (parent.workspace !== item.workspace) {
         throw new DomainError(
           `cannot reparent across workspaces: item ${itemId} is in "${item.workspace}", parent ${parentId} is in "${parent.workspace}"`,
+        )
+      }
+      // WP-under-WP invariant (Workpackages DESIGN §2): a `role:'workpackage'` item may only nest under
+      // another workpackage. A NON-WP leaf may still parent under a WP or a leaf (back-compat with
+      // branch-import's feature→chore). Detaching a WP to root (parentId undefined) stays allowed (this
+      // block only runs when a parent is given).
+      if (item.role === 'workpackage' && parent.role !== 'workpackage') {
+        throw new DomainError(
+          `cannot reparent workpackage ${itemId} under non-workpackage ${parentId}: a workpackage may only nest under a workpackage (DESIGN §2)`,
         )
       }
       // Cycle guard: walk the prospective parent's ancestry; reaching `itemId` would close a loop.
