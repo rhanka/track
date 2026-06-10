@@ -2,6 +2,22 @@
 
 All notable changes to `@sentropic/track`. Format loosely follows [Keep a Changelog](https://keepachangelog.com); this package is pre-1.0 (the **event contract** is frozen, but the library/CLI surface may still evolve additively).
 
+## [0.10.9] — `propose-workpackages` skill + multi-skill install
+
+### Added
+- **`propose-workpackages` skill** (`skills/propose-workpackages/`, tool-neutral) — assembles a flat backlog
+  into 4–7 perennial thematic workpackages: cluster by durable concern / owning artifact (down-weighting
+  milestone prefixes), one WP per todo (surface homeless, split cross-cutting, never multi-home), preserve
+  owner seams (record/render/logic, D5≠M5), then **emit a proposal the human ratifies** (composes
+  `present-decision` for consequential restructurings) before applying via `item new --role workpackage` +
+  `item reparent`. Verifies with `track report --wp`.
+- **`track install-skills` now installs EVERY skill** under `skills/` (discovery), not just one — both
+  `present-decision` and `propose-workpackages` deploy to claude/codex/gemini-agy; graceful + idempotent;
+  per-skill `AGENTS.md` pointers under one `## Skills` section.
+
+### Notes
+- Additive; event contract / write path / P0 guard untouched. 451 tests. Completes WP2 (Reporting & Pilotage).
+
 ## [0.10.8] — `--commit HEAD`/ref resolution (acceptance footgun fix)
 
 ### Fixed

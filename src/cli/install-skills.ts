@@ -22,8 +22,19 @@ import type { CliIO } from './index.js'
 // root, where `skills/` lives (shipped via package.json `files`). Same anchor `version.ts` uses.
 const SKILLS_DIR = join(dirname(fileURLToPath(import.meta.url)), '..', '..', 'skills')
 
-/** The ONE skill this installer deploys; the canonical source is `skills/present-decision/`. */
-const SKILL_NAME = 'present-decision'
+/**
+ * Discover every skill in the bundle: each immediate sub-directory of `skills/` that carries a `SKILL.md`
+ * is one skill (its dir name is the skill name). The in-repo `skills/` dir is the SINGLE source of truth —
+ * adding a skill folder is the only thing needed to ship it; this installer follows the bundle, never a
+ * hardcoded list. Returned sorted for deterministic install order / output.
+ */
+function discoverSkills(): string[] {
+  if (!existsSync(SKILLS_DIR)) throw new DomainError(`skills bundle missing at ${SKILLS_DIR}`)
+  return readdirSync(SKILLS_DIR, { withFileTypes: true })
+    .filter((e) => e.isDirectory() && existsSync(join(SKILLS_DIR, e.name, 'SKILL.md')))
+    .map((e) => e.name)
+    .sort()
+}
 
 const HOSTS = ['claude', 'codex', 'gemini', 'agy'] as const
 type Host = (typeof HOSTS)[number]
@@ -121,16 +132,26 @@ function copySkillTree(srcDir: string, destDir: string, force: boolean, result: 
 }
 
 const AGENTS_POINTER_HEADER = '## Skills'
-const AGENTS_POINTER_LINE =
-  `- **present-decision** — present human decisions at the level of the stakes. ` +
-  `Entry: \`~/.codex/skills/present-decision/SKILL.md\`.`
+
+/** First sentence of a skill's description — a bounded blurb for the AGENTS.md pointer line. */
+function blurb(description: string): string {
+  const firstSentence = description.split(/(?<=\.)\s/)[0] ?? description
+  // Strip the leading "Use when …" framing so the pointer reads as a capability, not a trigger.
+  return firstSentence.replace(/^Use when\s+/i, '').replace(/\.$/, '')
+}
+
+/** The bounded pointer line for one skill under the repo's `## Skills` section. */
+function agentsPointerLine(skill: SkillFrontmatter): string {
+  return `- **${skill.name}** — ${blurb(skill.description)}. Entry: \`~/.codex/skills/${skill.name}/SKILL.md\`.`
+}
 
 /**
- * Add a BOUNDED pointer line to the repo's `AGENTS.md` (the canonical entry) under a "Skills"
- * section — only when AGENTS.md already exists (existing repo methods win; we never create the
- * entrypoint). Idempotent: if the pointer is already present, do nothing.
+ * Add a BOUNDED per-skill pointer line to the repo's `AGENTS.md` (the canonical entry) under one shared
+ * "Skills" section — only when AGENTS.md already exists (existing repo methods win; we never create the
+ * entrypoint). Idempotent per skill: the section header is added once; a skill whose `- **<name>**` line
+ * is already present is left alone, so installing N skills yields one section with N lines.
  */
-function addAgentsPointer(repoRoot: string, force: boolean, result: InstallResult): void {
+function addAgentsPointer(repoRoot: string, skill: SkillFrontmatter, force: boolean, result: InstallResult): void {
   const agents = join(repoRoot, 'AGENTS.md')
   if (!existsSync(agents)) {
     if (force) {
@@ -142,12 +163,21 @@ function addAgentsPointer(repoRoot: string, force: boolean, result: InstallResul
     return
   }
   const current = readFileSync(agents, 'utf8')
-  if (current.includes('present-decision')) {
+  if (current.includes(`- **${skill.name}**`)) {
     result.unchanged.push(agents)
     return
   }
-  const sep = current.endsWith('\n') ? '\n' : '\n\n'
-  writeFileSync(agents, `${current}${sep}${AGENTS_POINTER_HEADER}\n\n${AGENTS_POINTER_LINE}\n`, 'utf8')
+  const line = agentsPointerLine(skill)
+  let next: string
+  if (current.includes(`${AGENTS_POINTER_HEADER}\n`)) {
+    // Append the new pointer right under the existing Skills section header (one blank line, then the
+    // pointer lines together) so installing N skills yields one tidy section, not blank-separated lines.
+    next = current.replace(`${AGENTS_POINTER_HEADER}\n\n`, `${AGENTS_POINTER_HEADER}\n\n${line}\n`)
+  } else {
+    const sep = current.endsWith('\n') ? '\n' : '\n\n'
+    next = `${current}${sep}${AGENTS_POINTER_HEADER}\n\n${line}\n`
+  }
+  writeFileSync(agents, next, 'utf8')
   result.written.push(agents)
 }
 
@@ -176,24 +206,26 @@ function ensureGeminiPointer(repoRoot: string, result: InstallResult): void {
   result.written.push(gemini)
 }
 
-/** Install the present-decision skill onto a single host. */
-function installOne(host: Host, scope: Scope, force: boolean, repoRoot: string, result: InstallResult): void {
-  const srcDir = join(SKILLS_DIR, SKILL_NAME)
+/** Install ONE named skill onto a single host. */
+function installOne(skillName: string, host: Host, scope: Scope, force: boolean, repoRoot: string, result: InstallResult): void {
+  const srcDir = join(SKILLS_DIR, skillName)
   if (!existsSync(srcDir)) {
     throw new DomainError(`skills bundle missing at ${srcDir}`)
   }
   const base = scope === 'user' ? userHome() : repoRoot
 
   if (host === 'claude' || host === 'codex') {
-    const destDir = join(base, `.${host}`, 'skills', SKILL_NAME)
+    const destDir = join(base, `.${host}`, 'skills', skillName)
     copySkillTree(srcDir, destDir, force, result)
-    if (host === 'codex' && scope === 'project') addAgentsPointer(repoRoot, force, result)
+    if (host === 'codex' && scope === 'project') {
+      addAgentsPointer(repoRoot, parseSkill(readFileSync(join(srcDir, 'SKILL.md'), 'utf8')), force, result)
+    }
     return
   }
 
   // gemini + agy share ~/.gemini/commands/<name>.toml (agy imports the gemini command).
   const skill = parseSkill(readFileSync(join(srcDir, 'SKILL.md'), 'utf8'))
-  const target = join(base, '.gemini', 'commands', `${SKILL_NAME}.toml`)
+  const target = join(base, '.gemini', 'commands', `${skillName}.toml`)
   writeGuarded(target, renderGeminiToml(skill), force, result)
   if (scope === 'project') ensureGeminiPointer(repoRoot, result)
 }
@@ -243,8 +275,14 @@ export function cmdInstallSkills(args: string[], io: CliIO): number {
 
   const result: InstallResult = { written: [], skipped: [], unchanged: [] }
   try {
+    // Discover every skill in the bundle and install each onto every targeted host (source of truth =
+    // the in-repo `skills/` dir, never a hardcoded name).
+    const skills = discoverSkills()
+    if (skills.length === 0) throw new DomainError(`no skills found under ${SKILLS_DIR}`)
     for (const host of targets) {
-      installOne(host, resolvedScope, force, io.cwd, result)
+      for (const skillName of skills) {
+        installOne(skillName, host, resolvedScope, force, io.cwd, result)
+      }
     }
   } catch (error) {
     io.err(`track install-skills: ${error instanceof Error ? error.message : String(error)}\n`)
