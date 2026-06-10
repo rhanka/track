@@ -2,6 +2,19 @@
 
 All notable changes to `@sentropic/track`. Format loosely follows [Keep a Changelog](https://keepachangelog.com); this package is pre-1.0 (the **event contract** is frozen, but the library/CLI surface may still evolve additively).
 
+## [0.10.11] — `track workspace-activity` CLI verb (h2a poll surface)
+
+### Added
+- **`track workspace-activity --workspace <id> [--baseline-commit <sha>] [--now <iso>] [--idle-ms <ms>]
+  [--format json|text]`** — wraps the shipped 0.10.4 `TrackReader.workspaceActivity` as a CLI verb so a peer
+  that is itself an MCP server (h2a, stdio — can't be a client of track's MCP) can shell out to poll
+  `{pending, stalled[], latestEventAt}`. The library stays clockless; the CLI boundary injects `now`/HEAD
+  (same pattern as `report`). Graceful serve-empty (no `.track` → empty + `track init` hint, rc=0); read-only.
+
+### Notes
+- Additive; reuses the existing pure 4-rule stalled disjunction; event contract / write path / P0 guard
+  untouched. 471 tests.
+
 ## [0.10.10] — WP-under-WP guard + decision sponsor surfaced (D6-B)
 
 ### Added / Fixed

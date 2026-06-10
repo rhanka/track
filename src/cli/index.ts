@@ -82,6 +82,7 @@ const USAGE = `usage: track <command>
   priority assess <itemId> --ubv <n> --tc <n> --rr <n> --js <n>
   report [--decisions] [--require-accepted] [--wp] [--format json|text|md] [--commit <sha>]
   query [--kind <k>] [--role workpackage] [--workspace <w>] [--bucket <AWAITED|DROPPED|DONE|TO-DO>] [--realization <r>] [--acceptance <a>] [--format json|text|md] [--commit <sha>]
+  workspace-activity --workspace <id> [--baseline-commit <sha>] [--now <iso>] [--idle-ms <ms>] [--format json|text]
   validate [--commit <sha>]
   branch import <BRANCH.md> [--commit <sha>]
   ingest <file.jsonl> --workspace <w>
@@ -279,7 +280,8 @@ export function runCli(rawArgv: string[], io: CliIO): number {
       // (user error → the outer catch → rc=1). The reader over a nonexistent log already reads empty.
       case 'report':
       case 'query':
-      case 'validate': {
+      case 'validate':
+      case 'workspace-activity': {
         const trackDir = resolveTrackDirOrNull(resolveOpts)
         if (trackDir === null) {
           io.err(
@@ -300,6 +302,8 @@ export function runCli(rawArgv: string[], io: CliIO): number {
             return cmdQuery(rest, ctx)
           case 'validate':
             return cmdValidate(rest, ctx, trackDir === null)
+          case 'workspace-activity':
+            return cmdWorkspaceActivity(rest, ctx)
         }
         io.err(USAGE)
         return 2
@@ -660,6 +664,45 @@ function cmdQuery(args: string[], ctx: Ctx): number {
       fmt(flags),
     ),
   )
+  return 0
+}
+
+/**
+ * `track workspace-activity --workspace <id> [--baseline-commit <sha>] [--now <iso>] [--idle-ms <ms>]
+ * [--format json|text]` — a poll surface over the shipped, CLOCKLESS `TrackReader.workspaceActivity`
+ * (0.10.4). h2a is itself an MCP stdio server, so it can't be a client of track's MCP — it shells out
+ * to this verb to poll one workspace for conductor-launch gating. A pure READ (no append); routed
+ * through the serve-empty path so an unadopted repo yields honest-empty + rc=0, never a crash.
+ *
+ * `--baseline-commit` resolves via `resolveCommit` (so `--baseline-commit HEAD` works post-0.10.8); the
+ * omitted default is the current HEAD SHA. `--now` defaults to the system clock READ AT THE CLI BOUNDARY
+ * — the library stays clockless (same pattern as `report` resolving git HEAD at the boundary). `--idle-ms`
+ * is omitted unless passed, so the method's own 24h default applies.
+ */
+function cmdWorkspaceActivity(args: string[], ctx: Ctx): number {
+  const { io } = ctx
+  const { flags } = parseFlags(args)
+  const workspace = opt(flags, 'workspace')
+  if (workspace === undefined) {
+    io.err('usage: track workspace-activity --workspace <id> [--baseline-commit <sha>] [--now <iso>] [--idle-ms <ms>] [--format json|text]\n')
+    return 2
+  }
+  const format = oneOf(opt(flags, 'format') ?? 'text', ['json', 'text'], '--format')
+  const reader = new TrackReader(ctx.eventsPath)
+  const activity = reader.workspaceActivity(workspace, {
+    baselineCommit: resolveCommit(io.cwd, opt(flags, 'baseline-commit')),
+    now: opt(flags, 'now') ?? new Date().toISOString(),
+    ...(opt(flags, 'idle-ms') !== undefined ? { idleMs: num(flags, 'idle-ms') } : {}),
+  })
+  if (format === 'json') {
+    io.out(`${JSON.stringify(activity)}\n`)
+    return 0
+  }
+  // text: a readable summary — `pending: N`, one line per stalled item, then `latestEventAt`.
+  const lines = [`pending: ${activity.pending}`]
+  for (const s of activity.stalled) lines.push(`${s.reason} ${s.id} ${s.title} (since ${s.since})`)
+  lines.push(`latestEventAt: ${activity.latestEventAt ?? '-'}`)
+  io.out(`${lines.join('\n')}\n`)
   return 0
 }
 
