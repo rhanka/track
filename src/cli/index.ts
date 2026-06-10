@@ -33,7 +33,8 @@ import {
 } from '../ingest/contract.js'
 import { ingest, type IngestContext } from '../ingest/ingest.js'
 import { TrackReader } from '../read/contract.js'
-import { queryText, reportText } from '../read/commands.js'
+import { queryText, reportText, statusText } from '../read/commands.js'
+import { STATUS_LEVELS } from '../report/status-by-level.js'
 import { VERSION } from '../version.js'
 import { durableWorkspaceId } from '../workspace-id.js'
 import { desyncFindings } from './desync.js'
@@ -80,7 +81,7 @@ const USAGE = `usage: track <command>
   accept run --from <report> --format <junit|json> [--commit <c>] [--env <e>] [--runner <r>]
   accept waive <criterionId> --reason <r>
   priority assess <itemId> --ubv <n> --tc <n> --rr <n> --js <n>
-  report [--decisions] [--require-accepted] [--wp] [--format json|text|md] [--commit <sha>]
+  report [--decisions] [--require-accepted] [--wp] [--level <spec|plan|wp|lot|task>] [--format json|text|md] [--commit <sha>]
   query [--kind <k>] [--role workpackage] [--workspace <w>] [--bucket <AWAITED|DROPPED|DONE|TO-DO>] [--realization <r>] [--acceptance <a>] [--format json|text|md] [--commit <sha>]
   workspace-activity --workspace <id> [--baseline-commit <sha>] [--now <iso>] [--idle-ms <ms>] [--format json|text]
   validate [--commit <sha>]
@@ -626,6 +627,22 @@ function cmdReport(args: string[], ctx: Ctx): number {
   const { flags } = parseFlags(args)
   // Reads go through the shared TrackReader command layer (same path the MCP server uses).
   const reader = new TrackReader(ctx.eventsPath)
+  // Scope §A/§B — `--level <spec|plan|wp|lot|task>` switches to the status(level) projection (additive:
+  // absent ⇒ the unchanged bucket/WP report). requireAccepted/--commit govern the underlying buckets.
+  if (opt(flags, 'level') !== undefined) {
+    io.out(
+      statusText(
+        reader,
+        oneOf(req(flags, 'level'), STATUS_LEVELS, '--level'),
+        {
+          baselineCommit: resolveCommit(io.cwd, opt(flags, 'commit')),
+          requireAccepted: flags['require-accepted'] === true,
+        },
+        fmt(flags),
+      ),
+    )
+    return 0
+  }
   io.out(
     reportText(
       reader,

@@ -55,3 +55,11 @@ export {
   type SchemeId,
   type WsjfInputs,
 } from './priority.js'
+// Scope §B(c) — path-scope verification evidence (the sibling of TestRun).
+export {
+  assertVerificationRun,
+  VERDICTS,
+  type VerificationRecordedPayload,
+  type VerificationRun,
+  type Verdict,
+} from './verification.js'

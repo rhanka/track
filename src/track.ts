@@ -49,6 +49,7 @@ import {
   type Realization,
   type SpecStatus,
 } from './model/item.js'
+import { assertVerificationRun, type VerificationRecordedPayload } from './model/verification.js'
 import { fold, type State } from './state/fold.js'
 
 interface EventPart {
@@ -494,6 +495,29 @@ export class Track {
     run: { commit: string; env: string; runner: string; result: RunResult },
   ): void {
     this.emit('item', this.evidenceOwner(evidenceId), 'acceptance.run', { evidenceId, ...run })
+  }
+
+  /**
+   * Scope §B(c) — record ONE path-scope `VerificationRun` (the path-verdict sibling of `recordRun`).
+   * EVIDENCE-ONLY: emits `scope.verification-recorded`, which folds into `state.verificationRuns` and
+   * touches NO realization/bucket/blocker logic (structural guarantee: a path verdict can NEVER
+   * spawn/advance/complete a TODO). Recorded on the wpRef ITEM aggregate (next seq), or — when wpRef is
+   * absent — on a synthetic, deterministic `verification:<workspace>` aggregate so a workspace-scoped run
+   * has a stable, contiguous-seq home. track NEVER glob-matches: `violations` are recorded VERBATIM as
+   * opaque locators. Binding-gated (Settles:'evidence') + workspace-contained at the ingest seam;
+   * `clientToken` idempotency via `withClientToken`. `workspace` is REQUIRED only for the wpRef-absent
+   * synthetic aggregate; it is ignored when wpRef is present (the item's own workspace governs).
+   */
+  recordVerification(input: VerificationRecordedPayload, opts: { workspace: string }, clientToken?: string): void {
+    const validated = assertVerificationRun(input)
+    if (validated.wpRef !== undefined && !this.state().items.has(validated.wpRef)) {
+      throw new DomainError(`unknown wpRef item ${validated.wpRef}`)
+    }
+    const aggregate: Aggregate = validated.wpRef !== undefined ? 'item' : 'verification'
+    const aggregateId = validated.wpRef ?? `verification:${opts.workspace}`
+    const emit = (): void => this.emit(aggregate, aggregateId, 'scope.verification-recorded', { ...validated })
+    if (clientToken !== undefined) this.withClientToken(clientToken, emit)
+    else emit()
   }
 
   waive(criterionId: string, reason: string): void {

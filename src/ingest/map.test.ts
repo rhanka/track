@@ -40,6 +40,8 @@ describe('mapWorkEvent — valid kinds → normalized {method, settles, args}', 
       { method: 'openBlocker', settles: 'never', args: [{ targetId: 't', kind: 'dependency', ref: 'r', reason: 'x', resolutionRule: 'manual', owner: 'human:a' }] }],
     ['blocker.resolve ⇒ always', ev('blocker.resolve', { blockerId: 'b' }),
       { method: 'resolveBlocker', settles: 'always', args: ['b'] }],
+    ['scope.verification ⇒ evidence (payload passthrough)', ev('scope.verification', { runId: 'vr', runner: 'stp', commit: 'c1', verdict: 'clean' }),
+      { method: 'recordVerification', settles: 'evidence', args: [{ runId: 'vr', runner: 'stp', commit: 'c1', verdict: 'clean' }] }],
   ]
 
   it.each(cases)('%s', (_name, input, expected) => {
@@ -51,7 +53,7 @@ describe('mapWorkEvent — valid kinds → normalized {method, settles, args}', 
 
   it('covers every kind (no kind left unmapped)', () => {
     const covered = new Set(cases.map(([, e]) => e.kind))
-    expect(covered.size).toBe(14)
+    expect(covered.size).toBe(15)
   })
 })
 

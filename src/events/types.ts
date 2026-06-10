@@ -6,7 +6,11 @@ export type Ulid = string
 export type ActorId = string
 export type Sha256 = `sha256:${string}`
 
-export const AGGREGATES = ['item', 'decision', 'blocker'] as const
+// Scope §B(c) — `verification` is an additive EVIDENCE aggregate (the path-verdict sibling of the
+// acceptance evidence on `item`). A workspace-scoped VerificationRun (no wpRef) lands on a synthetic
+// `verification:<workspace>` aggregateId; a wpRef'd run records on the existing `item` aggregate.
+// Additive: absent on every pre-scope event ⇒ zero hash/seq/bucket change for existing aggregates.
+export const AGGREGATES = ['item', 'decision', 'blocker', 'verification'] as const
 export type Aggregate = (typeof AGGREGATES)[number]
 
 export const EVENT_TYPES = [
@@ -34,6 +38,11 @@ export const EVENT_TYPES = [
   // `item.reparent`→`item.reparented` (WorkEvent kind `decision.add-artifact`). Additive: absent on every
   // pre-M5 event ⇒ zero hash/seq/bucket change.
   'decision.artifact-added',
+  // Scope §B(c) — record ONE path-scope VerificationRun (evidence-only; the path verdict NEVER becomes
+  // an item). Past-tense persisted name, mirroring `scope.verification`→`scope.verification-recorded`
+  // (the verb→past-tense convention). Folds into `state.verificationRuns` and touches NO realization/
+  // bucket logic. Additive: absent on every pre-scope event ⇒ zero hash/seq/bucket change.
+  'scope.verification-recorded',
 ] as const
 export type EventType = (typeof EVENT_TYPES)[number]
 

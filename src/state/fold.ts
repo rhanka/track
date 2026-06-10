@@ -25,6 +25,7 @@ import type {
   Realization,
   SpecStatus,
 } from '../model/item.js'
+import type { VerificationRecordedPayload, VerificationRun } from '../model/verification.js'
 
 /**
  * Materialized state (SPEC §2). The fold *mechanism* (replay in stream order, per-aggregate by
@@ -39,6 +40,12 @@ export interface State {
   blockers: Map<BlockerId, BlockerState>
   criteria: Map<string, CriterionState>
   evidence: Map<string, EvidenceState>
+  /**
+   * Scope §B(c) — path-scope verification evidence, keyed by `runId`. An EVIDENCE-ONLY collection: it
+   * is read by a future `scope validate` but is INERT to bucketing/realization (a path verdict can never
+   * spawn/advance/complete a TODO). Latest run per `runId` wins (stream order), like `latestRun`.
+   */
+  verificationRuns: Map<string, VerificationRun>
 }
 
 function emptyState(): State {
@@ -48,6 +55,7 @@ function emptyState(): State {
     blockers: new Map(),
     criteria: new Map(),
     evidence: new Map(),
+    verificationRuns: new Map(),
   }
 }
 
@@ -237,6 +245,24 @@ function applyEvent(state: State, event: TrackEvent): void {
           at: event.at,
         }
       }
+      break
+    }
+
+    case 'scope.verification-recorded': {
+      // Scope §B(c) — append path-verdict EVIDENCE keyed by runId. Touches NO realization/bucket/blocker
+      // logic (structural guarantee: a path verdict can never spawn/advance/complete a TODO). The
+      // offending paths are recorded VERBATIM (opaque locators); track never re-matches them.
+      const payload = event.payload as unknown as VerificationRecordedPayload
+      state.verificationRuns.set(payload.runId, {
+        runId: payload.runId,
+        runner: payload.runner,
+        commit: payload.commit,
+        verdict: payload.verdict,
+        at: event.at,
+        ...(payload.env !== undefined ? { env: payload.env } : {}),
+        ...(payload.wpRef !== undefined ? { wpRef: payload.wpRef } : {}),
+        ...(payload.violations !== undefined ? { violations: payload.violations } : {}),
+      })
       break
     }
 

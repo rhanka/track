@@ -25,6 +25,7 @@ describe('WorkEvent contract surface', () => {
       'blocker.raise',
       'blocker.resolve',
       'blocker.resolve-external',
+      'scope.verification',
     ])
   })
 
@@ -77,6 +78,7 @@ describe('WorkEvent contract surface', () => {
       'blocker.raise': { method: 'openBlocker', settles: 'never', required: ['kind', 'targetId'] },
       'blocker.resolve': { method: 'resolveBlocker', settles: 'always', required: ['blockerId'] },
       'blocker.resolve-external': { method: 'resolveExternalDependency', settles: 'always', required: ['engagementRef'] },
+      'scope.verification': { method: 'recordVerification', settles: 'evidence', required: ['commit', 'runId', 'runner', 'verdict'] },
     })
   })
 })

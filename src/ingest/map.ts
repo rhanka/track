@@ -189,6 +189,12 @@ export function mapWorkEvent(ev: WorkEvent): MappedCommand {
       // from the channel context (containment), not the WorkEvent.
       args = [p['engagementRef']]
       break
+    case 'scope.verification':
+      // recordVerification(payload, {workspace}, clientToken?) — the validated payload IS the run shape;
+      // the workspace pin (for the wpRef-absent synthetic aggregate) is supplied by `ingest` from the
+      // channel context, and clientToken is threaded via withClientToken (not an arg). Scope §B(c).
+      args = [{ ...p }]
+      break
   }
 
   return { kind, method, settles, payload: p, args, ...(clientToken !== undefined ? { clientToken } : {}) }

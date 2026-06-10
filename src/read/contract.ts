@@ -14,7 +14,9 @@ import { EventStore } from '../events/store.js'
 import type { Sha256, TrackEvent } from '../events/types.js'
 import { validate, type IntegrityResult } from '../events/validate.js'
 import type { ItemId } from '../model/item.js'
+import type { VerificationRun } from '../model/verification.js'
 import { bucketOf } from '../report/buckets.js'
+import { statusByLevel, type StatusGroup, type StatusLevel } from '../report/status-by-level.js'
 import { effectiveOpenBlockersForItem } from '../report/blocker-status.js'
 import {
   buildReport,
@@ -33,7 +35,7 @@ import { fold } from '../state/fold.js'
  * shapes it returns may only GROW (new methods / new optional fields); nothing is removed or
  * repurposed without a major bump. Consumers gate on `reader.contractVersion`.
  */
-export const READ_CONTRACT_VERSION = '1.4.0' // +workspaceActivity() poll surface (h2a conductor-launch gating, additive)
+export const READ_CONTRACT_VERSION = '1.5.0' // +verificationRuns() evidence read + statusByLevel() projection (Scope §A/§B, additive)
 
 /** Provenance of the last `branch.imported` for a locator (drawn from the raw event log). */
 export interface BranchProvenance {
@@ -146,6 +148,18 @@ export class TrackReader {
     return runQuery(fold(this.events()), filter, options)
   }
 
+  /**
+   * Scope §A/§B — `status(level)` projection (spec|plan|wp|lot|task). Additive read-only generalization
+   * of `computeWpTree`+`bucketOf`; adds no aggregate, no stored status axis. `requireAccepted` (default
+   * false) and `baselineCommit` govern the underlying leaf buckets exactly as in `report`.
+   */
+  statusByLevel(level: StatusLevel, options: ReportOptions): StatusGroup[] {
+    return statusByLevel(fold(this.events()), level, {
+      baselineCommit: options.baselineCommit,
+      requireAccepted: options.requireAccepted ?? false,
+    })
+  }
+
   /** Recompute the integrity chain (SPEC §3) — pure detector, never repairs. */
   validate(): IntegrityResult {
     return validate(this.events(), readHead(this.eventsPath))
@@ -165,6 +179,18 @@ export class TrackReader {
       }
     }
     return out
+  }
+
+  /**
+   * Scope §B(c) — the recorded path-scope VerificationRuns (the read surface a future `scope validate`
+   * reads, never recomputes). EVIDENCE-ONLY: each is the latest-per-runId verdict folded from the log;
+   * track NEVER glob-matches — `violations` are the harness's verbatim offending paths. `wpRef` filters
+   * to one WP/phase; absent ⇒ all runs (workspace-scoped + wpRef'd). Sorted by `at` then `runId`.
+   */
+  verificationRuns(wpRef?: ItemId): VerificationRun[] {
+    const runs = [...fold(this.events()).verificationRuns.values()]
+    const filtered = wpRef !== undefined ? runs.filter((r) => r.wpRef === wpRef) : runs
+    return filtered.sort((a, b) => a.at.localeCompare(b.at) || a.runId.localeCompare(b.runId))
   }
 
   /**

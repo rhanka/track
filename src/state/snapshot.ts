@@ -6,6 +6,7 @@ import type { CriterionState, EvidenceState } from '../model/acceptance.js'
 import type { BlockerState } from '../model/blocker.js'
 import type { DecisionState } from '../model/decision.js'
 import type { ItemState } from '../model/item.js'
+import type { VerificationRun } from '../model/verification.js'
 import { fold, type State } from './fold.js'
 
 /**
@@ -19,6 +20,7 @@ export interface SerializedState {
   blockers: BlockerState[]
   criteria: CriterionState[]
   evidence: EvidenceState[]
+  verificationRuns?: VerificationRun[] // Scope §B(c) — additive; absent in older snapshots (rebuildable)
 }
 
 export interface Snapshot {
@@ -34,6 +36,7 @@ export function serializeState(state: State): SerializedState {
     blockers: [...state.blockers.values()].map((b) => structuredClone(b)),
     criteria: [...state.criteria.values()].map((c) => structuredClone(c)),
     evidence: [...state.evidence.values()].map((e) => structuredClone(e)),
+    verificationRuns: [...state.verificationRuns.values()].map((v) => structuredClone(v)),
   }
 }
 
@@ -46,6 +49,7 @@ export function deserializeState(serialized: Partial<SerializedState>): State {
     blockers: new Map((serialized.blockers ?? []).map((b) => [b.id, b])),
     criteria: new Map((serialized.criteria ?? []).map((c) => [c.id, c])),
     evidence: new Map((serialized.evidence ?? []).map((e) => [e.id, e])),
+    verificationRuns: new Map((serialized.verificationRuns ?? []).map((v) => [v.runId, v])),
   }
 }
 

@@ -19,6 +19,14 @@ export {
   type WpTotals,
 } from './format.js'
 // Workpackages §2 — the %-by-WP rollup forest (pure).
-export { computeWpTree, type WpLeaf, type WpNode } from './rollup.js'
+export { computeWpTree, tally, type WpLeaf, type WpNode } from './rollup.js'
+// Scope §A/§B — status(level) projection (spec|plan|wp|lot|task), additive read-only.
+export {
+  statusByLevel,
+  STATUS_LEVELS,
+  type GroupStatus,
+  type StatusGroup,
+  type StatusLevel,
+} from './status-by-level.js'
 // Commit-relative blocker openness (v2.2a hybrid-A) — `linked-accepted` derived at projection time.
 export { effectiveBlockerOpen, effectiveOpenBlockersForItem } from './blocker-status.js'

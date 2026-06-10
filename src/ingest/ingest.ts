@@ -15,6 +15,7 @@ import type { Disposition, Gate, ItemId, Realization, SpecStatus } from '../mode
 import type { ItemCreatedPayload } from '../model/item.js'
 import type { DecisionCreatedPayload } from '../model/decision.js'
 import type { WsjfInputs } from '../model/priority.js'
+import type { VerificationRecordedPayload } from '../model/verification.js'
 import type { ActorId, Provenance, TrackEvent, Ulid } from '../events/types.js'
 import type { EventStore } from '../events/store.js'
 import type { State } from '../state/fold.js'
@@ -109,6 +110,14 @@ function resolveWorkspace(cmd: MappedCommand, state: State): { create: boolean; 
       // Containment is enforced INSIDE resolveExternalDependency (it filters to the channel workspace) —
       // this kind affects N blockers, not one resolvable target, so there is no single workspace to gate here.
       return { create: false, workspace: undefined }
+    case 'scope.verification': {
+      // Scope §B(c). A wpRef'd run mutates the wpRef ITEM aggregate ⇒ contained by the item's workspace
+      // (a W-pinned channel can't record for a V wpRef). A wpRef-absent run lands on the synthetic
+      // `verification:<ctx.workspace>` aggregate, built FROM the channel workspace in applyCommand — it
+      // can never name a foreign workspace, so there is nothing to gate here (like blocker.resolve-external).
+      const wpRef = p['wpRef']
+      return { create: false, workspace: wpRef !== undefined ? item(wpRef) : undefined }
+    }
   }
 }
 
@@ -222,6 +231,11 @@ function applyCommand(track: Track, cmd: MappedCommand, ctx: IngestContext): str
       // The channel workspace pins resolution to this workspace's deps (containment, required by type).
       track.resolveExternalDependency(a[0] as string, { workspace: ctx.workspace })
       return undefined
+    case 'scope.verification':
+      // recordVerification(payload, {workspace}) — the channel workspace pins the synthetic aggregate for a
+      // wpRef-absent run; clientToken is already in scope via withClientToken (do not double-pass). Scope §B(c).
+      track.recordVerification(a[0] as VerificationRecordedPayload, { workspace: ctx.workspace })
+      return undefined
   }
 }
 
@@ -252,6 +266,11 @@ function eventWorkspace(e: TrackEvent, state: State): string | undefined {
       const b = state.blockers.get(e.aggregateId)
       return b ? state.items.get(b.targetId)?.workspace : undefined
     }
+    case 'verification':
+      // Scope §B(c) — a wpRef-absent run lands on the synthetic `verification:<workspace>` aggregateId, so
+      // the workspace is the suffix; a wpRef'd run uses the item aggregate (handled by case 'item' above,
+      // never here). Parsing the suffix scopes the token namespace correctly (per-workspace idempotency).
+      return e.aggregateId.startsWith('verification:') ? e.aggregateId.slice('verification:'.length) : undefined
   }
 }
 

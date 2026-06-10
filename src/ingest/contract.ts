@@ -21,6 +21,7 @@ export const EVIDENCE_KINDS = ['unit', 'integration', 'e2e', 'manual'] as const
 export const RESULTS = ['pass', 'fail'] as const
 export const BLOCKER_SCOPES = ['intra', 'extra'] as const // Lot A — dependency blocker scope
 export const ITEM_ROLES = ['workpackage'] as const // Workpackages §2 — additive container marker
+export const VERDICTS = ['clean', 'violation', 'conditional'] as const // Scope §B(c) — path verdict
 
 // --- kinds -------------------------------------------------------------------------------------------
 export const WORK_EVENT_KINDS = [
@@ -41,6 +42,7 @@ export const WORK_EVENT_KINDS = [
   'blocker.raise',
   'blocker.resolve',
   'blocker.resolve-external',
+  'scope.verification', // Scope §B(c) — record a path-scope VerificationRun (evidence-only)
 ] as const
 export type WorkEventKind = (typeof WORK_EVENT_KINDS)[number]
 
@@ -233,5 +235,22 @@ export const WORK_EVENT_SCHEMA: Record<WorkEventKind, KindSchema> = {
     method: 'resolveExternalDependency',
     settles: 'always', // a settling write — the bridge channel must be authenticated (signed/local-user)
     fields: { engagementRef: str(true) },
+  },
+  'scope.verification': {
+    // Scope §B(c) — record ONE path-scope VerificationRun (evidence-only). `Settles:'evidence'` ⇒ DENIED
+    // on an unauthenticated channel (like acceptance.run); a signed/local-user channel (the harness/bridge)
+    // admits it. The flat FieldSpec checks presence/type/enum; the verdict enum + `violations` element
+    // types are re-asserted fail-closed in the facade (assertVerificationRun). track NEVER glob-matches.
+    method: 'recordVerification',
+    settles: 'evidence',
+    fields: {
+      runId: str(true),
+      runner: str(true),
+      commit: str(true),
+      verdict: str(true, VERDICTS),
+      env: str(false),
+      wpRef: str(false),
+      violations: { type: 'string[]', required: false },
+    },
   },
 }

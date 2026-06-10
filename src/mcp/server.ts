@@ -12,7 +12,7 @@ import { Server } from '@modelcontextprotocol/sdk/server/index.js'
 import { CallToolRequestSchema, ListToolsRequestSchema } from '@modelcontextprotocol/sdk/types.js'
 
 import { resolveTrackDirOrNull, type ResolveOptions } from '../cli/resolve.js'
-import { queryText, reportText } from '../read/commands.js'
+import { queryText, reportText, statusText } from '../read/commands.js'
 import { TrackReader } from '../read/contract.js'
 import type { QueryFilter, ReportOptions } from '../report/build.js'
 import { VERSION } from '../version.js'
@@ -23,6 +23,7 @@ const ROLES = ['workpackage'] as const // Workpackages §2 — container marker 
 const BUCKETS = ['AWAITED', 'DROPPED', 'DONE', 'TO-DO'] as const
 const REALIZATIONS = ['to-do', 'in-progress', 'done', 'cancelled', 'rejected'] as const
 const ACCEPTANCES = ['pass', 'fail', 'unknown', 'stale', 'waived'] as const
+const LEVELS = ['spec', 'plan', 'wp', 'lot', 'task'] as const // Scope §A/§B — status(level) tiers
 
 /** Read-only tools, declared as plain JSON Schema (no zod) — the curated read contract over MCP. */
 export const READ_TOOLS = [
@@ -83,6 +84,27 @@ export const READ_TOOLS = [
     name: 'track_external_deps',
     description: 'Open external (scope:extra) dependencies awaiting an h2a ENGAGEMENT, as JSON [{blockerId, targetId, engagementRef, openedAt}]. What an h2a bridge watches to resolve when an engagement settles.',
     inputSchema: { type: 'object', properties: {} },
+  },
+  {
+    name: 'track_status',
+    description: 'status(level) projection (Scope §A/§B): rolls leaf buckets up to a scope tier {spec|plan|wp|lot|task}, as JSON {level, groups:[{id,title,label,depth,status,done,active,dropped,pct}]}. wp ≡ the computeWpTree forest; task = leaf buckets; lot|plan|spec = the same rollup over WP-nesting tiers (SUM not mean; dropped excluded; 0/0⇒n/a). Read-only.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        level: { type: 'string', enum: LEVELS, description: 'The scope tier to roll up to.' },
+        baselineCommit: { type: 'string', description: 'Commit AWAITED/acceptance are evaluated against.' },
+        requireAccepted: { type: 'boolean', description: 'A done leaf counts as DONE only if acceptance=pass.' },
+      },
+      required: ['level', 'baselineCommit'],
+    },
+  },
+  {
+    name: 'track_verification_runs',
+    description: 'Recorded path-scope VerificationRuns (Scope §B(c)) — the EVIDENCE a future `scope validate` reads, as JSON [{runId,runner,commit,env?,verdict,wpRef?,violations?,at}]. EVIDENCE-ONLY: a path verdict never becomes an item. `violations` are the harness verbatim offending paths (track never glob-matches). Optional `wpRef` filters to one WP/phase.',
+    inputSchema: {
+      type: 'object',
+      properties: { wpRef: { type: 'string', description: 'Filter to runs for this WP/phase item id.' } },
+    },
   },
   {
     name: 'track_workspace_activity',
@@ -174,6 +196,20 @@ export function dispatchReadTool(
       const acceptance = optEnum(args, 'acceptance', ACCEPTANCES)
       if (acceptance !== undefined) filter.acceptance = acceptance
       return queryText(reader, filter, { baselineCommit: reqStr(args, 'baselineCommit') }, 'json')
+    }
+    case 'track_status': {
+      const level = optEnum(args, 'level', LEVELS)
+      if (level === undefined) throw new Error('tool argument "level" must be one of: ' + LEVELS.join(', '))
+      return statusText(
+        reader,
+        level,
+        { baselineCommit: reqStr(args, 'baselineCommit'), requireAccepted: optBool(args, 'requireAccepted') ?? false },
+        'json',
+      )
+    }
+    case 'track_verification_runs': {
+      const wpRef = optStr(args, 'wpRef')
+      return JSON.stringify(reader.verificationRuns(wpRef), null, 2)
     }
     case 'track_validate':
       return JSON.stringify(reader.validate(), null, 2)

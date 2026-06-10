@@ -2,6 +2,26 @@
 
 All notable changes to `@sentropic/track`. Format loosely follows [Keep a Changelog](https://keepachangelog.com); this package is pre-1.0 (the **event contract** is frozen, but the library/CLI surface may still evolve additively).
 
+## [0.11.0] — Shared trunk: VerificationRun ingestion + `status(level)` (harness seam + scope)
+
+### Added
+- **VerificationRun ingestion (evidence-only).** `scope.verification` WorkEvent → `scope.verification-recorded`
+  event (`Settles:'evidence'` ⇒ signed/local-user channel = the harness/bridge); folds into a
+  `verificationRuns` collection and **touches NO realization/bucket logic** — a path verdict can never spawn,
+  advance, or complete an item (structural; tested). `violations` recorded verbatim (opaque locators; track
+  never re-does glob-matching). `Track.recordVerification`, `TrackReader.verificationRuns()`, MCP
+  `track_verification_runs`. Workspace-contained + `clientToken`-idempotent via the existing ingest gates.
+- **`status(level)` projection** (`report --level spec|plan|wp|lot|task`, `TrackReader.statusByLevel`, MCP
+  `track_status`) — generalizes the WP rollup to named tiers (parity with `computeWpTree` at `wp`/`task`;
+  lot/plan/spec = parentId-depth tiers). SUM-not-mean, dropped excluded, `0/0⇒n/a`. Read-only; does NOT promote
+  WorkPackage to a first-class aggregate.
+
+### Notes
+- The **shared trunk** for the harness→track seam + scope-ownership (specs:
+  `docs/plan/harness-seam-and-scope-DESIGN.md`, pair-converged). Additive: a new `'verification'` aggregate +
+  `scope.verification-recorded` event are absent on all existing aggregates ⇒ zero hash/seq/bucket change on
+  old logs. `READ_CONTRACT_VERSION` 1.4.0 → 1.5.0. 485 tests.
+
 ## [0.10.11] — `track workspace-activity` CLI verb (h2a poll surface)
 
 ### Added

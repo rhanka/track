@@ -50,6 +50,28 @@ function isWp(item: ItemState): boolean {
 }
 
 /**
+ * Tally leaf buckets into done/active/dropped counts (the % numerator/denominator). DONE counts in both
+ * done and active; TO-DO/AWAITED count active only; DROPPED is shown but EXCLUDED from the denominator.
+ * Exported so `statusByLevel` rolls up tiers with the SAME arithmetic (no Simpson mean-of-pcts trap).
+ */
+export function tally(leaves: readonly WpLeaf[]): { done: number; active: number; dropped: number } {
+  let done = 0
+  let active = 0
+  let dropped = 0
+  for (const l of leaves) {
+    if (l.bucket === 'DONE') {
+      done++
+      active++
+    } else if (l.bucket === 'TO-DO' || l.bucket === 'AWAITED') {
+      active++
+    } else {
+      dropped++ // DROPPED — shown, excluded from %
+    }
+  }
+  return { done, active, dropped }
+}
+
+/**
  * Build the WP forest and roll leaf buckets up. A WP's transitive NON-WP descendants are its leaves;
  * a nested WP is a sub-node, not a leaf, so its leaves count once at every ancestor (SUM, not mean).
  */
@@ -64,23 +86,6 @@ export function computeWpTree(state: State, config: ReportConfig): WpNode[] {
     childrenOf.set(key, list)
   }
   for (const list of childrenOf.values()) list.sort((a, b) => a.id.localeCompare(b.id))
-
-  const tally = (leaves: readonly WpLeaf[]): { done: number; active: number; dropped: number } => {
-    let done = 0
-    let active = 0
-    let dropped = 0
-    for (const l of leaves) {
-      if (l.bucket === 'DONE') {
-        done++
-        active++
-      } else if (l.bucket === 'TO-DO' || l.bucket === 'AWAITED') {
-        active++
-      } else {
-        dropped++ // DROPPED — shown, excluded from %
-      }
-    }
-    return { done, active, dropped }
-  }
 
   // Collect every NON-WP leaf descendant of `node`, but STOP at a nested sub-WP boundary (those leaves
   // belong to the sub-WP's own node). A non-WP container (e.g. a feature with chore children) is descended

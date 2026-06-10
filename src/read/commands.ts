@@ -5,6 +5,7 @@
 
 import { formatReport, formatRows, formatWpConductor, wpTotals, type Format } from '../report/format.js'
 import type { QueryFilter, ReportOptions } from '../report/build.js'
+import type { StatusLevel } from '../report/status-by-level.js'
 import type { TrackReader } from './contract.js'
 
 /**
@@ -29,6 +30,29 @@ export function reportText(reader: TrackReader, options: ReportOptions, format: 
   }
 
   return formatReport(report, format)
+}
+
+/**
+ * `report --level <spec|plan|wp|lot|task>` rendered (Scope §A/§B). `json` carries the structured status
+ * groups; `text`/`md` render a one-line-per-group `done/active (pct) STATUS label — title` table. Pure
+ * read over the shared `TrackReader.statusByLevel` (same path the MCP surface uses).
+ */
+export function statusText(
+  reader: TrackReader,
+  level: StatusLevel,
+  options: ReportOptions,
+  format: Format,
+): string {
+  const groups = reader.statusByLevel(level, options)
+  if (format === 'json') return `${JSON.stringify({ level, groups }, null, 2)}\n`
+  const head = `# status — level: ${level}\n`
+  const body = groups
+    .map((g) => {
+      const pct = g.pct === 'n/a' ? 'n/a' : `${g.pct}%`
+      return `${g.label}  ${g.done}/${g.active} (${pct})  ${g.status}${g.dropped > 0 ? ` [${g.dropped} dropped]` : ''} — ${g.title}`
+    })
+    .join('\n')
+  return `${head}${body}${groups.length > 0 ? '\n' : ''}`
 }
 
 /** `query` rendered exactly as the CLI renders it: raw JSON for `json`, else the row formatter. */
