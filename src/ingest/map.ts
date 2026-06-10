@@ -56,6 +56,9 @@ function checkType(kind: WorkEventKind, field: string, spec: FieldSpec, v: unkno
     case 'object':
       if (!isPlainObject(v)) bad('an object')
       return
+    case 'object[]':
+      if (!Array.isArray(v) || !v.every((x) => isPlainObject(x))) bad('an object[]')
+      return
   }
 }
 
@@ -200,6 +203,12 @@ export function mapWorkEvent(ev: WorkEvent): MappedCommand {
       // shape is re-asserted in the facade (assertScopeDecl); clientToken is threaded via withClientToken
       // (not an arg). Scope §B(a).
       args = [p['itemId'], p['scope']]
+      break
+    case 'item.spec-amend':
+      // amendSpec(itemId, amend, clientToken?) — the validated payload IS the amendment shape; its JsonPatch
+      // + baseHash/resultHash are re-asserted (assertSpecAmend) and recorded VERBATIM in the facade.
+      // clientToken is threaded via withClientToken (not an arg). M5 (canevas).
+      args = [p['itemId'], { ...p }]
       break
   }
 

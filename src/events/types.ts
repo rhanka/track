@@ -48,6 +48,12 @@ export const EVENT_TYPES = [
   // `scope.verification-recorded` (WorkEvent kind `scope.declare`). Folds `item.scope`; touches NO
   // realization/bucket logic. Additive: absent on every pre-scope event ⇒ zero hash/seq/bucket change.
   'scope.declared',
+  // M5 (canevas) — record ONE owner-approved LIVE spec amendment (a verbatim JsonPatch + opaque
+  // baseHash/resultHash integrity tags) on the EXISTING item aggregate (next seq, no recreate). Past-tense
+  // persisted name, mirroring `item.reparent`→`item.reparented` (WorkEvent kind `item.spec-amend`). Folds
+  // into `state.specAmendments` (record-only; mutates NO spec field destructively — the trace IS the value);
+  // touches NO realization/bucket logic. Additive: absent on every pre-M5 event ⇒ zero hash/seq/bucket change.
+  'spec.amended',
 ] as const
 export type EventType = (typeof EVENT_TYPES)[number]
 

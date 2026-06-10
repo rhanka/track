@@ -53,6 +53,7 @@ import {
   type SpecStatus,
 } from './model/item.js'
 import { assertVerificationRun, type VerificationRecordedPayload } from './model/verification.js'
+import { assertSpecAmend, type SpecAmendPayload } from './model/spec-amend.js'
 import { fold, type State } from './state/fold.js'
 
 interface EventPart {
@@ -214,6 +215,26 @@ export class Track {
     }
     const validated = assertScopeDecl(scope)
     const emit = (): void => this.emit('item', itemId, 'scope.declared', { scope: validated })
+    if (clientToken !== undefined) this.withClientToken(clientToken, emit)
+    else emit()
+  }
+
+  /**
+   * M5 (canevas) — record ONE owner-approved LIVE spec amendment on the EXISTING item aggregate (next
+   * seq, no recreate; existing hashes untouched), mirroring `item.reparent`→`item.reparented`. Appends
+   * `spec.amended`, which folds into `state.specAmendments[itemId]` (RECORD-ONLY: mutates NO spec field
+   * destructively — the amendment trace IS the value). The JsonPatch is recorded VERBATIM: track does NOT
+   * apply/validate the patch semantics — `baseHash`/`resultHash` are OPAQUE integrity tags (the spec
+   * document lives in the host LiveDocument). Guard (reject with DomainError BEFORE any append): the item
+   * exists. The payload shape is validated fail-closed (`assertSpecAmend`). An AI proposal carries
+   * `prov.proposed:true` + a `proposalRef`; a human/signed amend referencing the same `proposalRef` records
+   * ACCEPTANCE WITHOUT laundering the machine origin (both events stay in the `amendmentTrace`). Binding-
+   * gated (Settles:'always') + workspace-contained at the ingest seam; `clientToken` via `withClientToken`.
+   */
+  amendSpec(itemId: ItemId, amend: SpecAmendPayload, clientToken?: string): void {
+    if (!this.state().items.has(itemId)) throw new DomainError(`unknown item ${itemId}`)
+    const validated = assertSpecAmend({ ...amend, itemId })
+    const emit = (): void => this.emit('item', itemId, 'spec.amended', { ...validated })
     if (clientToken !== undefined) this.withClientToken(clientToken, emit)
     else emit()
   }

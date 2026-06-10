@@ -123,6 +123,34 @@ export const READ_TOOLS = [
     },
   },
   {
+    name: 'track_cursor',
+    description: 'M5 (canevas) — a cheap change cursor over the log tail, as JSON {head, count}. `head` = the log-tail event contentHash (null when empty); `count` = the event count. O(tail). The host\'s liveness primitive: poll this, re-read track_canevas / track_amendment_trace when it moves. Read-only.',
+    inputSchema: { type: 'object', properties: {} },
+  },
+  {
+    name: 'track_canevas',
+    description: 'M5 (canevas) — the materialized canevas for ONE workspace, as JSON {workspace, report, prov, affordances, dossier?}. report = the bucketed report + WP rollup forest (workspace-scoped); prov = per-aggregate latest-write provenance lineage {origin:human|machine, …}; affordances = per-aggregate legal next WorkEvent kinds (open-action affordances). With `decisionId`, also includes the full decision dossier. PURE (no clock, no socket — the host owns liveness).',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        workspace: { type: 'string', description: 'The workspace to materialize the canevas for.' },
+        baselineCommit: { type: 'string', description: 'Commit AWAITED/acceptance are evaluated against.' },
+        requireAccepted: { type: 'boolean', description: 'A done leaf counts as DONE only if acceptance=pass.' },
+        decisionId: { type: 'string', description: 'Optional decision id — includes its full dossier (context/options/qa/outcome/artifacts).' },
+      },
+      required: ['workspace', 'baselineCommit'],
+    },
+  },
+  {
+    name: 'track_amendment_trace',
+    description: 'M5 (canevas) — the human/machine diff for ONE aggregate, as JSON [{seq, at, by, kind, prov, origin, summary?, patchRef?, proposalRef?}]. An ordered (by seq), prov-tagged projection over the aggregate\'s spec.amended / dossier.revised / decision.artifact-added / decision.outcome events. `origin` derives PURELY from prov.proposed (true=machine, false=human). An AI proposal + a human acceptance both appear — the machine origin is never laundered. PURE replay.',
+    inputSchema: {
+      type: 'object',
+      properties: { aggregateId: { type: 'string', description: 'The item/decision aggregate id to trace.' } },
+      required: ['aggregateId'],
+    },
+  },
+  {
     name: 'track_workspace_activity',
     description: 'Poll-able activity signal for ONE workspace (h2a conductor-launch gating), as JSON {workspace, pending, stalled[], latestEventAt?}. PURE: the caller supplies `now` (and optional `idleMs`, default 24h) — track holds no clock. `pending` = TO-DO+AWAITED count; `stalled` = items/decisions durably stuck (awaited-open-blocker | pending-decision | in-progress-idle | todo-idle).',
     inputSchema: {
@@ -245,6 +273,23 @@ export function dispatchReadTool(
         2,
       )
     }
+    case 'track_cursor':
+      return JSON.stringify(reader.cursor(), null, 2)
+    case 'track_canevas': {
+      const requireAccepted = optBool(args, 'requireAccepted')
+      const decisionId = optStr(args, 'decisionId')
+      return JSON.stringify(
+        reader.canevas(reqStr(args, 'workspace'), {
+          baselineCommit: reqStr(args, 'baselineCommit'),
+          ...(requireAccepted !== undefined ? { requireAccepted } : {}),
+          ...(decisionId !== undefined ? { decisionId } : {}),
+        }),
+        null,
+        2,
+      )
+    }
+    case 'track_amendment_trace':
+      return JSON.stringify(reader.amendmentTrace(reqStr(args, 'aggregateId')), null, 2)
     case 'track_validate':
       return JSON.stringify(reader.validate(), null, 2)
     case 'track_external_deps':

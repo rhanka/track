@@ -68,3 +68,11 @@ export {
   type VerificationRun,
   type Verdict,
 } from './verification.js'
+// M5 (canevas) — the live spec-amendment write kind (item.spec-amend → spec.amended).
+export {
+  assertSpecAmend,
+  type JsonPatch,
+  type JsonPatchOp,
+  type SpecAmendment,
+  type SpecAmendPayload,
+} from './spec-amend.js'

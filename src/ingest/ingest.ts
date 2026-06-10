@@ -16,6 +16,7 @@ import type { ItemCreatedPayload } from '../model/item.js'
 import type { DecisionCreatedPayload } from '../model/decision.js'
 import type { WsjfInputs } from '../model/priority.js'
 import type { VerificationRecordedPayload } from '../model/verification.js'
+import type { SpecAmendPayload } from '../model/spec-amend.js'
 import type { ActorId, Provenance, TrackEvent, Ulid } from '../events/types.js'
 import type { EventStore } from '../events/store.js'
 import type { State } from '../state/fold.js'
@@ -88,6 +89,10 @@ function resolveWorkspace(cmd: MappedCommand, state: State): { create: boolean; 
     case 'scope.declare':
       // Scope §B(a) — declareScope mutates the named item aggregate; contained by the item's workspace
       // (a W-pinned channel can't declare scope on a V item). Resolved from folded state.
+      return { create: false, workspace: item(p['itemId']) }
+    case 'item.spec-amend':
+      // M5 (canevas) — amendSpec mutates the named item aggregate; contained by the item's workspace
+      // (a W-pinned channel can't amend a V item's spec). Resolved from folded state.
       return { create: false, workspace: item(p['itemId']) }
     case 'decision.outcome':
     case 'decision.dossier':
@@ -243,6 +248,12 @@ function applyCommand(track: Track, cmd: MappedCommand, ctx: IngestContext): str
       // declareScope(itemId, scope) — the clientToken is already in scope via withClientToken (do not
       // double-pass); the ScopeDecl shape is re-asserted in the facade (assertScopeDecl). Scope §B(a).
       track.declareScope(a[0] as ItemId, a[1] as ScopeDecl)
+      return undefined
+    case 'item.spec-amend':
+      // amendSpec(itemId, amend) — the clientToken is already in scope via withClientToken (do not
+      // double-pass); the JsonPatch + baseHash/resultHash shape is re-asserted in the facade
+      // (assertSpecAmend) and recorded VERBATIM. M5 (canevas).
+      track.amendSpec(a[0] as ItemId, a[1] as SpecAmendPayload)
       return undefined
   }
 }

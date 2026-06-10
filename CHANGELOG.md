@@ -2,6 +2,27 @@
 
 All notable changes to `@sentropic/track`. Format loosely follows [Keep a Changelog](https://keepachangelog.com); this package is pre-1.0 (the **event contract** is frozen, but the library/CLI surface may still evolve additively).
 
+## [0.11.2] — M5 canevas (track-side): live reads + `item.spec-amend`
+
+### Added
+- **Three additive canevas reads (pure, no clock/socket).** `TrackReader.cursor()` → `{head, count}` (log-tail
+  hash — the host's liveness primitive) + `changesSince(cursor)`; `TrackReader.canevas(workspace,
+  {baselineCommit, decisionId?})` → the materialized report+WP-rollup (+ full dossier when `decisionId` given)
+  joined with per-aggregate `prov` lineage (`origin: human|machine` from `prov.proposed`) + open-action
+  affordances; `TrackReader.amendmentTrace(aggregateId)` → an ordered prov-tagged human/machine diff
+  projection over `spec.amended`/`dossier.revised`/`decision.artifact-added`/`decision.outcome` (zero new event
+  data). MCP `track_cursor` / `track_canevas` / `track_amendment_trace` (read-only).
+- **`item.spec-amend` WorkEvent → `spec.amended` event** — live spec amendment on the existing item aggregate
+  (next seq, no recreate): `{itemId, decisionId?, liveDocRef?, baseHash, patch: JsonPatch, resultHash,
+  proposalRef?, summary?}`. Record-only (the JsonPatch is stored verbatim; **no spec field is mutated** — the
+  amendment *trace* is the value). Binding-gated, `clientToken`-idempotent, workspace-contained. An AI proposal
+  (`prov.proposed:true`, `proposalRef`) and a human acceptance both stay in the trace — **the machine origin is
+  never laundered away**. CLI `item spec-amend`.
+
+### Notes
+- track's half of M5 (the sentropic canevas host is co-design / D5, not here). Additive: new event kind, old
+  logs byte-identical; `READ_CONTRACT_VERSION` 1.6.0 → 1.7.0. 564 tests.
+
 ## [0.11.1] — Scope branch: declarative scope state (a) + `track scope validate` (b)
 
 ### Added

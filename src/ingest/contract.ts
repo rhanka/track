@@ -44,6 +44,7 @@ export const WORK_EVENT_KINDS = [
   'blocker.resolve-external',
   'scope.verification', // Scope §B(c) — record a path-scope VerificationRun (evidence-only)
   'scope.declare', // Scope §B(a) — declare INERT path-scope globs on a WP/spec-phase
+  'item.spec-amend', // M5 (canevas) — record a LIVE spec amendment (verbatim JsonPatch) on an item
 ] as const
 export type WorkEventKind = (typeof WORK_EVENT_KINDS)[number]
 
@@ -67,7 +68,7 @@ export interface WorkEvent {
 export const WORK_EVENT_ENVELOPE_KEYS = ['v', 'kind', 'payload', 'clientToken'] as const
 
 // --- per-kind payload schema -------------------------------------------------------------------------
-export type FieldType = 'string' | 'number' | 'string[]' | 'object'
+export type FieldType = 'string' | 'number' | 'string[]' | 'object' | 'object[]'
 
 export interface FieldSpec {
   type: FieldType
@@ -263,5 +264,24 @@ export const WORK_EVENT_SCHEMA: Record<WorkEventKind, KindSchema> = {
     method: 'declareScope',
     settles: 'always',
     fields: { itemId: str(true), scope: { type: 'object', required: true } },
+  },
+  'item.spec-amend': {
+    // M5 (canevas) — record ONE owner-approved LIVE spec amendment. Binding (`always`): an amendment to the
+    // spec is trust-sensitive ⇒ requires auth ∈ {local-user, signed}. The `patch` JsonPatch SHAPE (an array
+    // of `{op,path,…}`) is re-asserted fail-closed in the facade (assertSpecAmend); the flat FieldSpec only
+    // checks `patch` is an object/array, `baseHash`/`resultHash` present. track records the patch VERBATIM,
+    // NEVER applies/validates the patch semantics — baseHash/resultHash are opaque integrity tags.
+    method: 'amendSpec',
+    settles: 'always',
+    fields: {
+      itemId: str(true),
+      baseHash: str(true),
+      patch: { type: 'object[]', required: true }, // a JsonPatch — an array of `{op,path,…}` ops
+      resultHash: str(true),
+      decisionId: str(false),
+      liveDocRef: str(false),
+      proposalRef: str(false),
+      summary: str(false),
+    },
   },
 }

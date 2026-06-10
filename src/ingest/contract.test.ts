@@ -27,6 +27,7 @@ describe('WorkEvent contract surface', () => {
       'blocker.resolve-external',
       'scope.verification',
       'scope.declare',
+      'item.spec-amend',
     ])
   })
 
@@ -81,6 +82,7 @@ describe('WorkEvent contract surface', () => {
       'blocker.resolve-external': { method: 'resolveExternalDependency', settles: 'always', required: ['engagementRef'] },
       'scope.verification': { method: 'recordVerification', settles: 'evidence', required: ['commit', 'runId', 'runner', 'verdict'] },
       'scope.declare': { method: 'declareScope', settles: 'always', required: ['itemId', 'scope'] },
+      'item.spec-amend': { method: 'amendSpec', settles: 'always', required: ['baseHash', 'itemId', 'patch', 'resultHash'] },
     })
   })
 })

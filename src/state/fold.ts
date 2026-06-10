@@ -27,6 +27,7 @@ import type {
   SpecStatus,
 } from '../model/item.js'
 import type { VerificationRecordedPayload, VerificationRun } from '../model/verification.js'
+import type { SpecAmendment, SpecAmendPayload } from '../model/spec-amend.js'
 
 /**
  * Materialized state (SPEC §2). The fold *mechanism* (replay in stream order, per-aggregate by
@@ -47,6 +48,13 @@ export interface State {
    * spawn/advance/complete a TODO). Latest run per `runId` wins (stream order), like `latestRun`.
    */
   verificationRuns: Map<string, VerificationRun>
+  /**
+   * M5 (canevas) — per-item LIVE spec amendments, in stream order (keyed by itemId). RECORD-ONLY: each
+   * `spec.amended` event appends here and mutates NO spec field destructively — the amendment trace IS the
+   * value. INERT to bucketing/realization (a spec amendment can never spawn/advance/complete a TODO). The
+   * full prov-tagged human/machine trace is reconstructed by `TrackReader.amendmentTrace` over the raw log.
+   */
+  specAmendments: Map<ItemId, SpecAmendment[]>
 }
 
 function emptyState(): State {
@@ -57,6 +65,7 @@ function emptyState(): State {
     criteria: new Map(),
     evidence: new Map(),
     verificationRuns: new Map(),
+    specAmendments: new Map(),
   }
 }
 
@@ -154,6 +163,28 @@ function applyEvent(state: State, event: TrackEvent): void {
       // stores the path globs, NEVER matches them; touches no realization/bucket logic.
       const item = state.items.get(event.aggregateId)
       if (item) item.scope = (event.payload as { scope: ScopeDecl }).scope
+      break
+    }
+
+    case 'spec.amended': {
+      // M5 (canevas) — append ONE record-only spec amendment to the item's specAmendments[] (in stream
+      // order). RECORD-ONLY: mutates NO spec field (specStatus untouched) — the amendment trace IS the
+      // value. The JsonPatch + baseHash/resultHash are recorded VERBATIM; track never applies/recomputes.
+      const payload = event.payload as unknown as SpecAmendPayload
+      const amendment: SpecAmendment = {
+        itemId: payload.itemId,
+        baseHash: payload.baseHash,
+        patch: payload.patch,
+        resultHash: payload.resultHash,
+        at: event.at,
+        ...(payload.decisionId !== undefined ? { decisionId: payload.decisionId } : {}),
+        ...(payload.liveDocRef !== undefined ? { liveDocRef: payload.liveDocRef } : {}),
+        ...(payload.proposalRef !== undefined ? { proposalRef: payload.proposalRef } : {}),
+        ...(payload.summary !== undefined ? { summary: payload.summary } : {}),
+      }
+      const list = state.specAmendments.get(payload.itemId) ?? []
+      list.push(amendment)
+      state.specAmendments.set(payload.itemId, list)
       break
     }
 

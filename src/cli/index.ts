@@ -64,6 +64,7 @@ const USAGE = `usage: track <command>
   item new --kind <feature|bug|chore> --title <t> --workspace <w> [--body <b>] [--parent <id>] [--role <workpackage|spec-phase>] [--accountable <a>] [--responsible <a,a>] [--engagement-ref <e>]
   item reparent <itemId> [--parent <pid>] [--detach]
   item scope-declare <itemId> [--allowed <glob,glob>] [--forbidden <...>] [--conditional <...>] [--scope <json>]
+  item spec-amend <itemId> --base-hash <h> --result-hash <h> --patch <json> [--decision-id <id>] [--live-doc-ref <r>] [--proposal-ref <r>] [--summary <s>] [--client-token <t>]
   item spec <itemId> <to-specify|specified>
   item realize <itemId> <in-progress|done|cancelled>
   item show <itemId>
@@ -445,6 +446,44 @@ function cmdItem(args: string[], ctx: Ctx): number {
     io.out('ok\n')
     return 0
   }
+  if (sub === 'spec-amend') {
+    // M5 (canevas) — record ONE owner-approved LIVE spec amendment (a verbatim JsonPatch + opaque
+    // baseHash/resultHash integrity tags) on the existing item aggregate. `--patch <json>` is a JsonPatch
+    // array (parsed here only to JSON, NEVER applied/validated by track); `amendSpec` validates the shape
+    // fail-closed (assertSpecAmend). `--client-token` gives append-once idempotency. track records the
+    // amendment, NEVER mutates a spec field destructively (the amendment trace IS the value).
+    const itemId = positional[0]!
+    let patch: unknown
+    try {
+      patch = JSON.parse(req(flags, 'patch'))
+    } catch {
+      throw new DomainError('item spec-amend: --patch must be valid JSON (a JsonPatch array)')
+    }
+    const decisionId = opt(flags, 'decision-id')
+    const liveDocRef = opt(flags, 'live-doc-ref')
+    const proposalRef = opt(flags, 'proposal-ref')
+    const summary = opt(flags, 'summary')
+    const amend = {
+      itemId,
+      baseHash: req(flags, 'base-hash'),
+      resultHash: req(flags, 'result-hash'),
+      patch: patch as never,
+      ...(decisionId !== undefined ? { decisionId } : {}),
+      ...(liveDocRef !== undefined ? { liveDocRef } : {}),
+      ...(proposalRef !== undefined ? { proposalRef } : {}),
+      ...(summary !== undefined ? { summary } : {}),
+    }
+    const clientToken = opt(flags, 'client-token')
+    // Idempotency (v2.3c) at the CLI boundary (mirrors `decision add-artifact`): the facade stamps the token
+    // but does not itself dedup, so a retried --client-token is skipped HERE or it would append twice.
+    if (clientToken !== undefined && store(ctx).readAll().some((e) => e.clientToken === clientToken)) {
+      io.out('no-op: client-token already applied\n')
+      return 0
+    }
+    track.amendSpec(itemId, amend, clientToken)
+    io.out('ok\n')
+    return 0
+  }
   if (sub === 'spec') {
     track.setSpec(positional[0]!, oneOf(positional[1], SPEC_TARGETS, 'spec') as SpecStatus)
     io.out('ok\n')
@@ -470,7 +509,7 @@ function cmdItem(args: string[], ctx: Ctx): number {
     rowsOut(rows, fmt(flags), io)
     return 0
   }
-  io.err('usage: track item <new|reparent|scope-declare|spec|realize|show|ls>\n')
+  io.err('usage: track item <new|reparent|scope-declare|spec-amend|spec|realize|show|ls>\n')
   return 2
 }
 

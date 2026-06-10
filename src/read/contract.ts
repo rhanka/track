@@ -11,7 +11,7 @@ import { branchId } from '../branch/parse.js'
 import { branchSignature } from '../branch/signature.js'
 import { readHead } from '../events/head.js'
 import { EventStore } from '../events/store.js'
-import type { Sha256, TrackEvent } from '../events/types.js'
+import type { ActorId, EventType, Provenance, Sha256, TrackEvent } from '../events/types.js'
 import { validate, type IntegrityResult } from '../events/validate.js'
 import { isRoleContainer, type ItemId } from '../model/item.js'
 import type { VerificationRun } from '../model/verification.js'
@@ -26,7 +26,9 @@ import {
   type ReportOptions,
   type ReportRow,
 } from '../report/build.js'
-import { fold } from '../state/fold.js'
+import { fold, type State } from '../state/fold.js'
+import type { Dossier, Outcome } from '../model/decision.js'
+import type { WorkEventKind } from '../ingest/contract.js'
 import {
   scopeValidate as runScopeValidate,
   type ScopeValidateInput,
@@ -40,7 +42,7 @@ import {
  * shapes it returns may only GROW (new methods / new optional fields); nothing is removed or
  * repurposed without a major bump. Consumers gate on `reader.contractVersion`.
  */
-export const READ_CONTRACT_VERSION = '1.6.0' // +scopeValidate() advisory read (Scope §B(b), additive)
+export const READ_CONTRACT_VERSION = '1.7.0' // +cursor/changesSince/canevas/amendmentTrace (M5 canevas, additive)
 
 /** Provenance of the last `branch.imported` for a locator (drawn from the raw event log). */
 export interface BranchProvenance {
@@ -126,6 +128,140 @@ export interface WorkspaceActivityOptions {
 
 const DEFAULT_IDLE_MS = 86_400_000 // 24h
 
+// ============================================================================================
+// M5 (canevas) — the live-out materialization reads. track stays record-only/no-clock/no-socket: the
+// HOST owns the clock + fs/git watcher, polls `cursor`, and re-reads `canevas`/`amendmentTrace` on change.
+// ============================================================================================
+
+/**
+ * A cheap change cursor over the log tail — the host's liveness primitive. `head` is the log-tail event's
+ * `contentHash` (null on an empty log); `count` is the event count. The host polls this (O(tail)) and
+ * re-reads the materialization reads only when it moves. The cursor changes IFF the log grew.
+ */
+export interface Cursor {
+  head: Sha256 | null
+  count: number
+}
+
+/** Result of comparing a held cursor against the live log tail. `changed` ⇒ re-read the materialization. */
+export interface CursorDelta {
+  changed: boolean
+  head: Sha256 | null
+  count: number
+}
+
+/** Origin of a write, DERIVED PURELY from `prov.proposed` (true ⇒ machine/LLM-proposed; false ⇒ human). */
+export type AmendmentOrigin = 'human' | 'machine'
+
+/** The prov fields projected onto an amendment-trace step (a read-only summary; never re-verified). */
+export interface AmendmentProv {
+  proposed: boolean
+  auth: Provenance['auth']
+  principal?: string
+}
+
+/**
+ * One ordered, prov-tagged step in an aggregate's amendment trace — the human/machine diff. A PURE replay
+ * projection over the aggregate's `spec.amended` / `dossier.revised` / `decision.artifact-added` /
+ * `decision.outcome` events: ZERO new event data (`origin` derives from `prov.proposed`). An AI proposal
+ * and a human acceptance both appear — the machine origin is NEVER laundered away.
+ */
+export interface AmendmentStep {
+  seq: number
+  at: string
+  by: ActorId
+  kind: EventType
+  prov: AmendmentProv
+  /** `'machine'` iff `prov.proposed` (an AI proposal); else `'human'`. Derived, not stored. */
+  origin: AmendmentOrigin
+  summary?: string
+  /** For a `spec.amended` step: the opaque resultHash of the patch (the integrity tag track records). */
+  patchRef?: string
+  /** For a `spec.amended` step: the `proposalRef` it accepts/derives from (proof of non-laundered origin). */
+  proposalRef?: string
+}
+
+/** A per-aggregate `prov` lineage summary surfaced on the canevas (the latest write's provenance). */
+export interface ProvLineage {
+  origin: AmendmentOrigin
+  proposed: boolean
+  auth: Provenance['auth']
+  principal?: string
+  /** The last event `at` on this aggregate (informational). */
+  latestAt: string
+}
+
+/** The full decision dossier surfaced when `canevas` is called with a `decisionId`. */
+export interface DecisionDossierView {
+  id: ItemId
+  title: string
+  workspace: string
+  outcome: Outcome
+  dossier: Dossier
+}
+
+/** Options for {@link TrackReader.canevas}. `decisionId` opts the full decision dossier into the view. */
+export interface CanevasOptions {
+  baselineCommit: string
+  requireAccepted?: boolean
+  decisionId?: ItemId
+}
+
+/**
+ * The materialized canevas — the host's render input (report + WP rollup, per-aggregate prov lineage +
+ * open-action affordances, and, with `decisionId`, the full decision dossier). PURE: no clock, no socket.
+ */
+export interface CanevasView {
+  workspace: string
+  /** The materialized report (buckets + decisions + WP rollup forest) for the workspace. */
+  report: Report
+  /** Per surfaced aggregate id → its `prov` lineage summary (latest write provenance). */
+  prov: Record<string, ProvLineage>
+  /** Per surfaced aggregate id → the WorkEvent kinds that are a LEGAL next action (open-action affordances). */
+  affordances: Record<string, WorkEventKind[]>
+  /** Present iff `decisionId` was supplied — the full decision dossier (context/options/qa/outcome/artifacts). */
+  dossier?: DecisionDossierView
+}
+
+// The persisted event types projected into an aggregate's amendment trace (the human/machine diff source).
+const AMENDMENT_EVENT_TYPES: ReadonlySet<EventType> = new Set<EventType>([
+  'spec.amended',
+  'dossier.revised',
+  'decision.artifact-added',
+  'decision.outcome',
+])
+
+/**
+ * The open-action affordances for ONE non-decision item: the WorkEvent kinds that are a LEGAL next action
+ * given its current spec/realization state (the canevas shows the human/AI exactly what they may submit).
+ * Derived from the same monotone transition machines the facade enforces — a superset is fine (the facade
+ * re-checks), but we mirror the real legality so the canevas never offers a dead button.
+ */
+function itemAffordances(state: State, itemId: ItemId): WorkEventKind[] {
+  const item = state.items.get(itemId)
+  if (item === undefined) return []
+  const out: WorkEventKind[] = []
+  // Spec axis (monotone to-specify → specified). A spec amendment is always offerable (record-only).
+  if (item.specStatus === 'to-specify') out.push('item.spec')
+  out.push('item.spec-amend')
+  // Realization axis (forward transitions; terminal states offer nothing).
+  if (item.realization === 'to-do') out.push('item.realize')
+  else if (item.realization === 'in-progress') out.push('item.realize')
+  // Cross-cutting actions available while the item is live (not terminal).
+  if (item.realization !== 'done' && item.realization !== 'cancelled' && item.realization !== 'rejected') {
+    out.push('item.reparent', 'priority.assess', 'acceptance.criterion', 'blocker.raise')
+  }
+  return out
+}
+
+/** Open-action affordances for a decision, by its outcome state (the outcome machine the facade enforces). */
+function decisionAffordances(outcome: Outcome): WorkEventKind[] {
+  // Whole-dossier revise + an append-only artifact are always offerable; outcome only until terminal.
+  const out: WorkEventKind[] = ['decision.dossier', 'decision.add-artifact']
+  if (outcome === 'pending' || outcome === 'deferred') out.push('decision.outcome')
+  return out
+}
+
 /**
  * Read-only, versioned consumption surface over a frozen track log. Holds NO `git` and only reads
  * the event file/head via `fs` — a baseline commit is supplied by the caller via `ReportOptions`
@@ -151,6 +287,140 @@ export class TrackReader {
   /** Flat, filtered query over report rows (SPEC §6). */
   query(filter: QueryFilter, options: ReportOptions): ReportRow[] {
     return runQuery(fold(this.events()), filter, options)
+  }
+
+  /**
+   * M5 (canevas) — a cheap change cursor: the log-tail `contentHash` (head) + event `count`, O(tail). The
+   * HOST's liveness primitive: poll this, re-read `canevas`/`amendmentTrace` on change. PURE (no clock, no
+   * socket). The cursor changes IFF the log grew.
+   */
+  cursor(): Cursor {
+    const head = readHead(this.eventsPath)
+    if (head !== null) return { head: head.lastContentHash, count: head.streamLength }
+    // No head anchor (or a malformed one): derive from the log tail directly — equally O(tail).
+    const events = this.events()
+    const last = events.at(-1)
+    return { head: last !== undefined ? last.contentHash : null, count: events.length }
+  }
+
+  /**
+   * M5 (canevas) — has the log grown since `cursor`? Returns the LIVE cursor + a `changed` flag (the head
+   * hash OR count differs). The host holds a cursor from its last read and calls this to decide whether to
+   * re-materialize. PURE.
+   */
+  changesSince(cursor: Cursor): CursorDelta {
+    const live = this.cursor()
+    return { changed: live.head !== cursor.head || live.count !== cursor.count, head: live.head, count: live.count }
+  }
+
+  /**
+   * M5 (canevas) — the materialized canevas for ONE workspace: the report + WP rollup (reusing
+   * `buildReport` with `wpTree`/`decisions`), joined per surfaced aggregate with its `prov` lineage summary
+   * (latest write provenance) + open-action affordances (the WorkEvent kinds that are a LEGAL next action).
+   * With `decisionId`, also includes the full decision dossier (context/options/qa/outcome/artifacts). PURE:
+   * no clock, no socket — the host owns liveness (poll `cursor`, re-read here on change).
+   */
+  canevas(workspace: string, opts: CanevasOptions): CanevasView {
+    const events = this.events()
+    const state = fold(events)
+    const baseReport = buildReport(state, {
+      baselineCommit: opts.baselineCommit,
+      requireAccepted: opts.requireAccepted ?? false,
+      decisions: true,
+      wpTree: true,
+    })
+    // Scope the report to the workspace: filter bucket rows, decision rows, and the WP forest (a WP whose
+    // workspace ≠ the named one is dropped). buildReport is global; the canevas is per-workspace.
+    const report: Report = {
+      buckets: {
+        AWAITED: baseReport.buckets.AWAITED.filter((r) => r.workspace === workspace),
+        DROPPED: baseReport.buckets.DROPPED.filter((r) => r.workspace === workspace),
+        DONE: baseReport.buckets.DONE.filter((r) => r.workspace === workspace),
+        'TO-DO': baseReport.buckets['TO-DO'].filter((r) => r.workspace === workspace),
+      },
+      ...(baseReport.decisions !== undefined
+        ? { decisions: baseReport.decisions.filter((d) => d.workspace === workspace) }
+        : {}),
+      ...(baseReport.wpTree !== undefined
+        ? { wpTree: baseReport.wpTree.filter((n) => state.items.get(n.id)?.workspace === workspace) }
+        : {}),
+    }
+
+    // Per-aggregate prov lineage (latest write on each surfaced aggregate) + open-action affordances. We
+    // surface every item/decision in the workspace (bucket rows AND WP containers AND decisions).
+    const latestProvAt = new Map<string, { prov?: Provenance; at: string }>()
+    for (const e of events) {
+      const prev = latestProvAt.get(e.aggregateId)
+      if (prev === undefined || e.at >= prev.at) {
+        latestProvAt.set(e.aggregateId, { ...(e.prov !== undefined ? { prov: e.prov } : {}), at: e.at })
+      }
+    }
+    const prov: Record<string, ProvLineage> = {}
+    const affordances: Record<string, WorkEventKind[]> = {}
+    const surface = (id: string): void => {
+      const meta = latestProvAt.get(id)
+      const p = meta?.prov
+      const proposed = p?.proposed ?? false
+      prov[id] = {
+        origin: proposed ? 'machine' : 'human',
+        proposed,
+        auth: p?.auth ?? 'local-user',
+        ...(p?.principal !== undefined ? { principal: p.principal } : {}),
+        latestAt: meta?.at ?? '',
+      }
+    }
+    for (const item of state.items.values()) {
+      if (item.workspace !== workspace) continue
+      surface(item.id)
+      affordances[item.id] = itemAffordances(state, item.id)
+    }
+    for (const d of state.decisions.values()) {
+      if (d.workspace !== workspace) continue
+      surface(d.id)
+      affordances[d.id] = decisionAffordances(d.outcome)
+    }
+
+    const view: CanevasView = { workspace, report, prov, affordances }
+    if (opts.decisionId !== undefined) {
+      const d = state.decisions.get(opts.decisionId)
+      if (d !== undefined) {
+        view.dossier = { id: d.id, title: d.title, workspace: d.workspace, outcome: d.outcome, dossier: d.dossier }
+      }
+    }
+    return view
+  }
+
+  /**
+   * M5 (canevas) — the human/machine diff: an ORDERED (by seq), prov-tagged projection over the aggregate's
+   * `spec.amended` / `dossier.revised` / `decision.artifact-added` / `decision.outcome` events. PURE replay;
+   * ZERO new event data — `origin` derives from `prov.proposed` (true ⇒ machine, false ⇒ human). An AI
+   * proposal (proposed:true, with a proposalRef) and a human acceptance (referencing the same proposalRef)
+   * BOTH appear — the machine origin is NEVER laundered away.
+   */
+  amendmentTrace(aggregateId: ItemId): AmendmentStep[] {
+    const steps: AmendmentStep[] = []
+    for (const e of this.events()) {
+      if (e.aggregateId !== aggregateId) continue
+      if (!AMENDMENT_EVENT_TYPES.has(e.type)) continue
+      const proposed = e.prov?.proposed ?? false
+      const p = e.payload as { summary?: unknown; resultHash?: unknown; proposalRef?: unknown }
+      steps.push({
+        seq: e.seq,
+        at: e.at,
+        by: e.by,
+        kind: e.type,
+        prov: {
+          proposed,
+          auth: e.prov?.auth ?? 'local-user',
+          ...(e.prov?.principal !== undefined ? { principal: e.prov.principal } : {}),
+        },
+        origin: proposed ? 'machine' : 'human',
+        ...(typeof p.summary === 'string' ? { summary: p.summary } : {}),
+        ...(typeof p.resultHash === 'string' ? { patchRef: p.resultHash } : {}),
+        ...(typeof p.proposalRef === 'string' ? { proposalRef: p.proposalRef } : {}),
+      })
+    }
+    return steps.sort((a, b) => a.seq - b.seq)
   }
 
   /**

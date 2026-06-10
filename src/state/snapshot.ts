@@ -7,6 +7,7 @@ import type { BlockerState } from '../model/blocker.js'
 import type { DecisionState } from '../model/decision.js'
 import type { ItemState } from '../model/item.js'
 import type { VerificationRun } from '../model/verification.js'
+import type { SpecAmendment } from '../model/spec-amend.js'
 import { fold, type State } from './fold.js'
 
 /**
@@ -21,6 +22,9 @@ export interface SerializedState {
   criteria: CriterionState[]
   evidence: EvidenceState[]
   verificationRuns?: VerificationRun[] // Scope §B(c) — additive; absent in older snapshots (rebuildable)
+  // M5 (canevas) — per-item spec amendments, as [itemId, SpecAmendment[]] entries. Additive; absent in
+  // older snapshots (rebuildable by re-folding).
+  specAmendments?: Array<[string, SpecAmendment[]]>
 }
 
 export interface Snapshot {
@@ -37,6 +41,7 @@ export function serializeState(state: State): SerializedState {
     criteria: [...state.criteria.values()].map((c) => structuredClone(c)),
     evidence: [...state.evidence.values()].map((e) => structuredClone(e)),
     verificationRuns: [...state.verificationRuns.values()].map((v) => structuredClone(v)),
+    specAmendments: [...state.specAmendments.entries()].map(([id, list]) => [id, structuredClone(list)]),
   }
 }
 
@@ -50,6 +55,7 @@ export function deserializeState(serialized: Partial<SerializedState>): State {
     criteria: new Map((serialized.criteria ?? []).map((c) => [c.id, c])),
     evidence: new Map((serialized.evidence ?? []).map((e) => [e.id, e])),
     verificationRuns: new Map((serialized.verificationRuns ?? []).map((v) => [v.runId, v])),
+    specAmendments: new Map(serialized.specAmendments ?? []),
   }
 }
 
