@@ -1,7 +1,7 @@
 import { ulid } from 'ulid'
 
 import { EventStore } from './events/store.js'
-import type { ActorId, Aggregate, CommandEvent, EventType, Provenance, Ulid } from './events/types.js'
+import type { ActorId, Aggregate, CommandEvent, EventType, Provenance, TrackEvent, Ulid } from './events/types.js'
 import { parseRunReport, type RunReportFormat } from './accept/ingest.js'
 import { parseBranch, slugify } from './branch/parse.js'
 import { branchSignature } from './branch/signature.js'
@@ -70,6 +70,16 @@ export interface ImportResult {
   updated: number
 }
 
+/**
+ * Under-lock idempotency hook (the ingest workspace-scoped path). Receives a command's `inputs` and the
+ * just-read `existing` log UNDER THE STORE LOCK; returns the persisted originals to dedup (append nothing,
+ * return them verbatim) or `null` to append normally. See `EventStore.appendCommand`'s `dedupe` opt.
+ */
+export type DedupeHook = (
+  inputs: ReadonlyArray<CommandEvent>,
+  existing: readonly TrackEvent[],
+) => TrackEvent[] | null
+
 export interface TrackOptions {
   /** Injectable clock (ISO-8601 ms). Defaults to wall clock. */
   now?: () => string
@@ -109,6 +119,13 @@ export class Track {
   private readonly prov: Provenance | undefined
   /** Delivery idempotency token stamped on emitted events for the duration of a `withClientToken` scope. */
   private activeClientToken: string | undefined
+  /**
+   * Under-lock idempotency hook for the active scope (the ingest workspace-scoped path). When set, it is
+   * passed straight through to `EventStore.appendCommand`'s `dedupe` opt, so a concurrent retry that
+   * bypassed the ingest fast-path is deduped UNDER THE LOCK keyed on `(workspace, clientToken)` — stable
+   * across a re-minted aggregateId. Absent ⇒ the store's default `(clientToken, aggregateId)` backstop.
+   */
+  private activeDedupe: DedupeHook | undefined
 
   constructor(
     private readonly store: EventStore,
@@ -132,14 +149,22 @@ export class Track {
    * Run `fn` (one command) with `token` stamped on every event it emits — the delivery idempotency key
    * (v2.3c). Scoped (restored in `finally`), so it stamps exactly this command's batch and nothing else.
    * `undefined` ⇒ no token (today's behavior). Not nested by the ingest seam.
+   *
+   * `opts.dedupe` (the ingest path) installs an under-lock idempotency hook for the same scope, plumbed
+   * straight to `EventStore.appendCommand`. It lets ingest key the concurrent-retry dedup on
+   * `(workspace, clientToken)` — stable across a re-minted aggregateId — instead of the store's default
+   * `(clientToken, aggregateId)`. Restored in `finally` alongside the token.
    */
-  withClientToken<T>(token: string | undefined, fn: () => T): T {
-    const prev = this.activeClientToken
+  withClientToken<T>(token: string | undefined, fn: () => T, opts: { dedupe?: DedupeHook } = {}): T {
+    const prevToken = this.activeClientToken
+    const prevDedupe = this.activeDedupe
     this.activeClientToken = token
+    this.activeDedupe = opts.dedupe
     try {
       return fn()
     } finally {
-      this.activeClientToken = prev
+      this.activeClientToken = prevToken
+      this.activeDedupe = prevDedupe
     }
   }
 
@@ -157,8 +182,11 @@ export class Track {
       if (parent !== undefined) assertRoleNesting(input.role, parent.role, '<new>', input.parentId)
     }
     const itemId = this.newId()
-    this.emit('item', itemId, 'item.created', { ...input })
-    return itemId
+    // Result id = the PERSISTED event's aggregateId. On a fresh append that IS `itemId`; on a concurrent-
+    // retry dedup it is the ORIGINAL persisted item's id (the under-lock hook re-minted-aggregateId-blind),
+    // so a racing create-retry returns the first writer's id, never this attempt's never-persisted one.
+    const [persisted] = this.emit('item', itemId, 'item.created', { ...input })
+    return (persisted?.aggregateId as ItemId) ?? itemId
   }
 
   /**
@@ -214,7 +242,9 @@ export class Track {
       )
     }
     const validated = assertScopeDecl(scope)
-    const emit = (): void => this.emit('item', itemId, 'scope.declared', { scope: validated })
+    const emit = (): void => {
+      this.emit('item', itemId, 'scope.declared', { scope: validated })
+    }
     if (clientToken !== undefined) this.withClientToken(clientToken, emit)
     else emit()
   }
@@ -234,7 +264,9 @@ export class Track {
   amendSpec(itemId: ItemId, amend: SpecAmendPayload, clientToken?: string): void {
     if (!this.state().items.has(itemId)) throw new DomainError(`unknown item ${itemId}`)
     const validated = assertSpecAmend({ ...amend, itemId })
-    const emit = (): void => this.emit('item', itemId, 'spec.amended', { ...validated })
+    const emit = (): void => {
+      this.emit('item', itemId, 'spec.amended', { ...validated })
+    }
     if (clientToken !== undefined) this.withClientToken(clientToken, emit)
     else emit()
   }
@@ -307,8 +339,12 @@ export class Track {
         },
       })
     }
-    this.emitBatch(parts)
-    return decisionId
+    // Result id = the PERSISTED batch's first event (decision.created) aggregateId. On a fresh append that
+    // IS `decisionId`; on a concurrent-retry dedup it is the ORIGINAL persisted decision's id (the
+    // under-lock hook returned the first writer's batch), so a racing create-retry returns the original id,
+    // never this attempt's never-persisted one. The decision.created is always parts[0] ⇒ persisted[0].
+    const persisted = this.emitBatch(parts)
+    return (persisted[0]?.aggregateId as ItemId) ?? decisionId
   }
 
   /**
@@ -382,7 +418,9 @@ export class Track {
       throw new DomainError(`unknown decision ${decisionId}`)
     }
     const validated = assertDossierArtifact(artifact)
-    const emit = (): void => this.emit('decision', decisionId, 'decision.artifact-added', { artifact: validated })
+    const emit = (): void => {
+      this.emit('decision', decisionId, 'decision.artifact-added', { artifact: validated })
+    }
     // Stamp a CALLER-supplied token (the facade path). When called via the ingest seam the token is
     // already in scope (withClientToken), so a `clientToken` arg is omitted and we must NOT clobber it
     // with `withClientToken(undefined, …)`.
@@ -444,7 +482,10 @@ export class Track {
     }
 
     const blockerId = this.newId()
-    this.emit('blocker', blockerId, 'blocker.opened', {
+    // Result id = the PERSISTED event's aggregateId (createItem pattern). On a fresh append that IS
+    // `blockerId`; on a concurrent-retry dedup it is the ORIGINAL persisted blocker's id, so a racing
+    // raise-retry returns the first writer's id, never this attempt's never-persisted one.
+    const [persisted] = this.emit('blocker', blockerId, 'blocker.opened', {
       blockerId,
       targetId: input.targetId,
       kind: input.kind,
@@ -455,7 +496,7 @@ export class Track {
       ...(scope === 'extra' ? { scope } : {}),
       ...(input.engagementRef !== undefined ? { engagementRef: input.engagementRef } : {}),
     })
-    return blockerId
+    return (persisted?.aggregateId as BlockerId) ?? blockerId
   }
 
   resolveBlocker(blockerId: BlockerId): void {
@@ -497,8 +538,11 @@ export class Track {
       if (workspace !== undefined && state.items.get(b.targetId)?.workspace !== workspace) continue
       parts.push({ aggregate: 'blocker', aggregateId: b.id, type: 'blocker.resolved', payload: { blockerId: b.id, engagementRef } })
     }
-    if (parts.length > 0) this.emitBatch(parts)
-    return parts.map((p) => p.aggregateId)
+    // Result ids = the PERSISTED events' aggregateIds (the resolved blockers). These address EXISTING
+    // blocker aggregates (no fresh mint), so they are stable regardless of dedup; deriving from the
+    // returned events keeps the single-source-of-truth invariant (a deduped retry returns the originals).
+    if (parts.length === 0) return []
+    return this.emitBatch(parts).map((e) => e.aggregateId)
   }
 
   // ---- Acceptance (SPEC §2.4) ----
@@ -511,21 +555,28 @@ export class Track {
     }
     if (!state.items.has(itemId)) throw new DomainError(`unknown item ${itemId}`)
     const criterionId = this.newId()
-    this.emit('item', itemId, 'acceptance.criterion.added', { criterionId, statement })
-    return criterionId
+    // Result id = the PERSISTED event's payload.criterionId (payload field, not aggregateId). On a fresh
+    // append that IS `criterionId`; on a concurrent-retry dedup it is the ORIGINAL persisted event's id, so
+    // a racing add-retry returns the original, never this attempt's never-persisted one.
+    const [persisted] = this.emit('item', itemId, 'acceptance.criterion.added', { criterionId, statement })
+    return ((persisted?.payload as { criterionId?: string } | undefined)?.criterionId) ?? criterionId
   }
 
   linkEvidence(criterionId: string, kind: EvidenceKind, locator: string): string {
     const criterion = this.state().criteria.get(criterionId)
     if (!criterion) throw new DomainError(`unknown criterion ${criterionId}`)
     const evidenceId = this.newId()
-    this.emit('item', criterion.itemId, 'acceptance.evidence.linked', {
+    // Result id = the PERSISTED event's payload.evidenceId. On a fresh append that IS `evidenceId`; on a
+    // concurrent-retry dedup it is the ORIGINAL persisted event's evidenceId (the under-lock hook returned
+    // the first writer's event), so a racing link-retry returns the original id, never this attempt's
+    // freshly-minted (never-persisted) one. evidenceId is a PAYLOAD field, not the aggregateId.
+    const [persisted] = this.emit('item', criterion.itemId, 'acceptance.evidence.linked', {
       evidenceId,
       criterionId,
       kind,
       locator,
     })
-    return evidenceId
+    return ((persisted?.payload as { evidenceId?: string } | undefined)?.evidenceId) ?? evidenceId
   }
 
   recordRun(
@@ -553,7 +604,9 @@ export class Track {
     }
     const aggregate: Aggregate = validated.wpRef !== undefined ? 'item' : 'verification'
     const aggregateId = validated.wpRef ?? `verification:${opts.workspace}`
-    const emit = (): void => this.emit(aggregate, aggregateId, 'scope.verification-recorded', { ...validated })
+    const emit = (): void => {
+      this.emit(aggregate, aggregateId, 'scope.verification-recorded', { ...validated })
+    }
     if (clientToken !== undefined) this.withClientToken(clientToken, emit)
     else emit()
   }
@@ -803,12 +856,18 @@ export class Track {
     aggregateId: Ulid,
     type: EventType,
     payload: Record<string, unknown>,
-  ): void {
-    this.emitBatch([{ aggregate, aggregateId, type, payload }])
+  ): TrackEvent[] {
+    return this.emitBatch([{ aggregate, aggregateId, type, payload }])
   }
 
-  /** Append a command's events; a multi-event command is one atomic `cmdId` batch (SPEC §3). */
-  private emitBatch(parts: EventPart[]): void {
+  /**
+   * Append a command's events; a multi-event command is one atomic `cmdId` batch (SPEC §3). Returns the
+   * events `appendCommand` actually PERSISTED — the fresh appends, OR (when a concurrent-retry dedup fires)
+   * the ORIGINAL persisted events. The single source of truth for a caller's result ids is therefore the
+   * log: the ingest seam derives a deduped retry's id from these returned events, never from a
+   * freshly-minted (never-persisted) id.
+   */
+  private emitBatch(parts: EventPart[]): TrackEvent[] {
     const at = this.clock()
     const events: CommandEvent[] = parts.map((part) => ({
       id: this.newId(),
@@ -821,10 +880,10 @@ export class Track {
       ...(this.activeClientToken !== undefined ? { clientToken: this.activeClientToken } : {}),
       payload: part.payload,
     }))
+    const dedupeOpt = this.activeDedupe !== undefined ? { dedupe: this.activeDedupe } : {}
     if (events.length > 1) {
-      this.store.appendCommand(events, { cmdId: this.newId() })
-    } else {
-      this.store.appendCommand(events)
+      return this.store.appendCommand(events, { cmdId: this.newId(), ...dedupeOpt })
     }
+    return this.store.appendCommand(events, dedupeOpt)
   }
 }

@@ -1,6 +1,6 @@
 {
   "name": "@sentropic/track",
-  "version": "0.11.2",
+  "version": "0.12.0",
   "description": "Typed product-backlog and spec/plan/UAT system of record for the sentropic ecosystem (record-only MVP).",
   "license": "MIT",
   "author": "Fabien Antoine",

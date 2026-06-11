@@ -62,10 +62,34 @@ export class EventStore {
    * Append one command's events atomically. A multi-event command (`inputs.length > 1`)
    * requires `opts.cmdId` and is tagged with `cmd:{i,n}`; a single-event command is
    * standalone (no `cmdId`). Refuses to extend a log that does not pass `validate`.
+   *
+   * Idempotency backstop (M3-channel): under the lock, after the existing log's integrity is proven (F3)
+   * and before framing, an idempotency hook may dedup a concurrent retry — returning the ORIGINAL persisted
+   * events and appending NOTHING. This is ATOMIC w.r.t. concurrent writers: a racing second writer that
+   * bypassed the ingest-layer fast-path re-reads HERE and sees the first writer's events. The hook is
+   * INJECTABLE via `opts.dedupe`; the DEFAULT (no hook) is `dedupByClientToken`, scoped by
+   * `(clientToken, aggregateId)` — the store-neutral backstop for direct callers that have no workspace
+   * (across workspaces aggregateIds always differ, so a token in V never suppresses a write in W). The
+   * workspace-aware caller (ingest) injects a hook keyed on `(workspace, clientToken)`, which is stable
+   * across a re-minted aggregateId (so a concurrent CREATE-retry — fresh aggregateId per attempt — dedups
+   * to ONE event). A command with no token, or a token absent from the log, appends normally; the default
+   * hook fails closed (throws) on a token reused across a PARTIAL aggregate overlap. See `dedupByClientToken`.
    */
   appendCommand(
     inputs: ReadonlyArray<CommandEvent>,
-    opts: { cmdId?: Ulid } = {},
+    opts: {
+      cmdId?: Ulid
+      /**
+       * Optional under-lock idempotency hook (the ingest workspace-scoped path). Called AFTER the
+       * existing-log integrity is proven (F3) and BEFORE framing, with the command's `inputs` and the
+       * just-read `existing` log. Returns the persisted originals to dedup (append NOTHING, return them
+       * verbatim), or `null` to append normally. DEFAULT (no hook) = `dedupByClientToken` — the
+       * store-neutral `(clientToken, aggregateId)` backstop for direct callers that have no workspace.
+       * A workspace-aware caller (ingest) injects a hook keyed on `(workspace, clientToken)`, which is
+       * stable across a re-minted aggregateId (so a concurrent create-retry dedups to ONE event).
+       */
+      dedupe?: (inputs: ReadonlyArray<CommandEvent>, existing: readonly TrackEvent[]) => TrackEvent[] | null
+    } = {},
   ): TrackEvent[] {
     if (inputs.length === 0) {
       throw new Error('EventStore.appendCommand: empty command (no events)')
@@ -82,6 +106,11 @@ export class EventStore {
     return withFileLock(this.filePath, () => {
       const existing = this.readAll()
       const before = existing.length
+
+      // Existing-log integrity FIRST (F3) — proven BEFORE any success path, including the dedup
+      // short-circuit. A duplicate must NEVER return rc=0 on a corrupt/tampered/truncated log: the
+      // "original" events read back from a tampered log are not a trustworthy receipt. So every success
+      // path first proves the existing log is sound; only then may the dedup early-return fire.
       const integrity = validate(existing, readHead(this.filePath))
       if (!integrity.ok) {
         const kinds = integrity.findings.map((f) => f.kind).join(', ')
@@ -90,6 +119,19 @@ export class EventStore {
             `(${integrity.findings.length} finding(s): ${kinds})`,
         )
       }
+
+      // Under-lock idempotency recheck (atomic with the append) — the concurrent-retry backstop, run
+      // only AFTER the existing log has proven sound. If this command carries a delivery token already
+      // present in the just-read log for the SAME aggregate set, return the ORIGINAL persisted events and
+      // append NOTHING. The lock makes this authoritative: a racing second writer that bypassed the ingest
+      // fast-path re-reads HERE and sees the first writer's token. The store is WORKSPACE-BLIND by design —
+      // workspace containment is the INGEST layer's load-bearing property; the (clientToken, aggregateId)
+      // scope here assumes per-workspace aggregateId uniqueness (ULID minting + ingest containment), and
+      // FAILS CLOSED on a token/aggregate anomaly (partial overlap → throw) rather than silently
+      // suppressing. A tokenless command, or a token-absent log, falls through and appends normally. The
+      // command's events are framed/hashed only AFTER this skip.
+      const deduped = (opts.dedupe ?? ((i, e) => this.dedupByClientToken(i, e)))(inputs, existing)
+      if (deduped !== null) return deduped
 
       let prevHash: Sha256 | null =
         existing.length > 0 ? existing[existing.length - 1]!.contentHash : null
@@ -141,6 +183,86 @@ export class EventStore {
       this.verifyAppend(before, events, expectedHead)
       return events
     }, lockOptionsFromEnv())
+  }
+
+  /**
+   * Under-lock delivery-idempotency recheck. Returns the EXACT persisted events for this command's
+   * `clientToken` when the command is a true atomic-batch retry (dedup), `null` when it is a fresh write
+   * (append normally), and THROWS fail-closed when a delivery token is reused across a logically distinct
+   * aggregate set (partial overlap → would double-write).
+   *
+   * Decision rule (scoped by `(clientToken, aggregateId)`):
+   *  - One delivery token per command. `inputAggregates` = the command's aggregateIds; `tokenAggregates` =
+   *    the aggregateIds in `existing` that already carry this token. `presentInputs` = their intersection.
+   *  - Case A (`presentInputs` empty): the token covers NONE of this command's aggregates — a fresh write,
+   *    OR the load-bearing namespacing case (the token lives on OTHER aggregates/workspaces, whose
+   *    aggregateIds always differ) → return `null` (append normally). MUST NOT throw.
+   *  - Case B (`presentInputs` == `inputAggregates`, every input aggregate already carries the token): a
+   *    true atomic-batch retry → dedup, returning EXACTLY the persisted events whose `aggregateId` is in
+   *    `inputAggregates` AND `clientToken === token`, in stream (persisted) order — the original batch's
+   *    events (NOT every event carrying the token). Because `appendAtomic` is all-or-nothing, a genuine
+   *    retry of one batch always satisfies this set-equality, so callers/idempotency get stable ids.
+   *  - Case C (`presentInputs` non-empty but != `inputAggregates`): a genuine partial overlap — a producer
+   *    reused a delivery token across logically distinct commands; appending would double-write the present
+   *    aggregates → THROW fail-closed (never a silent superset return or a cross-workspace disclosure).
+   *
+   * The store is WORKSPACE-BLIND by design (F1): workspace containment is the INGEST layer's load-bearing
+   * property; the `(clientToken, aggregateId)` scope here assumes per-workspace aggregateId uniqueness
+   * (ULID minting + ingest containment) and fails closed (Case C) on any token/aggregate anomaly rather
+   * than silently suppressing. It deliberately does NOT compare event bodies/`contentHash` (F2): a retry
+   * legitimately RE-MINTS a fresh `id`/`at` per attempt, so `contentHash` differs across a legitimate
+   * retry — a body-digest check here would reject the very concurrent-retry this backstop exists to absorb.
+   * Body-digest "409 on same key / different body" conflict detection (over the stable, pre-mint WorkEvent
+   * payload) is the GATEWAY/INGEST layer's contract, deferred to M3-HTTP — never enforced here.
+   */
+  private dedupByClientToken(
+    inputs: ReadonlyArray<CommandEvent>,
+    existing: readonly TrackEvent[],
+  ): TrackEvent[] | null {
+    // One delivery token per command (emitBatch stamps the same token on the whole batch). If the inputs
+    // carry no single shared token, there is nothing to dedup.
+    const tokens = new Set(inputs.map((i) => i.clientToken))
+    if (tokens.size !== 1) return null
+    const token = inputs[0]!.clientToken
+    if (token === undefined) return null
+
+    // Persisted events carrying this token, grouped/ordered by aggregateId, plus the set of those
+    // aggregateIds (`tokenAggregates`).
+    const persistedByAggregate = new Map<string, TrackEvent[]>()
+    for (const e of existing) {
+      if (e.clientToken !== token) continue
+      const group = persistedByAggregate.get(e.aggregateId)
+      if (group === undefined) persistedByAggregate.set(e.aggregateId, [e])
+      else group.push(e)
+    }
+
+    const inputAggregates = new Set(inputs.map((i) => i.aggregateId))
+    let presentCount = 0
+    for (const aggregateId of inputAggregates) {
+      if (persistedByAggregate.has(aggregateId)) presentCount += 1
+    }
+
+    // Case A — the token covers NONE of this command's aggregates: a fresh write, or the namespacing case
+    // (the token lives on OTHER aggregates/workspaces). Append normally. MUST NOT throw.
+    if (presentCount === 0) return null
+
+    // Case C — partial overlap: some input aggregates carry the token, some do not. A delivery token reused
+    // across a logically distinct aggregate set; appending would double-write the present aggregates.
+    if (presentCount !== inputAggregates.size) {
+      throw new Error(
+        `EventStore.appendCommand: delivery clientToken ${token} reused across a different aggregate set ` +
+          `(partial overlap) — refusing to append (would double-write)`,
+      )
+    }
+
+    // Case B — every input aggregate already carries the token: a true atomic-batch retry. Return EXACTLY
+    // the persisted events for this command's aggregates (clientToken === token), in stream (persisted)
+    // order — the original batch's events, never the full token superset.
+    const original: TrackEvent[] = []
+    for (const e of existing) {
+      if (e.clientToken === token && inputAggregates.has(e.aggregateId)) original.push(e)
+    }
+    return original
   }
 
   /**

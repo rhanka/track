@@ -17,10 +17,10 @@ import type { DecisionCreatedPayload } from '../model/decision.js'
 import type { WsjfInputs } from '../model/priority.js'
 import type { VerificationRecordedPayload } from '../model/verification.js'
 import type { SpecAmendPayload } from '../model/spec-amend.js'
-import type { ActorId, Provenance, TrackEvent, Ulid } from '../events/types.js'
+import type { ActorId, CommandEvent, Provenance, TrackEvent, Ulid } from '../events/types.js'
 import type { EventStore } from '../events/store.js'
-import type { State } from '../state/fold.js'
-import { Track, type OpenBlockerInput } from '../track.js'
+import { fold, type State } from '../state/fold.js'
+import { Track, type DedupeHook, type OpenBlockerInput } from '../track.js'
 import type { WorkEvent, WorkEventKind } from './contract.js'
 import { IngestError, mapWorkEvent, type MappedCommand } from './map.js'
 
@@ -309,6 +309,30 @@ function tokenIndex(events: readonly TrackEvent[], state: State, workspace: stri
 }
 
 /**
+ * The under-lock idempotency hook ingest injects into `appendCommand`, keyed on `(workspace, clientToken)`
+ * — STABLE across a re-minted aggregateId (so a concurrent CREATE-retry, which mints a fresh aggregateId
+ * per attempt, still dedups to ONE event). Folds the just-read `existing` log (the SAME fold the
+ * `tokenIndex`/`eventWorkspace` fast-path uses), then collects every persisted event carrying this
+ * command's `token` whose `eventWorkspace === workspace`, in stream order. Returns that array when
+ * non-empty (dedup — append nothing, return the originals verbatim), else `null` (append normally).
+ *
+ * Workspace is IN the key ⇒ a token used in workspace V can NEVER suppress a write in W (the load-bearing
+ * namespacing property). `appendAtomic` is all-or-nothing ⇒ a `(workspace, token)` is present as the whole
+ * original command or absent (no partial/superset), so there is nothing to fail-closed on here. Bodies are
+ * NOT compared (a retry legitimately re-mints `id`/`at`): `(workspace, clientToken)` is the only stable key.
+ */
+function workspaceDedupe(token: string, workspace: string): DedupeHook {
+  return (_inputs: ReadonlyArray<CommandEvent>, existing: readonly TrackEvent[]): TrackEvent[] | null => {
+    const state = fold(existing)
+    const original: TrackEvent[] = []
+    for (const e of existing) {
+      if (e.clientToken === token && eventWorkspace(e, state) === workspace) original.push(e)
+    }
+    return original.length > 0 ? original : null
+  }
+}
+
+/**
  * Apply a WorkEvent stream to the store under channel authorization. Each event maps 1:1 to a Track
  * command (its own locked, atomic append).
  *
@@ -337,7 +361,12 @@ export function ingest(events: readonly WorkEvent[], ctx: IngestContext, store: 
       continue
     }
     authorize(cmd, ctx, track.state()) // fresh fold each iteration (re-fold after each apply)
-    const id = track.withClientToken(cmd.clientToken, () => applyCommand(track, cmd, ctx)) ?? null
+    // Pass the workspace-scoped under-lock dedupe hook ONLY for a tokened command — keyed on
+    // (workspace, clientToken), stable across a re-minted aggregateId, so a concurrent create-retry that
+    // defeated the fast-path dedups to ONE event under the store lock. A tokenless command passes no hook
+    // (the store would have no key) and keeps the at-least-once behavior.
+    const dedupeOpt = cmd.clientToken !== undefined ? { dedupe: workspaceDedupe(cmd.clientToken, ctx.workspace) } : {}
+    const id = track.withClientToken(cmd.clientToken, () => applyCommand(track, cmd, ctx), dedupeOpt) ?? null
     if (cmd.clientToken !== undefined) seen.set(cmd.clientToken, id) // intra-stream duplicates also skip
     ids.push(id)
   }

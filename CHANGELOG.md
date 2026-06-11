@@ -2,6 +2,37 @@
 
 All notable changes to `@sentropic/track`. Format loosely follows [Keep a Changelog](https://keepachangelog.com); this package is pre-1.0 (the **event contract** is frozen, but the library/CLI surface may still evolve additively).
 
+## [0.12.0] — End-to-end concurrent-retry idempotency (M3 prerequisite)
+
+### Added
+- **Under-lock idempotency backstop.** `EventStore.appendCommand` now runs a delivery-token dedup recheck
+  *inside* the file lock, atomic with the append — closing the concurrent-retry race the pre-lock `tokenIndex`
+  fast-path cannot (two in-flight retries that both saw the token "absent" before either appended). A racing
+  retry that defeats the fast-path now dedups to a single append instead of double-writing. The store stays
+  generic via an injectable `dedupe(inputs, existing)` hook (default = a `(clientToken, aggregateId)` recheck
+  for direct callers); integrity `validate(existing, head)` runs **before** the dedup short-circuit, so a
+  duplicate can never return success on a corrupt/tampered/truncated log.
+- **Workspace-scoped idempotency at the ingest seam.** Ingest supplies a `(workspace, clientToken)` hook
+  (`workspaceDedupe`, resolving each persisted event's workspace via the existing `eventWorkspace` fold). This
+  key is **stable across a re-minted aggregateId**, so concurrent `item.create` / `decision.create` /
+  `blocker.raise` retries dedup to one event — and **workspace is in the key**, so a token in workspace V can
+  never suppress a write in workspace W (the load-bearing namespacing property, now true by construction).
+- **Result-id fidelity through the facade.** Every id-returning facade method (`createItem`, `createDecision`,
+  `linkEvidence`, `addCriterion`, `openBlocker`, `resolveExternalDependency`) now derives its returned id from
+  the **persisted** events (`emit`/`emitBatch` return the `TrackEvent[]` actually written). A deduped concurrent
+  retry therefore returns the **original persisted id**, never a freshly-minted, never-persisted one.
+
+### Notes
+- **Frozen event contract intact** — no event shape / `contentHash` / `seq` / `prevHash` / `head` change; the
+  dedup hook is a pure read; old logs replay byte-identical. The P0 AppendReceipt guard ("never rc=0 without
+  persistence") is unchanged. Additive; 583 tests.
+- **Double-reviewed by the Codex 5.5xhigh + Opus 4.8max PAIR — converged SHIP after three rounds** (the pair
+  diverged twice; the owner-approved "Option B" full seam lifted both BLOCKs). Reviews archived under
+  `docs/reviews/M3-prereq-*`; adjudication in `docs/reviews/M3-prereq-SYNTHESIS.md`.
+- **Deferred (M3-HTTP gateway, by design):** body-digest "409 on same idempotency-key / different body" conflict
+  detection lives at the pre-mint gateway/ingest layer, not the store (a retry legitimately re-mints `id`/`at`,
+  so a store-level `contentHash` compare would reject the very race this closes). See `docs/plan/M3-channel-DESIGN.md`.
+
 ## [0.11.2] — M5 canevas (track-side): live reads + `item.spec-amend`
 
 ### Added
