@@ -14,12 +14,19 @@ export {
   type DecisionDossierView,
   type ExternalDependency,
   type Freshness,
+  type GraphExportOptions,
   type ProvLineage,
   type StalledItem,
   type StalledReason,
   type WorkspaceActivity,
   type WorkspaceActivityOptions,
 } from './contract.js'
+export {
+  type TrackGraphEdge,
+  type TrackGraphFragment,
+  type TrackGraphNode,
+  type TrackGraphProvenance,
+} from '../graph-export.js'
 // Scope §A/§B — projection/evidence types re-exported for skill consumers of the read contract.
 export { type GroupStatus, type StatusGroup, type StatusLevel } from '../report/status-by-level.js'
 export { type VerificationRun, type Verdict } from '../model/verification.js'
