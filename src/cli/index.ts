@@ -1,4 +1,5 @@
 import { execFileSync } from 'node:child_process'
+import { createHash } from 'node:crypto'
 import { mkdirSync, readFileSync } from 'node:fs'
 import { basename, dirname, isAbsolute, join, resolve } from 'node:path'
 
@@ -84,6 +85,7 @@ const USAGE = `usage: track <command>
   accept waive <criterionId> --reason <r>
   priority assess <itemId> --ubv <n> --tc <n> --rr <n> --js <n>
   report [--decisions] [--require-accepted] [--wp] [--level <spec|plan|wp|lot|task>] [--format json|text|md] [--commit <sha>]
+  export-graph [--repo-key <repo:key>] [--source-id <id>] [--observed-at <iso>]
   query [--kind <k>] [--role workpackage] [--workspace <w>] [--bucket <AWAITED|DROPPED|DONE|TO-DO>] [--realization <r>] [--acceptance <a>] [--format json|text|md] [--commit <sha>]
   workspace-activity --workspace <id> [--baseline-commit <sha>] [--now <iso>] [--idle-ms <ms>] [--format json|text]
   scope validate --workspace <id> [--baseline-commit <sha>] [--content <path>] [--locator <l>] [--claimed-item <id>] [--infer-delivered-out-of-scope] [--format json|text]
@@ -151,6 +153,57 @@ function resolveCommit(cwd: string, c: string | undefined): string {
   } catch {
     return c
   }
+}
+
+function remoteKeyFromUrl(remoteUrl: string): string | undefined {
+  const trimmed = remoteUrl.trim().replace(/\.git$/i, '')
+  const sshUrl = trimmed.match(/^ssh:\/\/(?:[^@]+@)?([^/\s]+)(\/.+)$/i)
+  if (sshUrl) {
+    const host = sshUrl[1] ?? ''
+    const path = (sshUrl[2] ?? '').replace(/^\/+/, '').replace(/\/+$/, '')
+    if (host && path) return `${host}/${path}`
+  }
+  const https = trimmed.match(/^https?:\/\/([^/\s]+)(\/.+)$/i)
+  if (https) {
+    const host = https[1] ?? ''
+    const path = (https[2] ?? '').replace(/^\/+/, '').replace(/\/+$/, '')
+    if (host && path) return `${host}/${path}`
+  }
+  const scp = trimmed.match(/^(?:[^@]+@)?([^:/\s]+):(?!\/\/)(.+)$/)
+  if (scp) {
+    const host = scp[1] ?? ''
+    const path = (scp[2] ?? '').replace(/^\/+/, '').replace(/\/+$/, '').replace(/:/g, '/')
+    if (host && path) return `${host}/${path}`
+  }
+  return undefined
+}
+
+function graphRepoKey(cwd: string): string {
+  let root = cwd
+  try {
+    root = execFileSync('git', ['rev-parse', '--show-toplevel'], {
+      cwd,
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'ignore'],
+    }).trim()
+  } catch {
+    root = cwd
+  }
+  try {
+    const remoteUrl = execFileSync('git', ['remote', 'get-url', 'origin'], {
+      cwd: root,
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'ignore'],
+    }).trim()
+    const key = remoteKeyFromUrl(remoteUrl)
+    if (key !== undefined) return `repo:${key}`
+  } catch {
+    /* fall through to local key */
+  }
+  const absRoot = resolve(root)
+  const name = basename(absRoot)
+  const hash = createHash('sha256').update(absRoot).digest('hex').slice(0, 8)
+  return `repo:local/${name}@${hash}`
 }
 
 // D3: CLI writes are attributed to the LOCAL USER (never the reserved `'system'`), with `cli`
@@ -283,6 +336,7 @@ export function runCli(rawArgv: string[], io: CliIO): number {
       // `track init` hint, never a boot crash. NEVER creates. A bad EXPLICIT override still throws
       // (user error → the outer catch → rc=1). The reader over a nonexistent log already reads empty.
       case 'report':
+      case 'export-graph':
       case 'query':
       case 'validate':
       case 'scope':
@@ -303,6 +357,8 @@ export function runCli(rawArgv: string[], io: CliIO): number {
         switch (cmd) {
           case 'report':
             return cmdReport(rest, ctx)
+          case 'export-graph':
+            return cmdExportGraph(rest, ctx)
           case 'query':
             return cmdQuery(rest, ctx)
           case 'validate':
@@ -733,6 +789,19 @@ function cmdReport(args: string[], ctx: Ctx): number {
       fmt(flags),
     ),
   )
+  return 0
+}
+
+function cmdExportGraph(args: string[], ctx: Ctx): number {
+  const { io } = ctx
+  const { flags } = parseFlags(args)
+  const reader = new TrackReader(ctx.eventsPath)
+  const fragment = reader.graphExport({
+    repoKey: opt(flags, 'repo-key') ?? graphRepoKey(io.cwd),
+    sourceId: opt(flags, 'source-id') ?? durableWorkspaceId(io.cwd) ?? 'track',
+    observedAt: opt(flags, 'observed-at') ?? new Date().toISOString(),
+  })
+  io.out(`${JSON.stringify(fragment, null, 2)}\n`)
   return 0
 }
 

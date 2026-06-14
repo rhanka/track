@@ -34,6 +34,7 @@ import {
   type ScopeValidateInput,
   type ScopeValidateResult,
 } from './scope-validate.js'
+import { graphExportFromState, type TrackGraphFragment } from '../graph-export.js'
 
 /**
  * Semver of the skill-facing READ contract.
@@ -42,7 +43,7 @@ import {
  * shapes it returns may only GROW (new methods / new optional fields); nothing is removed or
  * repurposed without a major bump. Consumers gate on `reader.contractVersion`.
  */
-export const READ_CONTRACT_VERSION = '1.7.0' // +cursor/changesSince/canevas/amendmentTrace (M5 canevas, additive)
+export const READ_CONTRACT_VERSION = '1.8.0' // +graphExport (WP6 graphify Extraction fragment, additive)
 
 /** Provenance of the last `branch.imported` for a locator (drawn from the raw event log). */
 export interface BranchProvenance {
@@ -223,6 +224,13 @@ export interface CanevasView {
   dossier?: DecisionDossierView
 }
 
+export interface GraphExportOptions {
+  repoKey: string
+  sourceId: string
+  observedAt: string
+  sourceFile?: string
+}
+
 // The persisted event types projected into an aggregate's amendment trace (the human/machine diff source).
 const AMENDMENT_EVENT_TYPES: ReadonlySet<EventType> = new Set<EventType>([
   'spec.amended',
@@ -311,6 +319,19 @@ export class TrackReader {
   changesSince(cursor: Cursor): CursorDelta {
     const live = this.cursor()
     return { changed: live.head !== cursor.head || live.count !== cursor.count, head: live.head, count: live.count }
+  }
+
+  /** WP6 — graphify Extraction fragment over the current TrackReader state. */
+  graphExport(options: GraphExportOptions): TrackGraphFragment {
+    const events = this.events()
+    const last = events.at(-1)
+    return graphExportFromState(fold(events), {
+      repoKey: options.repoKey,
+      sourceId: options.sourceId,
+      observedAt: options.observedAt,
+      sourceHash: last?.contentHash ?? 'sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855',
+      ...(options.sourceFile !== undefined ? { sourceFile: options.sourceFile } : {}),
+    })
   }
 
   /**
