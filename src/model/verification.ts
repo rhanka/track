@@ -24,6 +24,13 @@ export interface VerificationRun {
   wpRef?: ItemId
   /** Offending paths, recorded VERBATIM (opaque locators) — track NEVER re-matches them. */
   violations?: string[]
+  /**
+   * Seam v0 (S2) — an immutable, producer-owned locator to the FULL VerificationRun JSON (the canonical
+   * violation detail; `violations[]` is its display/index projection). OPAQUE: track STORES it, NEVER
+   * fetches/resolves/owns the artifact store; immutability is a producer guarantee track records, not
+   * verifies (same posture as spec-amend's baseHash/resultHash). Additive optional — drop-when-absent.
+   */
+  artifactLocator?: string
   at: string
 }
 
@@ -36,6 +43,8 @@ export interface VerificationRecordedPayload {
   verdict: Verdict
   wpRef?: ItemId
   violations?: string[]
+  /** Seam v0 (S2) — opaque immutable locator to the full VerificationRun JSON. Additive optional. */
+  artifactLocator?: string
 }
 
 const nonEmptyString = (v: unknown): v is string => typeof v === 'string' && v.length > 0
@@ -70,6 +79,12 @@ export function assertVerificationRun(input: unknown): VerificationRecordedPaylo
     }
     violations = a['violations'] as string[]
   }
+  // Seam v0 (S2) — validate artifactLocator is a NON-EMPTY string WHEN PRESENT, and DROP-WHEN-ABSENT in
+  // the returned normalization below. The drop-when-absent is LOAD-BEARING: a pre-freeze event (no locator)
+  // serializes byte-identically ⇒ the additive-hash test (old logs fold + computeHash unchanged) holds.
+  if (a['artifactLocator'] !== undefined && !nonEmptyString(a['artifactLocator'])) {
+    throw new DomainError('scope.verification: artifactLocator must be a non-empty string')
+  }
   return {
     runId: a['runId'],
     runner: a['runner'],
@@ -78,5 +93,6 @@ export function assertVerificationRun(input: unknown): VerificationRecordedPaylo
     ...(a['env'] !== undefined ? { env: a['env'] as string } : {}),
     ...(a['wpRef'] !== undefined ? { wpRef: a['wpRef'] as ItemId } : {}),
     ...(violations !== undefined ? { violations } : {}),
+    ...(a['artifactLocator'] !== undefined ? { artifactLocator: a['artifactLocator'] as string } : {}),
   }
 }

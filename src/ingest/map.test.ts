@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
+import { WORK_EVENT_KINDS } from './contract.js'
 import type { WorkEvent, WorkEventKind } from './contract.js'
 import { IngestError, mapWorkEvent } from './map.js'
 
@@ -26,8 +27,10 @@ describe('mapWorkEvent — valid kinds → normalized {method, settles, args}', 
       { method: 'setDisposition', settles: 'never', args: ['i', 'orientation', 'skipped', undefined] }],
     ['acceptance.criterion', ev('acceptance.criterion', { itemId: 'i', statement: 's' }),
       { method: 'addCriterion', settles: 'never', args: ['i', 's'] }],
-    ['acceptance.link', ev('acceptance.link', { criterionId: 'c', kind: 'unit', locator: 'l' }),
-      { method: 'linkEvidence', settles: 'never', args: ['c', 'unit', 'l'] }],
+    ['acceptance.link (evidenceId absent ⇒ undefined arg ⇒ server-mint)', ev('acceptance.link', { criterionId: 'c', kind: 'unit', locator: 'l' }),
+      { method: 'linkEvidence', settles: 'never', args: ['c', 'unit', 'l', undefined] }],
+    ['acceptance.link (caller-supplied deterministic evidenceId, M2=B)', ev('acceptance.link', { criterionId: 'c', kind: 'unit', locator: 'l', evidenceId: 'ev-det' }),
+      { method: 'linkEvidence', settles: 'never', args: ['c', 'unit', 'l', 'ev-det'] }],
     ['acceptance.run ⇒ evidence', ev('acceptance.run', { evidenceId: 'e', commit: 'c1', env: 'ci', runner: 'gh', result: 'pass' }),
       { method: 'recordRun', settles: 'evidence', args: ['e', { commit: 'c1', env: 'ci', runner: 'gh', result: 'pass' }] }],
     ['acceptance.waive ⇒ always', ev('acceptance.waive', { criterionId: 'c', reason: 'r' }),
@@ -42,6 +45,17 @@ describe('mapWorkEvent — valid kinds → normalized {method, settles, args}', 
       { method: 'resolveBlocker', settles: 'always', args: ['b'] }],
     ['scope.verification ⇒ evidence (payload passthrough)', ev('scope.verification', { runId: 'vr', runner: 'stp', commit: 'c1', verdict: 'clean' }),
       { method: 'recordVerification', settles: 'evidence', args: [{ runId: 'vr', runner: 'stp', commit: 'c1', verdict: 'clean' }] }],
+    // The five kinds the cases above omitted — added so the coverage gate below truly covers EVERY kind.
+    ['item.reparent (parentId absent ⇒ detach to root)', ev('item.reparent', { itemId: 'i' }),
+      { method: 'reparentItem', settles: 'always', args: ['i', undefined] }],
+    ['decision.add-artifact ⇒ always', ev('decision.add-artifact', { decisionId: 'd', artifact: { kind: 'note', text: 'x' } }),
+      { method: 'addDecisionArtifact', settles: 'always', args: ['d', { kind: 'note', text: 'x' }] }],
+    ['blocker.resolve-external ⇒ always (workspace pin supplied by ingest, not the event)', ev('blocker.resolve-external', { engagementRef: 'eng-1' }),
+      { method: 'resolveExternalDependency', settles: 'always', args: ['eng-1'] }],
+    ['scope.declare ⇒ always (scope shape re-asserted in the facade)', ev('scope.declare', { itemId: 'i', scope: { allowed: ['src/**'] } }),
+      { method: 'declareScope', settles: 'always', args: ['i', { allowed: ['src/**'] }] }],
+    ['item.spec-amend ⇒ always (payload passthrough; patch verbatim)', ev('item.spec-amend', { itemId: 'i', baseHash: 'h0', patch: [{ op: 'add', path: '/a', value: 1 }], resultHash: 'h1' }),
+      { method: 'amendSpec', settles: 'always', args: ['i', { itemId: 'i', baseHash: 'h0', patch: [{ op: 'add', path: '/a', value: 1 }], resultHash: 'h1' }] }],
   ]
 
   it.each(cases)('%s', (_name, input, expected) => {
@@ -52,8 +66,13 @@ describe('mapWorkEvent — valid kinds → normalized {method, settles, args}', 
   })
 
   it('covers every kind (no kind left unmapped)', () => {
+    // A REAL coverage gate: the cases must exercise EVERY WorkEventKind. Derived from WORK_EVENT_KINDS so a
+    // newly-added kind that has no mapper case fails here (the old `=== 15` falsely claimed full coverage
+    // while WORK_EVENT_KINDS held 20 — 5 kinds were unmapped).
     const covered = new Set(cases.map(([, e]) => e.kind))
-    expect(covered.size).toBe(15)
+    expect(covered.size).toBe(WORK_EVENT_KINDS.length)
+    const missing = WORK_EVENT_KINDS.filter((k) => !covered.has(k))
+    expect(missing).toEqual([])
   })
 })
 

@@ -6,7 +6,7 @@ import { INGEST_CONTRACT_VERSION, WORK_EVENT_KINDS, WORK_EVENT_SCHEMA } from './
 // required field) MUST fail here — this is the contract's snapshot gate (v2.3b-DESIGN.md §6/§7).
 describe('WorkEvent contract surface', () => {
   it('pins the contract version and the kind list', () => {
-    expect(INGEST_CONTRACT_VERSION).toBe('1.0.0')
+    expect(INGEST_CONTRACT_VERSION).toBe('1.1.0') // seam v0 FREEZE — MINOR bump (additive optional fields)
     expect([...WORK_EVENT_KINDS]).toEqual([
       'item.create',
       'item.reparent',

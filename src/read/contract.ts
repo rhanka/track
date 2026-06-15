@@ -42,7 +42,7 @@ import {
  * shapes it returns may only GROW (new methods / new optional fields); nothing is removed or
  * repurposed without a major bump. Consumers gate on `reader.contractVersion`.
  */
-export const READ_CONTRACT_VERSION = '1.7.0' // +cursor/changesSince/canevas/amendmentTrace (M5 canevas, additive)
+export const READ_CONTRACT_VERSION = '1.8.0' // +VerificationRun.artifactLocator (seam v0 S2, additive optional read field)
 
 /** Provenance of the last `branch.imported` for a locator (drawn from the raw event log). */
 export interface BranchProvenance {

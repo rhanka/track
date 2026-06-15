@@ -5,7 +5,10 @@
 // One WorkEvent ⇒ one Track command. This module is the SINGLE SOURCE of the write enums (so the CLI's
 // `oneOf` checks and the mapper cannot diverge on accepted values) and of the per-kind payload schema.
 
-export const INGEST_CONTRACT_VERSION = '1.0.0'
+// 1.1.0 — seam v0 FREEZE: two ADDITIVE optional producer fields (artifactLocator on scope.verification,
+// caller-supplied evidenceId on acceptance.link). MINOR bump (new optional fields; no kind removed, no
+// required field added, envelope keys unchanged; old producers omit them and still validate).
+export const INGEST_CONTRACT_VERSION = '1.1.0'
 
 // --- write enums (shared with src/cli/index.ts) ------------------------------------------------------
 export const ITEM_KINDS = ['feature', 'bug', 'chore'] as const
@@ -184,9 +187,13 @@ export const WORK_EVENT_SCHEMA: Record<WorkEventKind, KindSchema> = {
     fields: { itemId: str(true), statement: str(true) },
   },
   'acceptance.link': {
+    // Seam v0 (M2=B) — `evidenceId` is an OPTIONAL caller-supplied DETERMINISTIC evidence key. Present ⇒
+    // linkEvidence honors it (so the harness can reference it on a same-stream `acceptance.run` without a
+    // two-phase read); absent ⇒ the shipped server-mint behavior (back-compat). Non-empty re-asserted in
+    // the facade. Additive optional — old callers omit it and still validate.
     method: 'linkEvidence',
     settles: 'never',
-    fields: { criterionId: str(true), kind: str(true, EVIDENCE_KINDS), locator: str(true) },
+    fields: { criterionId: str(true), kind: str(true, EVIDENCE_KINDS), locator: str(true), evidenceId: str(false) },
   },
   'acceptance.run': {
     method: 'recordRun',
@@ -254,6 +261,10 @@ export const WORK_EVENT_SCHEMA: Record<WorkEventKind, KindSchema> = {
       env: str(false),
       wpRef: str(false),
       violations: { type: 'string[]', required: false },
+      // Seam v0 (S2) — an OPTIONAL immutable producer-owned locator to the full VerificationRun JSON. Stored
+      // OPAQUE (track never fetches/parses); non-empty re-asserted in the facade (assertVerificationRun),
+      // drop-when-absent (hash-minimal). Additive optional — old producers omit it and still validate.
+      artifactLocator: str(false),
     },
   },
   'scope.declare': {

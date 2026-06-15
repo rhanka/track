@@ -562,10 +562,42 @@ export class Track {
     return ((persisted?.payload as { criterionId?: string } | undefined)?.criterionId) ?? criterionId
   }
 
-  linkEvidence(criterionId: string, kind: EvidenceKind, locator: string): string {
-    const criterion = this.state().criteria.get(criterionId)
+  /**
+   * Link an evidence to a criterion. Seam v0 (M2=B): when the caller supplies a DETERMINISTIC `evidenceId`,
+   * HONOR it (so the harness can reference it on a same-stream `acceptance.run` without a two-phase read);
+   * absent ⇒ mint server-side as today (back-compat). The result id is always derived from the PERSISTED
+   * event (stable under a concurrent-retry dedup), so a caller-supplied id round-trips deterministically and
+   * a deduped re-link returns the first writer's id.
+   */
+  linkEvidence(criterionId: string, kind: EvidenceKind, locator: string, evidenceIdInput?: string): string {
+    const state = this.state()
+    const criterion = state.criteria.get(criterionId)
     if (!criterion) throw new DomainError(`unknown criterion ${criterionId}`)
-    const evidenceId = this.newId()
+    if (evidenceIdInput !== undefined && (typeof evidenceIdInput !== 'string' || evidenceIdInput.length === 0)) {
+      throw new DomainError('linkEvidence: evidenceId must be a non-empty string when supplied')
+    }
+    // Seam v0 (M2=B) COLLISION GUARD — a CALLER-SUPPLIED evidenceId must be globally unique. The fold keys
+    // `state.evidence` by a bare evidenceId with a blind last-writer-wins set (fold.ts), so a re-used id would
+    // SILENTLY re-point the global evidence map (read-model clobber; a later acceptance.run mis-routes/denies).
+    // Reject fail-closed BEFORE any append (track philosophy: explicit/resolvable target, never overwrite).
+    // A freshly-MINTED id (input absent) is a ULID ⇒ collision-free, so the guard applies ONLY to supplied ids.
+    //
+    // TOKEN-AWARE (0.12.0 concurrent-retry seam): the guard must NOT fire on MY OWN concurrent retry. The
+    // sequential-retry fast-path absorbs a re-delivery UPSTREAM, but a CONCURRENT retry whose pre-lock
+    // `tokenIndex` was STALE (miss) proceeds into here, where this FRESH fold now SEES the first writer's
+    // committed evidence. If that evidence ORIGINATED from this same delivery (its `originClientToken` equals
+    // my `activeClientToken`), it is my own retry — fall through, untouched, and let the under-lock
+    // `workspaceDedupe` return the ORIGINAL event (idempotent). Otherwise (different token, OR I am untokened,
+    // OR the existing evidence carries no origin token) it is a genuine collision ⇒ throw, fail-closed.
+    const existing = evidenceIdInput !== undefined ? state.evidence.get(evidenceIdInput) : undefined
+    const isOwnRetry =
+      this.activeClientToken !== undefined && existing?.originClientToken === this.activeClientToken
+    if (evidenceIdInput !== undefined && existing !== undefined && !isOwnRetry) {
+      throw new DomainError(
+        `acceptance.link: evidence ${evidenceIdInput} already exists (caller-supplied evidenceId must be unique)`,
+      )
+    }
+    const evidenceId = evidenceIdInput ?? this.newId()
     // Result id = the PERSISTED event's payload.evidenceId. On a fresh append that IS `evidenceId`; on a
     // concurrent-retry dedup it is the ORIGINAL persisted event's evidenceId (the under-lock hook returned
     // the first writer's event), so a racing link-retry returns the original id, never this attempt's
