@@ -50,8 +50,8 @@ describe('seam v0 — contract version bumps (additive, backward-compatible)', (
   it('INGEST_CONTRACT_VERSION is a MINOR bump 1.0.0 → 1.1.0', () => {
     expect(INGEST_CONTRACT_VERSION).toBe('1.1.0')
   })
-  it('READ_CONTRACT_VERSION is a MINOR bump 1.7.0 → 1.8.0', () => {
-    expect(READ_CONTRACT_VERSION).toBe('1.8.0')
+  it('READ_CONTRACT_VERSION is a MINOR bump (1.9.0 — seam v0 artifactLocator + graphExport WP6 reconciled)', () => {
+    expect(READ_CONTRACT_VERSION).toBe('1.9.0')
   })
 })
 

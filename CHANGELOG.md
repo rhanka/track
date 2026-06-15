@@ -2,6 +2,17 @@
 
 All notable changes to `@sentropic/track`. Format loosely follows [Keep a Changelog](https://keepachangelog.com); this package is pre-1.0 (the **event contract** is frozen, but the library/CLI surface may still evolve additively).
 
+## [0.13.1] — reconcile seam v0 with `track export-graph` (WP6)
+
+### Notes
+- Brings the **`track export-graph`** graph-fragment export (WP6, for graphify ingestion — merged to `main` via
+  PR #2) and the **seam v0 freeze** (0.13.0) into one published version. 0.13.0 published the seam-v0 half before
+  the graph-export merge had landed; 0.13.1 carries both.
+- **`READ_CONTRACT_VERSION` → 1.9.0.** Both features independently bumped the read contract to 1.8.0 (graph-export
+  `+graphExport`; seam-v0 `+VerificationRun.artifactLocator`); reconciled to a single 1.9.0 (both additive,
+  read-only). `seam-schema.ts` `readContractVersion` follows to 1.9.0. No event-contract change; `INGEST` stays
+  1.1.0. 623 tests + the graph-export suite.
+
 ## [0.13.0] — harness↔track seam v0 FREEZE (track-side, owner-ratified)
 
 ### Added

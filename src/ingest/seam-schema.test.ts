@@ -31,7 +31,7 @@ describe('seam v0 JSON-Schema artifact (contract-snapshot)', () => {
         'The frozen v0 evidence seam: the WorkEvent envelope (the ROOT schema) with a kind-driven payload dispatch, the three seam payloads (scope.verification, acceptance.run, acceptance.link) + the harness-internal per-check VerificationRun the adapter fans out from. The harness EMITS these; track INGESTS them. Neither imports the other runtime.',
       version: '1.0.0',
       ingestContractVersion: '1.1.0',
-      readContractVersion: '1.8.0',
+      readContractVersion: '1.9.0',
       type: 'object',
       required: ['v', 'kind', 'payload'],
       additionalProperties: false,
