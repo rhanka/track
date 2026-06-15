@@ -149,7 +149,9 @@ export function mapWorkEvent(ev: WorkEvent): MappedCommand {
       args = [p['itemId'], p['statement']]
       break
     case 'acceptance.link':
-      args = [p['criterionId'], p['kind'], p['locator']]
+      // linkEvidence(criterionId, kind, locator, evidenceId?) — the OPTIONAL caller-supplied deterministic
+      // evidence key (M2=B) is undefined when absent (⇒ the facade mints server-side, back-compat).
+      args = [p['criterionId'], p['kind'], p['locator'], p['evidenceId']]
       break
     case 'acceptance.run':
       args = [p['evidenceId'], { commit: p['commit'], env: p['env'], runner: p['runner'], result: p['result'] }]

@@ -43,7 +43,7 @@ import { graphExportFromState, type TrackGraphFragment } from '../graph-export.j
  * shapes it returns may only GROW (new methods / new optional fields); nothing is removed or
  * repurposed without a major bump. Consumers gate on `reader.contractVersion`.
  */
-export const READ_CONTRACT_VERSION = '1.8.0' // +graphExport (WP6 graphify Extraction fragment, additive)
+export const READ_CONTRACT_VERSION = '1.9.0' // +graphExport (WP6) + VerificationRun.artifactLocator (seam v0 S2) — both additive
 
 /** Provenance of the last `branch.imported` for a locator (drawn from the raw event log). */
 export interface BranchProvenance {

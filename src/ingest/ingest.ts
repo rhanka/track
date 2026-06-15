@@ -220,7 +220,8 @@ function applyCommand(track: Track, cmd: MappedCommand, ctx: IngestContext): str
     case 'acceptance.criterion':
       return track.addCriterion(a[0] as ItemId, a[1] as string)
     case 'acceptance.link':
-      return track.linkEvidence(a[0] as string, a[1] as Parameters<Track['linkEvidence']>[1], a[2] as string)
+      // The 4th arg is the OPTIONAL caller-supplied deterministic evidenceId (M2=B); undefined ⇒ server-mint.
+      return track.linkEvidence(a[0] as string, a[1] as Parameters<Track['linkEvidence']>[1], a[2] as string, a[3] as string | undefined)
     case 'acceptance.run':
       track.recordRun(a[0] as string, a[1] as { commit: string; env: string; runner: string; result: RunResult })
       return undefined

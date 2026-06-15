@@ -37,6 +37,14 @@ export interface EvidenceState {
   kind: EvidenceKind
   locator: string
   latestRun?: TestRun
+  /**
+   * IN-MEMORY DERIVED STATE ONLY (never a persisted event field). The `clientToken` of the delivery that
+   * originated this evidence (the `acceptance.evidence.linked` event's `clientToken`), carried by the fold so
+   * `linkEvidence`'s caller-supplied-evidenceId collision guard can recognize its OWN concurrent retry (same
+   * delivery ⇒ no throw, the under-lock dedup returns the original) versus a DIFFERENT command re-using the id
+   * (genuine collision ⇒ throw). Zero contentHash/contract impact (no payload/schema/computeHash change).
+   */
+  originClientToken?: string
 }
 
 export interface CriterionAddedPayload {

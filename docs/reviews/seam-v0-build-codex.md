@@ -1,0 +1,26 @@
+# BUILD REVIEW (Codex 5.5xhigh) — track-side harness↔track seam v0 FREEZE
+
+_Date: 2026-06-15 · Verdict: **BLOCK** (2 MUST-FIX + 2 SHOULD-FIX + 1 NIT). Converged with Opus on the findings; conductor upholds BLOCK._
+
+250 951
+**Findings**
+
+MUST-FIX: caller-supplied `evidenceId` can collide and overwrite existing evidence. `linkEvidence` accepts a non-empty caller id, but does not check `state.evidence.has(evidenceId)` before emitting ([track.ts](/home/antoinefa/src/track/src/track.ts:572), [track.ts](/home/antoinefa/src/track/src/track.ts:583)). The fold is a global `Map` keyed only by `evidenceId`, so a later link with the same id overwrites the earlier owner ([fold.ts](/home/antoinefa/src/track/src/state/fold.ts:261)). `acceptance.link` containment checks only the target criterion workspace ([ingest.ts](/home/antoinefa/src/track/src/ingest/ingest.ts:101)), while `acceptance.run` and `recordRun` resolve via the overwritten `evidence -> criterion -> item` path ([ingest.ts](/home/antoinefa/src/track/src/ingest/ingest.ts:106), [track.ts](/home/antoinefa/src/track/src/track.ts:849)). A workspace can therefore steal/corrupt another workspace’s evidence id in folded state, or same-workspace links can silently move future runs to the wrong aggregate. Add a uniqueness/conflict guard for caller-supplied ids.
+
+MUST-FIX: `SEAM_V0_SCHEMA` is not a usable validation schema for the emitted WorkEvents. The root object only declares metadata/defs and has no root `type`, `$ref`, `oneOf`, or conditional dispatch ([seam-schema.ts](/home/antoinefa/src/track/src/ingest/seam-schema.ts:24)). `WorkEventEnvelope.payload` is just `{ type: 'object' }` ([seam-schema.ts](/home/antoinefa/src/track/src/ingest/seam-schema.ts:139)), and the per-kind payload schemas live under a custom top-level `payloads` key that JSON Schema validators will ignore ([seam-schema.ts](/home/antoinefa/src/track/src/ingest/seam-schema.ts:149)). It also describes “non-empty” strings but does not enforce `minLength: 1` for `artifactLocator`/`evidenceId` ([seam-schema.ts](/home/antoinefa/src/track/src/ingest/seam-schema.ts:176), [seam-schema.ts](/home/antoinefa/src/track/src/ingest/seam-schema.ts:211)), while runtime rejects empties ([verification.ts](/home/antoinefa/src/track/src/model/verification.ts:85), [track.ts](/home/antoinefa/src/track/src/track.ts:575)). The snapshot test snapshots this object against itself, not against `WORK_EVENT_SCHEMA` or a validator ([seam-schema.test.ts](/home/antoinefa/src/track/src/ingest/seam-schema.test.ts:8), [seam-schema.test.ts](/home/antoinefa/src/track/src/ingest/seam-schema.test.ts:15)).
+
+SHOULD-FIX: the schema artifact is not exported through the package surface. `package.json` exports only `.` and `./read` ([package.json](/home/antoinefa/src/track/package.json:35)), and the root barrel does not export `SEAM_V0_SCHEMA` ([index.ts](/home/antoinefa/src/track/src/index.ts:14)). If harness is meant to validate against the published package artifact, it cannot import this file through normal package exports.
+
+SHOULD-FIX: the additive-hash test does not prove pre-freeze compatibility. It writes the same current-code stream twice and compares those two current events ([seam-v0.test.ts](/home/antoinefa/src/track/src/ingest/seam-v0.test.ts:86)). That catches “artifactLocator accidentally present” but not “byte-identical to a 0.12.0 persisted fixture.” Use a hardcoded pre-freeze `scope.verification-recorded` event/hash fixture.
+
+NIT: `map.test` claims “covers every kind” but asserts `covered.size === 15` while `WORK_EVENT_KINDS` currently contains 20 entries ([map.test.ts](/home/antoinefa/src/track/src/ingest/map.test.ts:56), [contract.ts](/home/antoinefa/src/track/src/ingest/contract.ts:30)). This is an existing false coverage assertion.
+
+**Confirmed**
+
+`artifactLocator?` is additive in the runtime contract: optional in `WORK_EVENT_SCHEMA` ([contract.ts](/home/antoinefa/src/track/src/ingest/contract.ts:249)), normalized drop-when-absent in `assertVerificationRun` ([verification.ts](/home/antoinefa/src/track/src/model/verification.ts:88)), and folded drop-when-absent ([fold.ts](/home/antoinefa/src/track/src/state/fold.ts:298)). `WORK_EVENT_ENVELOPE_KEYS` is unchanged ([contract.ts](/home/antoinefa/src/track/src/ingest/contract.ts:71)). `INGEST` 1.1.0 and `READ` 1.8.0 are minor-correct for optional producer/read growth ([contract.ts](/home/antoinefa/src/track/src/ingest/contract.ts:11), [contract.ts](/home/antoinefa/src/track/src/read/contract.ts:45)).
+
+M1 is pinned correctly: the fixture persists two same-`runId` scope events and verifies the read map collapses to one, last-write wins ([seam-v0.test.ts](/home/antoinefa/src/track/src/ingest/seam-v0.test.ts:185)); the fold still keys by bare `runId` ([fold.ts](/home/antoinefa/src/track/src/state/fold.ts:298)).
+
+Structural inertness is unchanged: `scope.verification-recorded` only mutates `verificationRuns` ([fold.ts](/home/antoinefa/src/track/src/state/fold.ts:293)); `bucketOf` reads blockers, realization, and acceptance only ([buckets.ts](/home/antoinefa/src/track/src/report/buckets.ts:22)); `statusByLevel` delegates leaf status to `bucketOf` ([status-by-level.ts](/home/antoinefa/src/track/src/report/status-by-level.ts:57)).
+
+BLOCK.

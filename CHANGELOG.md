@@ -2,6 +2,39 @@
 
 All notable changes to `@sentropic/track`. Format loosely follows [Keep a Changelog](https://keepachangelog.com); this package is pre-1.0 (the **event contract** is frozen, but the library/CLI surface may still evolve additively).
 
+## [0.13.0] — harness↔track seam v0 FREEZE (track-side, owner-ratified)
+
+### Added
+- **`artifactLocator?` on `scope.verification` (S2).** An optional, OPAQUE producer-owned locator to the canonical
+  full `VerificationRun` JSON; `scope.verification.violations[]` is the deterministic `JSON.stringify({severity,code,
+  path,message})` display/index projection. track records the locator, never fetches/verifies it. Additive optional
+  (model + `WORK_EVENT_SCHEMA` + `assertVerificationRun` drop-when-absent + fold + read projection).
+- **Caller-supplied deterministic `evidenceId?` on `acceptance.link` (M2=B).** The harness sets a deterministic
+  evidence key so `acceptance.run` resolves single-phase (no two-phase link→read→run); absent ⇒ shipped server-mint
+  (back-compat). Guarded **token-aware**: a re-used caller key from a DIFFERENT delivery (or untokened) fails closed
+  (`DomainError`), while a legitimate same-`clientToken` concurrent retry is absorbed by the 0.12.0 under-lock
+  `(workspace, clientToken)` dedup (the fold carries an in-memory `originClientToken` — derived state, zero hash impact).
+- **`@sentropic/track/seam` — the v0 JSON-Schema artifact (`SEAM_V0_SCHEMA`).** A real Draft-2020-12 schema (root
+  WorkEvent envelope + `if/then` dispatch on `kind` → per-kind payload `$defs` + the harness-internal per-check
+  `VerificationRun`/`VerificationCheck.target` + the FROZEN enums `VerificationCategory(scope|acceptance|security)`,
+  `Severity(advisory|blocking)`, `Verdict(clean|violation|conditional)`, `RunResult(pass|fail)`). The harness validates
+  its emit against this + both sides contract-snapshot it (BR-H1). A **parity test** pins `SEAM_V0_SCHEMA` against the
+  enforced `WORK_EVENT_SCHEMA` (a real wire-drift gate); an `M1` regression fixture pins the harness-owned
+  "unique `runId` per emitted verdict" invariant (track keys `verificationRuns` by bare `runId` and does not re-key).
+
+### Notes
+- **Frozen event contract intact** — both new fields additive optional / drop-when-absent; old `scope.verification`/
+  `acceptance.link` logs fold byte-identical, `computeHash` unchanged (pinned 0.12.0 pre-freeze hash reproduces). No
+  kind removed, no required field added, envelope keys unchanged. `INGEST_CONTRACT_VERSION` 1.0.0→1.1.0,
+  `READ_CONTRACT_VERSION` 1.7.0→1.8.0 (MINOR). 623 tests.
+- **Owner-ratified** (M1 runId invariant, M2=B evidence key, severity-enum freeze, OQ-2/3/6/7 confirms — see
+  `docs/plan/harness-seam-v0-FREEZE-DESIGN.md`). **Double-reviewed by the Codex 5.5xhigh + Opus 4.8max PAIR across the
+  spec + three build rounds** (each round caught a real defect: a non-validatable schema, then a guard that regressed
+  the 0.12.0 idempotency seam — both fixed); convergence recorded in `docs/reviews/seam-v0-build-FINAL.md`.
+- The adapter (target-driven routing / fan-out / verdict derivation) is **harness-side** — track ships none; it adds
+  only the two additive fields + the published schema. Routing/severity-derivation are frozen cross-contract in the
+  snapshot, not on trust.
+
 ## [0.12.0] — End-to-end concurrent-retry idempotency (M3 prerequisite)
 
 ### Added

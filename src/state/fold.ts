@@ -263,6 +263,11 @@ function applyEvent(state: State, event: TrackEvent): void {
         criterionId: payload.criterionId,
         kind: payload.kind,
         locator: payload.locator,
+        // IN-MEMORY DERIVED STATE ONLY (NOT a persisted payload field) — carries the originating delivery's
+        // clientToken so linkEvidence's collision guard can distinguish "my own concurrent retry" (same token
+        // ⇒ let the under-lock dedup return the original) from "a different command re-using the id" (collision
+        // ⇒ throw). Zero contentHash/contract impact: no event payload/schema/computeHash change.
+        ...(event.clientToken !== undefined ? { originClientToken: event.clientToken } : {}),
       })
       break
     }
@@ -304,6 +309,9 @@ function applyEvent(state: State, event: TrackEvent): void {
         ...(payload.env !== undefined ? { env: payload.env } : {}),
         ...(payload.wpRef !== undefined ? { wpRef: payload.wpRef } : {}),
         ...(payload.violations !== undefined ? { violations: payload.violations } : {}),
+        // Seam v0 (S2) — carry the opaque artifactLocator VERBATIM, drop-when-absent so a pre-freeze event
+        // (no locator) folds to a byte-identical VerificationRun (the additive-hash invariant).
+        ...(payload.artifactLocator !== undefined ? { artifactLocator: payload.artifactLocator } : {}),
       })
       break
     }
