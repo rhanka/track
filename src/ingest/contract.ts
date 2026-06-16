@@ -5,10 +5,12 @@
 // One WorkEvent ⇒ one Track command. This module is the SINGLE SOURCE of the write enums (so the CLI's
 // `oneOf` checks and the mapper cannot diverge on accepted values) and of the per-kind payload schema.
 
+// 1.2.0 — acceptance-freshness lifecycle: two ADDITIVE new WorkEvent kinds (`item.anchor`→
+// `realization.anchored`, `item.consolidate`→the consolidate verb). MINOR bump (new optional kinds; no kind
+// removed, no required field added, envelope keys unchanged; old producers never send them and still validate).
 // 1.1.0 — seam v0 FREEZE: two ADDITIVE optional producer fields (artifactLocator on scope.verification,
-// caller-supplied evidenceId on acceptance.link). MINOR bump (new optional fields; no kind removed, no
-// required field added, envelope keys unchanged; old producers omit them and still validate).
-export const INGEST_CONTRACT_VERSION = '1.1.0'
+// caller-supplied evidenceId on acceptance.link).
+export const INGEST_CONTRACT_VERSION = '1.2.0'
 
 // --- write enums (shared with src/cli/index.ts) ------------------------------------------------------
 export const ITEM_KINDS = ['feature', 'bug', 'chore'] as const
@@ -48,6 +50,8 @@ export const WORK_EVENT_KINDS = [
   'scope.verification', // Scope §B(c) — record a path-scope VerificationRun (evidence-only)
   'scope.declare', // Scope §B(a) — declare INERT path-scope globs on a WP/spec-phase
   'item.spec-amend', // M5 (canevas) — record a LIVE spec amendment (verbatim JsonPatch) on an item
+  'item.anchor', // Acceptance-freshness — re-point an item's realization ANCHOR commit (→ realization.anchored)
+  'item.consolidate', // Acceptance-freshness — the squash/rebase heal: re-anchor + re-stamp pass runs at mergeCommit
 ] as const
 export type WorkEventKind = (typeof WORK_EVENT_KINDS)[number]
 
@@ -294,5 +298,21 @@ export const WORK_EVENT_SCHEMA: Record<WorkEventKind, KindSchema> = {
       proposalRef: str(false),
       summary: str(false),
     },
+  },
+  'item.anchor': {
+    // Acceptance-freshness — re-point an item's realization ANCHOR commit (→ `realization.anchored`). Binding
+    // (`evidence`): an attributable producer claim of WHERE the work landed, like `acceptance.run` — denied on
+    // an unauthenticated channel, admitted on local-user/signed. `reason` is audit metadata (realize|consolidate).
+    method: 'anchorRealization',
+    settles: 'evidence',
+    fields: { itemId: str(true), commit: str(true), reason: str(false, ['realize', 'consolidate']) },
+  },
+  'item.consolidate': {
+    // Acceptance-freshness — the squash/rebase HEAL: re-anchor each done item on the mergeCommit + re-stamp its
+    // pass runs there. Binding (`always`): re-anchoring a merge is trust-sensitive (like `item.reparent`) ⇒
+    // requires auth ∈ {local-user, signed}. `items` are CALLER-AUTHORITATIVE (track has no branch→item link).
+    method: 'consolidate',
+    settles: 'always',
+    fields: { items: { type: 'string[]', required: true }, mergeCommit: str(true) },
   },
 }

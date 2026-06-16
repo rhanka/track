@@ -83,6 +83,7 @@ const USAGE = `usage: track <command>
   accept run <evidenceId> --result <pass|fail> [--commit <c>] [--env <e>] [--runner <r>]
   accept run --from <report> --format <junit|json> [--commit <c>] [--env <e>] [--runner <r>]
   accept waive <criterionId> --reason <r>
+  consolidate --items <id,id> --commit <mergeCommit> [--client-token <t>]
   priority assess <itemId> --ubv <n> --tc <n> --rr <n> --js <n>
   report [--decisions] [--require-accepted] [--wp] [--level <spec|plan|wp|lot|task>] [--format json|text|md] [--commit <sha>]
   export-graph [--repo-key <repo:key>] [--source-id <id>] [--observed-at <iso>]
@@ -378,6 +379,7 @@ export function runCli(rawArgv: string[], io: CliIO): number {
       case 'decision':
       case 'blocker':
       case 'accept':
+      case 'consolidate':
       case 'priority':
       case 'branch':
       case 'ingest': {
@@ -391,6 +393,8 @@ export function runCli(rawArgv: string[], io: CliIO): number {
             return cmdBlocker(rest, ctx)
           case 'accept':
             return cmdAccept(rest, ctx)
+          case 'consolidate':
+            return cmdConsolidate(rest, ctx)
           case 'priority':
             return cmdPriority(rest, ctx)
           case 'branch':
@@ -735,6 +739,34 @@ function cmdAccept(args: string[], ctx: Ctx): number {
   }
   io.err('usage: track accept <criterion|link|run|waive>\n')
   return 2
+}
+
+/**
+ * `track consolidate --items <id,id> --commit <mergeCommit> [--client-token <t>]` — the squash/rebase HEAL
+ * (acceptance-freshness lifecycle). The `--items` are CALLER-AUTHORITATIVE (track has no branch→item link);
+ * for each done item it appends `realization.anchored{reason:'consolidate'}` + re-stamps its pass runs at the
+ * resolved merge commit (append-only; no mutation). `--client-token` gives append-once idempotency.
+ */
+function cmdConsolidate(args: string[], ctx: Ctx): number {
+  const { io } = ctx
+  const { flags } = parseFlags(args)
+  const track = writeTrack(ctx)
+  const items = req(flags, 'items')
+    .split(',')
+    .map((s) => s.trim())
+    .filter(Boolean)
+  if (items.length === 0) throw new DomainError('consolidate: --items must list at least one itemId')
+  const commit = resolveCommit(io.cwd, req(flags, 'commit'))
+  const clientToken = opt(flags, 'client-token')
+  // Mirror the seam idempotency: a retried --client-token must be skipped HERE (the consolidate batch is
+  // also deduped under the store lock, but the explicit pre-check gives an honest "no-op" line).
+  if (clientToken !== undefined && store(ctx).readAll().some((e) => e.clientToken === clientToken)) {
+    io.out('no-op: client-token already applied\n')
+    return 0
+  }
+  track.consolidate(items, commit, clientToken)
+  io.out('ok\n')
+  return 0
 }
 
 function cmdPriority(args: string[], ctx: Ctx): number {

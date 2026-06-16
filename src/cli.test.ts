@@ -128,6 +128,23 @@ describe('CLI full verb surface (Lot 7) end-to-end', () => {
     expect(r(['item', 'show', itemId]).text).toContain('"specStatus": "specified"')
   })
 
+  it('consolidate --items --commit heals a done+accepted item + is client-token idempotent', () => {
+    expect(r(['init']).code).toBe(0)
+    const itemId = r(['item', 'new', '--kind', 'feature', '--title', 'F', '--workspace', 'ws']).text
+    const critId = r(['accept', 'criterion', itemId, '--statement', 'works']).text
+    const evId = r(['accept', 'link', critId, '--kind', 'unit', '--locator', 't1']).text
+    r(['accept', 'run', evId, '--result', 'pass', '--commit', 'c1'])
+    r(['item', 'realize', itemId, 'in-progress'])
+    r(['item', 'realize', itemId, 'done'])
+    // unrelated merge moved HEAD to c2 → strict stale; a requireAccepted report buckets it TO-DO
+    expect(r(['query', '--workspace', 'ws', '--acceptance', 'stale', '--commit', 'c2', '--format', 'json']).text).toContain(itemId)
+    // consolidate at c2 re-anchors + re-stamps the pass run → reads pass at c2
+    expect(r(['consolidate', '--items', itemId, '--commit', 'c2', '--client-token', 'tk1']).text).toBe('ok')
+    expect(r(['query', '--workspace', 'ws', '--acceptance', 'pass', '--commit', 'c2', '--format', 'json']).text).toContain(itemId)
+    // a retried --client-token is a no-op
+    expect(r(['consolidate', '--items', itemId, '--commit', 'c2', '--client-token', 'tk1']).text).toContain('no-op')
+  })
+
   it('a domain error returns exit 1 with a message', () => {
     runCli(['init'], io)
     const id = (() => {

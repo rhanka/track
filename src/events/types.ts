@@ -54,6 +54,12 @@ export const EVENT_TYPES = [
   // into `state.specAmendments` (record-only; mutates NO spec field destructively — the trace IS the value);
   // touches NO realization/bucket logic. Additive: absent on every pre-M5 event ⇒ zero hash/seq/bucket change.
   'spec.amended',
+  // Acceptance-freshness lifecycle — re-point an item's realization ANCHOR commit on the EXISTING item
+  // aggregate (next seq, no realization transition; `done` stays terminal). Serves BOTH realize-time anchoring
+  // (WorkEvent `item.anchor`) AND merge-time re-anchoring (WorkEvent `item.consolidate`); LAST anchor wins.
+  // Folds `item.realizedCommit` (a READ DETAIL — does NOT touch AcceptanceStatus/buckets/gates). Additive:
+  // absent on every pre-anchor event ⇒ zero hash/seq/bucket change; the anchor is purely the freshness anchor.
+  'realization.anchored',
 ] as const
 export type EventType = (typeof EVENT_TYPES)[number]
 

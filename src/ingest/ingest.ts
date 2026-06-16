@@ -94,6 +94,15 @@ function resolveWorkspace(cmd: MappedCommand, state: State): { create: boolean; 
       // M5 (canevas) — amendSpec mutates the named item aggregate; contained by the item's workspace
       // (a W-pinned channel can't amend a V item's spec). Resolved from folded state.
       return { create: false, workspace: item(p['itemId']) }
+    case 'item.anchor':
+      // Acceptance-freshness — anchorRealization mutates the named item aggregate; contained by the item's
+      // workspace (a W-pinned channel can't anchor a V item). Resolved from folded state.
+      return { create: false, workspace: item(p['itemId']) }
+    case 'item.consolidate':
+      // Acceptance-freshness — consolidate mutates N item aggregates (caller-authoritative `items`); the
+      // primary containment is the FIRST item's workspace, and EVERY item is gated via
+      // affectedTargetWorkspaces (so a W-pinned channel can never reach a V item in the set).
+      return { create: false, workspace: item((p['items'] as string[] | undefined)?.[0]) }
     case 'decision.outcome':
     case 'decision.dossier':
     case 'decision.add-artifact':
@@ -150,6 +159,11 @@ function affectedTargetWorkspaces(cmd: MappedCommand, state: State): Array<strin
       const parentId = cmd.payload['parentId']
       return parentId !== undefined ? [wsOf(parentId as ItemId)] : []
     }
+    case 'item.consolidate':
+      // Acceptance-freshness — EVERY item in the caller-authoritative set is mutated (re-anchored + its runs
+      // re-stamped); each must be in the channel workspace (the primary is gated in resolveWorkspace; this
+      // gates the rest). A W-pinned channel can never consolidate a V item.
+      return (cmd.payload['items'] as string[]).map((t) => wsOf(t as ItemId))
     default:
       return []
   }
@@ -255,6 +269,16 @@ function applyCommand(track: Track, cmd: MappedCommand, ctx: IngestContext): str
       // double-pass); the JsonPatch + baseHash/resultHash shape is re-asserted in the facade
       // (assertSpecAmend) and recorded VERBATIM. M5 (canevas).
       track.amendSpec(a[0] as ItemId, a[1] as SpecAmendPayload)
+      return undefined
+    case 'item.anchor':
+      // anchorRealization(itemId, commit, reason?) — the clientToken is already in scope via withClientToken
+      // (do not double-pass). Acceptance-freshness lifecycle.
+      track.anchorRealization(a[0] as ItemId, a[1] as string, a[2] as 'realize' | 'consolidate' | undefined)
+      return undefined
+    case 'item.consolidate':
+      // consolidate(items, mergeCommit) — the clientToken is already in scope via withClientToken (do not
+      // double-pass); `items` are CALLER-AUTHORITATIVE. Acceptance-freshness lifecycle (the squash/rebase heal).
+      track.consolidate(a[0] as ItemId[], a[1] as string)
       return undefined
   }
 }

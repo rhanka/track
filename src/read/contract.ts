@@ -7,6 +7,8 @@
 // sidecar can never become de-facto master over BRANCH.md (the source of truth — SPEC §5,
 // INTENTION §9 pin).
 
+import { acceptanceStatus, criterionStatus, evidenceForCriterion } from '../accept/status.js'
+import type { AcceptanceStatus, CriterionStatus } from '../model/acceptance.js'
 import { branchId } from '../branch/parse.js'
 import { branchSignature } from '../branch/signature.js'
 import { readHead } from '../events/head.js'
@@ -43,7 +45,7 @@ import { graphExportFromState, type TrackGraphFragment } from '../graph-export.j
  * shapes it returns may only GROW (new methods / new optional fields); nothing is removed or
  * repurposed without a major bump. Consumers gate on `reader.contractVersion`.
  */
-export const READ_CONTRACT_VERSION = '1.9.0' // +graphExport (WP6) + VerificationRun.artifactLocator (seam v0 S2) — both additive
+export const READ_CONTRACT_VERSION = '1.10.0' // +acceptanceDetail (anchor-freshness read detail) — additive
 
 /** Provenance of the last `branch.imported` for a locator (drawn from the raw event log). */
 export interface BranchProvenance {
@@ -229,6 +231,54 @@ export interface GraphExportOptions {
   sourceId: string
   observedAt: string
   sourceFile?: string
+}
+
+/**
+ * Acceptance-freshness lifecycle — a track-DECIDABLE freshness hint for ONE evidence, ADDITIVE alongside the
+ * strict `AcceptanceStatus` (which is unchanged). track holds NO git, so it only exposes the SHAs + a purely-
+ * decidable rung; the caller/skill resolves ancestry off these SHAs. The four cases are unambiguous:
+ *   - `no-anchor`      — no `realizedCommit` recorded; fall back to the existing strict baselineCommit behavior.
+ *   - `anchor-fresh`   — `runCommit === anchorCommit` (string equality against the item's OWN anchor); the run
+ *                        was taken at the realization/merge commit ⇒ fresh, never re-staled by an unrelated merge.
+ *   - `needs-ancestry` — BOTH SHAs present AND UNEQUAL; track cannot decide (squash/rebase/descendant) — the
+ *                        skill resolves it via `git merge-base --is-ancestor` off `runCommit`/`anchorCommit`.
+ *   - `no-run`         — an `anchorCommit` is present but the evidence has NO run SHA to compare; a skill CANNOT
+ *                        run ancestry without a run SHA, so this is its OWN value (distinct from `needs-ancestry`).
+ */
+export type AnchorFreshness = 'anchor-fresh' | 'needs-ancestry' | 'no-anchor' | 'no-run'
+
+/** Per-evidence anchor-freshness detail (run-SHA + the item's anchor-SHA + the track-decidable hint). */
+export interface EvidenceAcceptanceDetail {
+  evidenceId: string
+  criterionId: string
+  /** The latest recorded run's commit for this evidence (undefined ⇒ no run recorded). */
+  runCommit?: string
+  /** The item's realization anchor commit (`ItemState.realizedCommit`), undefined ⇒ no anchor. */
+  anchorCommit?: string
+  /** The track-decidable freshness hint (see {@link AnchorFreshness}); the caller resolves ancestry. */
+  freshness: AnchorFreshness
+}
+
+/** Per-criterion acceptance detail (its evidence details + the strict per-criterion status, unchanged). */
+export interface CriterionAcceptanceDetail {
+  criterionId: string
+  /** The existing strict per-criterion status against `baselineCommit` (UNCHANGED logic, surfaced for context). */
+  status: CriterionStatus
+  evidence: EvidenceAcceptanceDetail[]
+}
+
+/**
+ * Per-item acceptance DETAIL — the anchor-freshness read surface the skill consumes. ADDITIVE alongside the
+ * strict `acceptanceStatus` (surfaced as `status`, UNCHANGED logic). Pure/read-only/clockless; track decides
+ * only the `anchor-fresh`/`needs-ancestry`/`no-anchor`/`no-run` rung — the caller/skill resolves git ancestry off the SHAs.
+ */
+export interface AcceptanceDetail {
+  itemId: ItemId
+  /** The item's realization anchor commit (`ItemState.realizedCommit`), undefined ⇒ no anchor. */
+  anchorCommit?: string
+  /** The existing strict per-item acceptance status against `baselineCommit` (UNCHANGED logic). */
+  status: AcceptanceStatus
+  criteria: CriterionAcceptanceDetail[]
 }
 
 // The persisted event types projected into an aggregate's amendment trace (the human/machine diff source).
@@ -454,6 +504,46 @@ export class TrackReader {
       baselineCommit: options.baselineCommit,
       requireAccepted: options.requireAccepted ?? false,
     })
+  }
+
+  /**
+   * Acceptance-freshness lifecycle — the anchor-freshness DETAIL for ONE item. ADDITIVE: the strict
+   * `acceptanceStatus`/`criterionStatus` (against `baselineCommit`) are surfaced VERBATIM as `status` (their
+   * logic is UNCHANGED — back-compat); this detail ADDS, per criterion/evidence, the run-SHA + the item's
+   * anchor-SHA (`realizedCommit`) + a track-decidable freshness hint (`anchor-fresh`/`needs-ancestry`/
+   * `no-anchor`/`no-run`). PURE/read-only/CLOCKLESS and git-free: track decides only the purely-decidable rung; the
+   * caller/skill resolves ancestry off the two SHAs (see {@link AnchorFreshness}). `baselineCommit` drives
+   * ONLY the strict `status` fields — the freshness hint is measured against the item's OWN anchor, never HEAD.
+   */
+  acceptanceDetail(itemId: ItemId, baselineCommit: string): AcceptanceDetail {
+    const state = fold(this.events())
+    const anchorCommit = state.items.get(itemId)?.realizedCommit
+    const criteria = [...state.criteria.values()].filter((c) => c.itemId === itemId)
+    const hintFor = (runCommit: string | undefined): AnchorFreshness => {
+      if (anchorCommit === undefined) return 'no-anchor' // fall back to the strict baselineCommit behavior
+      if (runCommit === undefined) return 'no-run' // an anchor exists but no run SHA — ancestry is impossible
+      return runCommit === anchorCommit ? 'anchor-fresh' : 'needs-ancestry' // equality ⊊ ancestry → defer
+    }
+    const criteriaDetail: CriterionAcceptanceDetail[] = criteria.map((c) => ({
+      criterionId: c.id,
+      status: criterionStatus(state, c.id, baselineCommit),
+      evidence: evidenceForCriterion(state, c.id).map((e) => {
+        const runCommit = e.latestRun?.commit
+        return {
+          evidenceId: e.id,
+          criterionId: c.id,
+          ...(runCommit !== undefined ? { runCommit } : {}),
+          ...(anchorCommit !== undefined ? { anchorCommit } : {}),
+          freshness: hintFor(runCommit),
+        }
+      }),
+    }))
+    return {
+      itemId,
+      ...(anchorCommit !== undefined ? { anchorCommit } : {}),
+      status: acceptanceStatus(state, itemId, baselineCommit),
+      criteria: criteriaDetail,
+    }
   }
 
   /** Recompute the integrity chain (SPEC §3) — pure detector, never repairs. */

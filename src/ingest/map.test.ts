@@ -56,6 +56,13 @@ describe('mapWorkEvent — valid kinds → normalized {method, settles, args}', 
       { method: 'declareScope', settles: 'always', args: ['i', { allowed: ['src/**'] }] }],
     ['item.spec-amend ⇒ always (payload passthrough; patch verbatim)', ev('item.spec-amend', { itemId: 'i', baseHash: 'h0', patch: [{ op: 'add', path: '/a', value: 1 }], resultHash: 'h1' }),
       { method: 'amendSpec', settles: 'always', args: ['i', { itemId: 'i', baseHash: 'h0', patch: [{ op: 'add', path: '/a', value: 1 }], resultHash: 'h1' }] }],
+    // Acceptance-freshness lifecycle — the two additive kinds (item.anchor, item.consolidate).
+    ['item.anchor ⇒ evidence (reason absent ⇒ undefined)', ev('item.anchor', { itemId: 'i', commit: 'sha-A' }),
+      { method: 'anchorRealization', settles: 'evidence', args: ['i', 'sha-A', undefined] }],
+    ['item.anchor +reason', ev('item.anchor', { itemId: 'i', commit: 'sha-A', reason: 'consolidate' }),
+      { method: 'anchorRealization', settles: 'evidence', args: ['i', 'sha-A', 'consolidate'] }],
+    ['item.consolidate ⇒ always (caller-authoritative items)', ev('item.consolidate', { items: ['i1', 'i2'], mergeCommit: 'merge-sha' }),
+      { method: 'consolidate', settles: 'always', args: [['i1', 'i2'], 'merge-sha'] }],
   ]
 
   it.each(cases)('%s', (_name, input, expected) => {

@@ -212,6 +212,16 @@ export function mapWorkEvent(ev: WorkEvent): MappedCommand {
       // clientToken is threaded via withClientToken (not an arg). M5 (canevas).
       args = [p['itemId'], { ...p }]
       break
+    case 'item.anchor':
+      // anchorRealization(itemId, commit, reason?, clientToken?) — clientToken is threaded via
+      // withClientToken (not an arg). Acceptance-freshness lifecycle.
+      args = [p['itemId'], p['commit'], p['reason']]
+      break
+    case 'item.consolidate':
+      // consolidate(items, mergeCommit, clientToken?) — items are CALLER-AUTHORITATIVE; clientToken is
+      // threaded via withClientToken (not an arg). Acceptance-freshness lifecycle (the squash/rebase heal).
+      args = [p['items'], p['mergeCommit']]
+      break
   }
 
   return { kind, method, settles, payload: p, args, ...(clientToken !== undefined ? { clientToken } : {}) }

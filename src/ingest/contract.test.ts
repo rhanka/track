@@ -6,7 +6,7 @@ import { INGEST_CONTRACT_VERSION, WORK_EVENT_KINDS, WORK_EVENT_SCHEMA } from './
 // required field) MUST fail here — this is the contract's snapshot gate (v2.3b-DESIGN.md §6/§7).
 describe('WorkEvent contract surface', () => {
   it('pins the contract version and the kind list', () => {
-    expect(INGEST_CONTRACT_VERSION).toBe('1.1.0') // seam v0 FREEZE — MINOR bump (additive optional fields)
+    expect(INGEST_CONTRACT_VERSION).toBe('1.2.0') // acceptance-freshness lifecycle — MINOR bump (additive new kinds)
     expect([...WORK_EVENT_KINDS]).toEqual([
       'item.create',
       'item.reparent',
@@ -28,6 +28,8 @@ describe('WorkEvent contract surface', () => {
       'scope.verification',
       'scope.declare',
       'item.spec-amend',
+      'item.anchor',
+      'item.consolidate',
     ])
   })
 
@@ -83,6 +85,8 @@ describe('WorkEvent contract surface', () => {
       'scope.verification': { method: 'recordVerification', settles: 'evidence', required: ['commit', 'runId', 'runner', 'verdict'] },
       'scope.declare': { method: 'declareScope', settles: 'always', required: ['itemId', 'scope'] },
       'item.spec-amend': { method: 'amendSpec', settles: 'always', required: ['baseHash', 'itemId', 'patch', 'resultHash'] },
+      'item.anchor': { method: 'anchorRealization', settles: 'evidence', required: ['commit', 'itemId'] },
+      'item.consolidate': { method: 'consolidate', settles: 'always', required: ['items', 'mergeCommit'] },
     })
   })
 })

@@ -63,6 +63,13 @@ export interface ItemState {
   accountable?: ActorId // RACI-A — the single neck-to-grab
   responsible?: ActorId[] // RACI-R — the doers
   engagementRef?: string
+  /**
+   * Acceptance-freshness lifecycle — the item's realization ANCHOR commit (the SHA its work landed at, or
+   * the merge commit after consolidation). A READ-ONLY DETAIL the freshness projection consumes (run-SHA vs
+   * anchor-SHA); it does NOT touch AcceptanceStatus/buckets/gates (those stay strict-against-baselineCommit).
+   * Set by the `realization.anchored` event (LAST-write-wins); absent ⇒ no anchor (fall back to baseline).
+   */
+  realizedCommit?: string
 }
 
 /**

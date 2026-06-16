@@ -108,6 +108,30 @@ export interface OpenBlockerInput {
 }
 
 /**
+ * Acceptance-freshness lifecycle — PURE eligibility predicate for `consolidate` (SYNTHESIS §5): an item is
+ * consolidation-eligible iff it is `done` AND accepted-at-its-OWN-commits = it has ≥1 criterion AND EVERY
+ * criterion's LATEST run is `pass` (evaluated off the folded state, at each run's OWN commit — NOT against the
+ * moving baseline/HEAD; using `acceptanceStatus` against HEAD would re-introduce the treadmill bug). A
+ * criterion is accepted-at-own-commit iff it has ≥1 evidence whose latest run is `pass` AND none whose latest
+ * run is `fail` AND none with no run yet (un-run). A `waived`-only criterion has NO pass run ⇒ NOT accepted
+ * (so the item is ineligible). A not-`done` item, a zero-criteria item, or ANY non-pass criterion ⇒ ineligible
+ * ⇒ consolidate SKIPS it ENTIRELY (no anchor, no re-stamp). Reads only the folded `State`; emits nothing.
+ */
+export function isConsolidationEligible(state: State, itemId: ItemId): boolean {
+  const item = state.items.get(itemId)
+  if (item === undefined || item.realization !== 'done') return false
+  const criteria = [...state.criteria.values()].filter((c) => c.itemId === itemId)
+  if (criteria.length === 0) return false // zero-criteria done item ⇒ nothing to heal ⇒ ineligible
+  return criteria.every((c) => {
+    const evidence = [...state.evidence.values()].filter((e) => e.criterionId === c.id)
+    if (evidence.length === 0) return false // a criterion with no evidence has no pass run ⇒ not accepted
+    if (evidence.some((e) => e.latestRun === undefined)) return false // un-run evidence ⇒ not accepted
+    if (evidence.some((e) => e.latestRun!.result === 'fail')) return false // a live fail ⇒ not accepted
+    return evidence.every((e) => e.latestRun!.result === 'pass') // every evidence latest = pass
+  })
+}
+
+/**
  * Command facade over the frozen event store (SPEC §6). Each mutating command folds the current
  * state, checks the transition against it (rejecting illegal ones BEFORE any append — SPEC §3),
  * then appends. Lots 3+ extend this with decisions, acceptance, priority.
@@ -297,6 +321,99 @@ export class Track {
       return
     }
     throw new DomainError(`unknown item ${itemId}`)
+  }
+
+  /**
+   * Acceptance-freshness lifecycle — re-point an item's realization ANCHOR commit by appending ONE
+   * `realization.anchored{itemId, commit, reason?}` on the EXISTING item aggregate (next seq; NO realization
+   * transition — `done` stays terminal; existing hashes untouched). Serves realize-time anchoring (`reason:
+   * 'realize'`) AND merge-time re-anchoring (`reason:'consolidate'`); the fold takes the LAST anchor (priors
+   * stay in the log for audit). The anchor is a READ DETAIL the freshness projection consumes (run-SHA vs
+   * anchor-SHA) — it does NOT touch AcceptanceStatus/buckets/gates. Guard (reject BEFORE any append): the
+   * item exists (anchoring is restricted to real items; a decision has no realization-anchor axis). Binding-
+   * gated (`Settles:'evidence'` — an attributable producer claim, like `acceptance.run`) + `clientToken`-
+   * idempotent via `withClientToken`.
+   */
+  anchorRealization(itemId: ItemId, commit: string, reason?: 'realize' | 'consolidate', clientToken?: string): void {
+    if (!this.state().items.has(itemId)) throw new DomainError(`unknown item ${itemId}`)
+    const emit = (): void => {
+      this.emit('item', itemId, 'realization.anchored', {
+        itemId,
+        commit,
+        ...(reason !== undefined ? { reason } : {}),
+      })
+    }
+    if (clientToken !== undefined) this.withClientToken(clientToken, emit)
+    else emit()
+  }
+
+  /**
+   * Acceptance-freshness lifecycle — the consolidate verb (the squash/rebase HEAL). The `itemIds` are
+   * CALLER-AUTHORITATIVE (track has no branch→item link — `branch.imported` is not folded — so it can NEVER
+   * infer the branch's item set; the caller/skill supplies it). For each given itemId that is ELIGIBLE
+   * (`done` AND accepted-at-its-own-commits — see {@link isConsolidationEligible}):
+   *   (a) append `realization.anchored{itemId, commit: mergeCommit, reason:'consolidate'}` — re-anchor; AND
+   *   (b) for each of the item's evidence whose LATEST run result is `pass`, re-stamp via the existing
+   *       append-only `recordRun(evidenceId, {commit: mergeCommit, env, runner, result:'pass'})` — the heal
+   *       that makes the item read `pass` at the landed mergeCommit (an attributable producer claim by the
+   *       merging agent's `by`/`prov`, consistent with "track records, never verifies").
+   * Eligibility is gated to done+ACCEPTED items only (SYNTHESIS §5): an item that is not done, has ZERO
+   * criteria, or has ANY criterion whose LATEST run is not `pass` (fail / un-run / waived-only — a waiver has
+   * no pass run, so it is NOT accepted-at-own-commit for re-stamp purposes) is SKIPPED ENTIRELY (no anchor,
+   * NO re-stamp). This prevents consolidating a non-accepted (e.g. MIXED [pass, fail]) item.
+   * NOTE — the heal is PER-MERGE, not permanent: an item consolidated at merge M1 is fresh at M1 ONLY; the
+   * NEXT unrelated merge moves the baseline to M2 and the strict cascade (`accept/status.ts:25`) re-stales it.
+   * This is INTENDED (strict-status preserved). The branch-lifecycle SKILL MUST re-run `consolidate` on every
+   * subsequent merge that moves HEAD past a consolidated item, else those items re-bucket TO-DO under
+   * `requireAccepted` (do NOT "fix" this by reaching back to HEAD-relative acceptance — that is the original bug).
+   * APPEND-ONLY: NO mutation/deletion. An unknown item throws BEFORE any append; ineligible items are simply
+   * skipped. `clientToken`-idempotent (a retry with the same token+mergeCommit is a no-op via the under-lock
+   * dedup / the seam fast-path). Returns nothing — the effect is the appended events.
+   */
+  consolidate(itemIds: ItemId[], mergeCommit: string, clientToken?: string): void {
+    const state = this.state()
+    // Guard fail-closed BEFORE any append: every given id must be a real item (track records, explicit target).
+    for (const itemId of itemIds) {
+      if (!state.items.has(itemId)) throw new DomainError(`unknown item ${itemId}`)
+    }
+    // Assemble the WHOLE consolidate as ONE atomic command batch (anchor + re-stamps): one `cmdId`, one
+    // shared `clientToken` ⇒ a retry with the same token is deduped to the ORIGINAL batch under the lock
+    // (Case B of dedupByClientToken / the ingest-seam fast-path). Building the parts up-front (off the
+    // initial fold) is safe: each evidence is re-stamped at most once (to mergeCommit), no intra-batch dep.
+    const parts: EventPart[] = []
+    for (const itemId of itemIds) {
+      if (!isConsolidationEligible(state, itemId)) continue // only done+ACCEPTED-at-own-commits items
+      // (a) re-anchor on the merge commit (LAST anchor wins).
+      parts.push({
+        aggregate: 'item',
+        aggregateId: itemId,
+        type: 'realization.anchored',
+        payload: { itemId, commit: mergeCommit, reason: 'consolidate' },
+      })
+      // (b) re-stamp each evidence whose LATEST run is `pass` (the heal) — an append-only `acceptance.run`
+      // at the merge commit (NEVER re-stamp a fail/un-run; skip if already at the merge commit ⇒ no-op).
+      for (const criterion of state.criteria.values()) {
+        if (criterion.itemId !== itemId) continue
+        for (const evidence of state.evidence.values()) {
+          if (evidence.criterionId !== criterion.id) continue
+          const latest = evidence.latestRun
+          if (latest === undefined || latest.result !== 'pass') continue
+          if (latest.commit === mergeCommit) continue
+          parts.push({
+            aggregate: 'item',
+            aggregateId: itemId,
+            type: 'acceptance.run',
+            payload: { evidenceId: evidence.id, commit: mergeCommit, env: latest.env, runner: latest.runner, result: 'pass' },
+          })
+        }
+      }
+    }
+    if (parts.length === 0) return // nothing to consolidate (no done items / all already healed) — no-op
+    const apply = (): void => {
+      this.emitBatch(parts)
+    }
+    if (clientToken !== undefined) this.withClientToken(clientToken, apply)
+    else apply()
   }
 
   /**

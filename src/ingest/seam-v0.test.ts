@@ -47,11 +47,11 @@ afterEach(() => rmSync(dir, { recursive: true, force: true }))
 const VRUN = { runId: 'vr-1', runner: 'stp-scope', commit: 'c1', verdict: 'clean' as const }
 
 describe('seam v0 — contract version bumps (additive, backward-compatible)', () => {
-  it('INGEST_CONTRACT_VERSION is a MINOR bump 1.0.0 → 1.1.0', () => {
-    expect(INGEST_CONTRACT_VERSION).toBe('1.1.0')
+  it('INGEST_CONTRACT_VERSION ≥ seam-v0 1.1.0 (now 1.2.0 — acceptance-freshness additive kinds, still MINOR)', () => {
+    expect(INGEST_CONTRACT_VERSION).toBe('1.2.0')
   })
-  it('READ_CONTRACT_VERSION is a MINOR bump (1.9.0 — seam v0 artifactLocator + graphExport WP6 reconciled)', () => {
-    expect(READ_CONTRACT_VERSION).toBe('1.9.0')
+  it('READ_CONTRACT_VERSION ≥ seam-v0 1.9.0 (now 1.10.0 — acceptanceDetail additive read, still MINOR)', () => {
+    expect(READ_CONTRACT_VERSION).toBe('1.10.0')
   })
 })
 

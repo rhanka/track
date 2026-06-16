@@ -200,6 +200,17 @@ function applyEvent(state: State, event: TrackEvent): void {
       break
     }
 
+    case 'realization.anchored': {
+      // Acceptance-freshness lifecycle — set/replace the item's realization ANCHOR commit (LAST-write-wins
+      // in stream order; priors stay in the log for audit). The `reason` (`realize`|`consolidate`) is audit
+      // metadata only — both re-point the same `realizedCommit`. A READ DETAIL: touches NO realization/
+      // acceptance/bucket logic (AcceptanceStatus stays strict-against-baselineCommit). Restricted to a real
+      // item at append (Track.anchorRealization), so this is a no-op for an unknown/decision aggregate.
+      const item = state.items.get(event.aggregateId)
+      if (item) item.realizedCommit = (event.payload as { commit: string }).commit
+      break
+    }
+
     case 'decision.outcome': {
       const decision = state.decisions.get(event.aggregateId)
       if (!decision) break

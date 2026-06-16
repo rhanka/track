@@ -2,6 +2,43 @@
 
 All notable changes to `@sentropic/track`. Format loosely follows [Keep a Changelog](https://keepachangelog.com); this package is pre-1.0 (the **event contract** is frozen, but the library/CLI surface may still evolve additively).
 
+## [0.14.0] — acceptance-freshness lifecycle: realization anchors + `track consolidate` (multi-worktree/merge)
+
+### Added
+- **The fix for the merge treadmill.** Acceptance freshness compares an evidence run's commit to a single
+  `baselineCommit` (resolved to the global HEAD), so ANY merge that moves HEAD re-staled EVERY pinned acceptance —
+  even items the merge never touched (a "tapis roulant"; surfaced by the sentropic-chat lane, repro item 38c). This
+  release adds the anchor + consolidation machinery to heal it WITHOUT weakening gate semantics.
+- **`realization.anchored` event + `ItemState.realizedCommit`.** A new append-only kind records the commit an item
+  was realized/landed at (last-anchor-wins). Additive optional; priors retained for audit.
+- **`track consolidate --items <id,…> --commit <mergeCommit>`** (new `item.consolidate` WorkEvent). At the merge
+  hook, for each given item that is `done` AND **accepted-at-its-own-commits** (every criterion has a `pass` run;
+  mixed/un-run/waived-only/zero-criteria items are SKIPPED — never re-stamp an unaccepted item), it appends
+  `realization.anchored{mergeCommit}` and re-stamps each passing evidence's `acceptance.run` at the merge commit —
+  an APPEND-ONLY, attributable producer claim (the merging agent asserts the squash/merge preserves the green tree;
+  consistent with track's "records, never verifies"). Item-IDs are caller-authoritative (track has no branch↔item
+  link). Atomic batch, `clientToken`-idempotent, workspace-contained, fail-closed on an unknown item.
+- **`TrackReader.acceptanceDetail(itemId, baselineCommit)`** — a NEW read DETAIL exposing per-criterion/evidence the
+  run-SHA + the item's anchor-SHA + a track-decidable freshness hint `anchor-fresh | needs-ancestry | no-run |
+  no-anchor`. The git merge-base/ancestry judgement stays OUTSIDE track (TrackReader holds no git) — the
+  branch-lifecycle skill consumes the SHAs. `AcceptanceStatus` is UNCHANGED and stays STRICT; the new detail is
+  purely additive, so no pass-only gate (`requireAccepted`, linked-accepted) and no CLI/MCP acceptance enum changes.
+
+### Notes
+- **Per-merge, by design.** The heal is per-merge, not permanent: the strict status still compares to the baseline,
+  so a later unrelated merge re-stales a consolidated item — the branch-lifecycle SKILL re-runs `consolidate` at each
+  merge. This is INTENTIONAL (gates stay strict-`pass`); it must not be "fixed" by reaching back to HEAD-relative
+  acceptance (the original bug). Pinned by a 2-merge regression test.
+- **Frozen event contract intact** — two additive kinds + one optional field; old logs fold byte-identical
+  (`computeHash` of a pre-anchor event unchanged). `INGEST_CONTRACT_VERSION` 1.1.0→1.2.0, `READ_CONTRACT_VERSION`
+  1.9.0→1.10.0 (minor). 657 tests.
+- **Double-reviewed by the Codex 5.5xhigh + Opus 4.8max PAIR (design + build, converged SHIP).** The pair caught the
+  squash/rebase keystone (a naive anchor is defeated by GitHub-default squash) and an over-broad `consolidate` (acted
+  on done-but-not-accepted items) — both fixed. Reviews/decisions: `docs/reviews/freshness-design-SYNTHESIS.md`,
+  `docs/plan/acceptance-freshness-lifecycle-DESIGN.md`.
+- **Follow-on (NOT in this release):** the `branch-lifecycle` skill (ships via `install-skills`) that drives
+  `consolidate` at branch-close + does the git ancestry/path judgement.
+
 ## [0.13.1] — reconcile seam v0 with `track export-graph` (WP6)
 
 ### Notes
