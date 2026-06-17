@@ -2,6 +2,15 @@
 
 All notable changes to `@sentropic/track`. Format loosely follows [Keep a Changelog](https://keepachangelog.com); this package is pre-1.0 (the **event contract** is frozen, but the library/CLI surface may still evolve additively).
 
+## [0.14.1] — `track-operation` skill for CLI write/import routing
+
+### Added
+- **`track-operation` skill** (`skills/track-operation/`) — a general agent-facing operating procedure for
+  the read-only MCP vs write-capable CLI split. It prevents agents from treating missing MCP write/import
+  tools as a blocker, routes BRANCH imports through `track branch import` from the target repo root, and
+  documents the `.track/` single-writer constraint. `track install-skills` now deploys it alongside
+  `present-decision` and `propose-workpackages` for Claude, Codex, Gemini, and agy.
+
 ## [0.14.0] — acceptance-freshness lifecycle: realization anchors + `track consolidate` (multi-worktree/merge)
 
 ### Added

@@ -17,9 +17,9 @@ let err: string[]
 let io: CliIO
 const SAVED_HOME = process.env['TRACK_INSTALL_HOME']
 
-// The installer discovers EVERY skill dir under the in-repo `skills/` bundle. These are the two skills
+// The installer discovers EVERY skill dir under the in-repo `skills/` bundle. These are the skills
 // shipped today; the discovery test below asserts the installer follows the bundle rather than this list.
-const SHIPPED_SKILLS = ['present-decision', 'propose-workpackages'] as const
+const SHIPPED_SKILLS = ['present-decision', 'propose-workpackages', 'track-operation'] as const
 
 beforeEach(() => {
   home = mkdtempSync(join(tmpdir(), 'track-skills-home-'))
@@ -130,6 +130,16 @@ describe('track install-skills — codex', () => {
     }
   })
 
+  it('installs the general track-operation skill so Codex can route writes through the CLI', () => {
+    expect(runCli(['install-skills', '--host', 'codex'], io)).toBe(0)
+    const skillMd = join(home, '.codex', 'skills', 'track-operation', 'SKILL.md')
+    const text = readFileSync(skillMd, 'utf8')
+    expect(text).toContain('name: track-operation')
+    expect(text).toContain('MCP server is read-only')
+    expect(text).toContain('track branch import plan/<BRANCH_FILE>.md')
+    expect(text).toContain('Do not treat missing MCP write/import tools as a blocker')
+  })
+
   it('--scope project adds an AGENTS.md pointer for each skill ONLY when AGENTS.md exists', () => {
     const agents = join(repo, 'AGENTS.md')
     writeFileSync(agents, '# Project AGENTS\n\nSome existing content.\n')
@@ -139,6 +149,7 @@ describe('track install-skills — codex', () => {
     expect(text).toContain('Some existing content.') // existing content preserved
     expect(text).toContain('present-decision') // bounded pointer added
     expect(text).toContain('propose-workpackages') // every skill gets a pointer
+    expect(text).toContain('track-operation') // general CLI-vs-MCP routing skill gets a pointer too
   })
 
   it('--scope project does NOT create AGENTS.md when it is absent (no --force)', () => {
@@ -172,6 +183,7 @@ describe('track install-skills — gemini / agy', () => {
     expect(text).toContain('Present')
     // every shipped skill gets its own TOML
     expect(existsSync(join(home, '.gemini', 'commands', 'propose-workpackages.toml'))).toBe(true)
+    expect(existsSync(join(home, '.gemini', 'commands', 'track-operation.toml'))).toBe(true)
   })
 
   it('agy is an alias for the same gemini TOML target', () => {
