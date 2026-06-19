@@ -17,7 +17,7 @@ import type { DecisionCreatedPayload } from '../model/decision.js'
 import type { WsjfInputs } from '../model/priority.js'
 import type { VerificationRecordedPayload } from '../model/verification.js'
 import type { SpecAmendPayload } from '../model/spec-amend.js'
-import type { ActorId, CommandEvent, Provenance, TrackEvent, Ulid } from '../events/types.js'
+import type { ActorId, CommandEvent, Provenance, ProvenanceAuth, TrackEvent, Ulid } from '../events/types.js'
 import type { EventStore } from '../events/store.js'
 import { fold, type State } from '../state/fold.js'
 import { Track, type DedupeHook, type OpenBlockerInput } from '../track.js'
@@ -43,10 +43,33 @@ export interface IngestResult {
   count: number
 }
 
-// Allowlist (not `!== 'unauthenticated'`, which would admit any future enum value). `'signed'` is
-// pre-listed so M3 adding it to Provenance['auth'] unlocks binding with no change here; today the only
-// valid authenticated value is 'local-user'.
-const BINDING_AUTH: ReadonlySet<string> = new Set(['local-user', 'signed'])
+// PRIVATE gate value — the live admit-set the authorization gate (`authorize`) reads. NOT exported and
+// NOT reachable from any consumer, so it CANNOT be mutated to admit an extra auth (a `ReadonlySet` is
+// compile-time only; the runtime Set stays mutable, so exporting the gate's own Set would let an
+// in-process host call `.add('unauthenticated')` and bypass the binding gate). Allowlist (not
+// `!== 'unauthenticated'`, which would admit any future enum value). `'signed'` is pre-listed so M3
+// adding it to Provenance['auth'] unlocks binding with no change here; today the only valid
+// authenticated value is 'local-user'.
+const BINDING_AUTH_GATE: ReadonlySet<ProvenanceAuth> = new Set<ProvenanceAuth>(['local-user', 'signed'])
+
+/**
+ * SAFE host pre-check: does this `auth` admit binding ("settling") writes? Closes over the PRIVATE
+ * gate value, so the answer always matches the live gate, yet the gate itself is unreachable and
+ * immutable from a caller — there is nothing to mutate to bypass it. An in-process host calls this to
+ * pre-check whether its channel `prov.auth` admits binding writes BEFORE submitting. Re-exported on the
+ * `./ingest` submit barrel.
+ */
+export function isBindingAuth(auth: ProvenanceAuth): boolean {
+  return BINDING_AUTH_GATE.has(auth)
+}
+
+/**
+ * DECOUPLED immutable copy of the admit-set, for a host that wants the values (not just the predicate).
+ * A FROZEN array that is a SEPARATE object from the gate's live Set — mutating (or attempting to mutate)
+ * it cannot affect the gate. NOTE: this is a frozen array, NOT `BINDING_AUTH_GATE`; the gate's decision
+ * depends ONLY on the private value above.
+ */
+export const BINDING_AUTH: readonly ProvenanceAuth[] = Object.freeze(['local-user', 'signed'] as const)
 
 /** Does this command settle state (⇒ requires an authenticated channel)? */
 function isBinding(cmd: MappedCommand): boolean {
@@ -192,7 +215,7 @@ function authorize(cmd: MappedCommand, ctx: IngestContext, state: State): void {
       throw new IngestError(`${cmd.kind}: affects an aggregate in workspace "${tw}", not the channel workspace "${ctx.workspace}"`)
     }
   }
-  if (isBinding(cmd) && !BINDING_AUTH.has(ctx.prov.auth)) {
+  if (isBinding(cmd) && !isBindingAuth(ctx.prov.auth)) {
     throw new IngestError(
       `${cmd.kind} is a binding write and requires an authenticated channel (auth="${ctx.prov.auth}")`,
     )

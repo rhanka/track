@@ -2,6 +2,28 @@
 
 All notable changes to `@sentropic/track`. Format loosely follows [Keep a Changelog](https://keepachangelog.com); this package is pre-1.0 (the **event contract** is frozen, but the library/CLI surface may still evolve additively).
 
+## [0.15.0] — `@sentropic/track/ingest` submit export for the in-process M5 host
+
+### Added
+- **`@sentropic/track/ingest` package export** — a curated, additive SUBMIT-facing barrel (`src/ingest/index.ts`)
+  that lets an IN-PROCESS host import the write seam through a stable subpath. It re-exports exactly what a host
+  needs to construct + submit a `WorkEvent` and read the receipt: `ingest`, the `IngestContext` + `IngestResult`
+  (receipt) types, the `WorkEvent`/`WorkEventKind` types, `INGEST_CONTRACT_VERSION`, `BINDING_AUTH`, and the
+  `IngestError` a caller must catch. Curated like `./read` (a deliberate, documented contract — not `export *`);
+  re-exports from the existing modules, no logic duplicated. `BINDING_AUTH` is now exported from `src/ingest/ingest.ts`
+  (was module-private) so a host can pre-check whether its channel `prov.auth` admits binding writes.
+- **This unblocks the M5 canevas host's submit channel.** Owner-ratified "submit = A" (M3-channel-DESIGN.md /
+  M5-canevas-HOST-INTEGRATION-DESIGN.md §5): the host imports `ingest()` in-process and CARRIES AUTH via the
+  `IngestContext` (WHO/trust from the context, never per-event). A binding ("settling") write requires an
+  authenticated channel (`prov.auth ∈ {local-user, signed}`); workspace containment is verified against folded
+  state. The HTTP ingest gateway (M3) stays DEFERRED (a separate co-versioned package fronting `ingest()`).
+
+### Notes
+- **Packaging-only — the frozen event contract is intact and NO wire/read change.** `INGEST_CONTRACT_VERSION`
+  stays `1.2.0` and `READ_CONTRACT_VERSION` is unchanged: this release adds a package `exports` subpath
+  (`./ingest`), it does not touch the WorkEvent schema, the envelope, the mapper, the authorizer, or any read
+  surface. The `.` / `./read` / `./seam` exports are unchanged; `dist` was already in `files`.
+
 ## [0.14.1] — `track-operation` skill for CLI write/import routing
 
 ### Added

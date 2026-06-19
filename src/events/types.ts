@@ -83,6 +83,10 @@ export interface ProvenanceSignature {
   by: string // signer key id / NHI id
 }
 
+/** Trust level of a write's `by` (cf. `Provenance['auth']`). Named so the ingest binding-auth
+ *  pre-check predicate can be typed against the same union. */
+export type ProvenanceAuth = 'local-user' | 'unauthenticated' | 'signed'
+
 /**
  * Provenance of a write (D3, "hybrid A→B"). `by` is the actor (on whose behalf); `prov` records HOW
  * the write arrived and its TRUST level, so a reviewer of the immutable log can tell a human-CLI
@@ -102,7 +106,7 @@ export interface Provenance {
    * is the trusted channel's job (the platform IdP / the h2a bridge that built the `IngestContext`),
    * and re-verifiability is any consumer's job. Owner-ratified semantics (M3, option ①).
    */
-  auth: 'local-user' | 'unauthenticated' | 'signed'
+  auth: ProvenanceAuth
   /** Verified-principal identity the channel attests (NHI id / JWT `sub`). RECORDED, not verified. */
   principal?: string
   /** The attestation signature, recorded for audit (see ProvenanceSignature). RECORDED, not verified. */
