@@ -454,15 +454,18 @@ export class Track {
     type: DemandRaisedPayload['type']
     raw: DemandRaisedPayload['raw']
     source: DemandRaisedPayload['source']
+    workspace: string
     handler?: ActorId
-    workspace?: string
     sourceKey?: string
     concerns?: DemandRaisedPayload['concerns']
     links?: DemandRaisedPayload['links']
   }): DemandId {
     const handler = this.resolveHandler(input.handler)
     const validated = assertDemandRaised({ ...input, handler })
-    const workspace = input.workspace ?? 'ws'
+    // `workspace` is REQUIRED on the facade — no silent `'ws'` default. A mis-bucketed demand poisons the
+    // workspace-keyed dedup + reads; ingest already supplies + enforces it (contract `required`), so this only
+    // protects direct facade callers from a silent mis-bucket.
+    const { workspace } = input
     const demandId = this.newId()
     // Result id = the PERSISTED event's aggregateId (createItem pattern) — stable under a concurrent-retry dedup.
     const [persisted] = this.emit('demand', demandId, 'demand.raised', { ...validated, workspace })
@@ -641,8 +644,14 @@ export class Track {
 
   /**
    * Demand lifecycle (Mode A) — the `duplicateOf` containment for a `duplicate` disposition: the survivor
-   * must exist (a same-workspace demand or item), be SAME-WORKSPACE as the duplicate, and be NON-SELF.
-   * Asserted at append AND under the lock (F2 cross-demand dedup race). `state` defaults to the live fold.
+   * must exist (a same-workspace demand or item), be SAME-WORKSPACE as the duplicate, be NON-SELF, AND — when
+   * it is a DEMAND — be an actual survivor (its OWN status must NOT itself be terminal `duplicate`/`rejected`).
+   * The last guard closes the mutual-duplicate-no-survivor RACE: two actors folding the same pre-lock state can
+   * race `dispose A duplicateOf B` and `dispose B duplicateOf A` → both terminal `duplicate` pointing at each
+   * other, with NO survivor (real work lost). Re-asserting under the lock (F2) on the now-current fold catches
+   * the second writer: when its target has just become terminal-`duplicate`, it is a non-survivor ⇒ reject.
+   * An `item` target, or a demand in `qualifying`/`agreed`/`parked`/`raised`, is a valid survivor. `state`
+   * defaults to the live fold; the under-lock recheck passes the re-folded log.
    */
   private assertDuplicateContainment(
     demand: { id: DemandId; workspace: string },
@@ -655,16 +664,33 @@ export class Track {
     if (duplicateOf.id === demand.id) {
       throw new DomainError(`demand.disposition: a demand cannot be a duplicate of itself (${demand.id})`)
     }
-    const survivorWorkspace =
-      duplicateOf.kind === 'demand'
-        ? state.demands.get(duplicateOf.id)?.workspace
-        : state.items.get(duplicateOf.id)?.workspace
-    if (survivorWorkspace === undefined) {
-      throw new DomainError(`demand.disposition: unknown duplicateOf ${duplicateOf.kind} ${duplicateOf.id}`)
+    if (duplicateOf.kind === 'demand') {
+      const survivor = state.demands.get(duplicateOf.id)
+      if (survivor === undefined) {
+        throw new DomainError(`demand.disposition: unknown duplicateOf demand ${duplicateOf.id}`)
+      }
+      if (survivor.workspace !== demand.workspace) {
+        throw new DomainError(
+          `demand.disposition: a duplicateOf survivor must be in the same workspace "${demand.workspace}" (got "${survivor.workspace}")`,
+        )
+      }
+      // The survivor must be an actual survivor — a demand whose OWN status is terminal `duplicate`/`rejected`
+      // is a NON-SURVIVOR (closes the mutual-duplicate-no-survivor race: pointing at it would lose this demand
+      // with no real heir). `qualifying`/`agreed`/`parked`/`raised` are all valid survivors.
+      if (survivor.status === 'duplicate' || survivor.status === 'rejected') {
+        throw new DomainError(
+          `demand.disposition: duplicateOf demand ${duplicateOf.id} is itself ${survivor.status} (a non-survivor) — a duplicate must point at a real survivor`,
+        )
+      }
+      return
     }
-    if (survivorWorkspace !== demand.workspace) {
+    const survivorItem = state.items.get(duplicateOf.id)
+    if (survivorItem === undefined) {
+      throw new DomainError(`demand.disposition: unknown duplicateOf item ${duplicateOf.id}`)
+    }
+    if (survivorItem.workspace !== demand.workspace) {
       throw new DomainError(
-        `demand.disposition: a duplicateOf survivor must be in the same workspace "${demand.workspace}" (got "${survivorWorkspace}")`,
+        `demand.disposition: a duplicateOf survivor must be in the same workspace "${demand.workspace}" (got "${survivorItem.workspace}")`,
       )
     }
   }

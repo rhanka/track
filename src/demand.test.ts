@@ -42,7 +42,7 @@ const raw = { text: 'add dark mode' }
 const source = { kind: 'human' as const }
 
 function raise(over: Record<string, unknown> = {}): string {
-  return track.raiseDemand({ type: 'feature', raw, source, handler: 'h:raiser', ...over } as Parameters<Track['raiseDemand']>[0])
+  return track.raiseDemand({ type: 'feature', workspace: 'ws', raw, source, handler: 'h:raiser', ...over } as Parameters<Track['raiseDemand']>[0])
 }
 
 describe('raiseDemand → demand.raised (the durable capture)', () => {
@@ -69,7 +69,7 @@ describe('raiseDemand → demand.raised (the durable capture)', () => {
   })
 
   it('rejects an invalid type fail-closed (frozen contract: validate the payload)', () => {
-    expect(() => track.raiseDemand({ type: 'epic' as never, raw, source, handler: 'h' })).toThrow()
+    expect(() => track.raiseDemand({ type: 'epic' as never, workspace: 'ws', raw, source, handler: 'h' })).toThrow()
   })
 })
 
@@ -257,14 +257,14 @@ describe('startSpec / abandonSpec (the spec-attempt lease facts)', () => {
 describe('handler precedence (handler = ctx.handler ?? prov.principal ?? by)', () => {
   it('falls back to prov.principal when no explicit handler is given', () => {
     const t = freshTrack({ by: 'system', prov: { transport: 'mcp-stdio', proposed: true, auth: 'signed', principal: 'claude:track:xyz' } })
-    const d = t.raiseDemand({ type: 'feature', raw, source }) // no handler in input
+    const d = t.raiseDemand({ type: 'feature', workspace: 'ws', raw, source }) // no handler in input
     const ev = store.readAll().find((e) => e.type === 'demand.raised')!
     expect((ev.payload as { handler: string }).handler).toBe('claude:track:xyz')
   })
 
   it('falls back to by when neither ctx.handler nor prov.principal is present', () => {
     const t = freshTrack({ by: 'cli-user' })
-    const d = t.raiseDemand({ type: 'feature', raw, source })
+    const d = t.raiseDemand({ type: 'feature', workspace: 'ws', raw, source })
     void d
     const ev = store.readAll().find((e) => e.type === 'demand.raised')!
     expect((ev.payload as { handler: string }).handler).toBe('cli-user')
@@ -272,7 +272,7 @@ describe('handler precedence (handler = ctx.handler ?? prov.principal ?? by)', (
 
   it('an explicit handler wins over prov.principal and by', () => {
     const t = freshTrack({ by: 'cli-user', prov: { transport: 'mcp-stdio', proposed: true, auth: 'signed', principal: 'relayer' } })
-    const d = t.raiseDemand({ type: 'feature', raw, source, handler: 'explicit:handler' })
+    const d = t.raiseDemand({ type: 'feature', workspace: 'ws', raw, source, handler: 'explicit:handler' })
     void d
     const ev = store.readAll().find((e) => e.type === 'demand.raised')!
     expect((ev.payload as { handler: string }).handler).toBe('explicit:handler')
@@ -305,6 +305,13 @@ describe('additive-hash invariant (a pre-demand log folds + hashes byte-identica
     expect('demandId' in (created.payload as object)).toBe(false)
     // its contentHash equals computeHash over the stripped core (no demandId leaked into the bytes)
     expect(computeHash(stripFrame(created))).toBe(created.contentHash)
+    // FROZEN GOLDEN — pin the exact bytes against a LITERAL hash (computed once from the current canonical
+    // form, with the deterministic clock/newId of `freshTrack`). Self-consistency (above) only proves the
+    // hash matches its OWN canonical bytes; this catches a regression that *changes* pre-demand hashing
+    // (e.g. a new field leaking into the canonical core, or a canonicalizer change) — both events would still
+    // be self-consistent yet would no longer equal this frozen baseline. If this fails, the additive invariant
+    // (old logs replay byte-identical) is BROKEN — do not re-pin without understanding why the bytes moved.
+    expect(created.contentHash).toBe('sha256:50f39131933adaf5f0bb8e2e9f006882bdc5df882ec331a043c022cfd38e5837')
   })
 })
 
@@ -318,7 +325,7 @@ describe('scoped under-lock semantic-race guard (F2)', () => {
     let n = 0
     const mk = () => new Track(store2, { by: 'tester', now: () => NOW, newId: () => `id-${String(++n).padStart(4, '0')}` })
     const t = mk()
-    const d = t.raiseDemand({ type: 'feature', raw, source, handler: 'h' })
+    const d = t.raiseDemand({ type: 'feature', workspace: 'ws', raw, source, handler: 'h' })
     t.claimDemand(d, { handler: 'h' })
 
     // A store whose FIRST readAll() (the facade's pre-lock fold) is STALE (demand still qualifying), but whose
@@ -354,5 +361,79 @@ describe('scoped under-lock semantic-race guard (F2)', () => {
     const d = raise()
     expect(() => track.claimDemand(d, { handler: 'h' })).not.toThrow()
     expect(track.state().demands.get(d)!.status).toBe('qualifying')
+  })
+
+  it('rejects a mutual-duplicate race so a survivor always remains (A↔B, no data loss)', () => {
+    // Data-loss bug: two actors race `dispose A duplicateOf B` and `dispose B duplicateOf A` from the SAME
+    // pre-lock state where both are qualifying. If both committed, BOTH demands would be terminal `duplicate`
+    // pointing at each other with NO survivor (real work lost). The under-lock recheck must catch the second
+    // writer: its target (A) is now terminal-`duplicate` (a non-survivor) ⇒ REJECT, leaving B as the survivor.
+    const path = join(dir, 'dup-race', '.track', 'events.jsonl')
+    const store2 = new EventStore(path)
+    let n = 0
+    const mk = () => new Track(store2, { by: 'tester', now: () => NOW, newId: () => `id-${String(++n).padStart(4, '0')}` })
+    const t = mk()
+    const a = t.raiseDemand({ type: 'feature', workspace: 'ws', raw, source, handler: 'h' })
+    const b = t.raiseDemand({ type: 'feature', workspace: 'ws', raw, source, handler: 'h' })
+    t.claimDemand(a, { handler: 'h' })
+    t.claimDemand(b, { handler: 'h' })
+
+    // Both actors folded THIS pre-lock state (A and B both qualifying — each a valid survivor for the other).
+    const staleSnapshot = store2.readAll()
+    class StalePreLockStore extends EventStore {
+      private served = false
+      override readAll(): ReturnType<EventStore['readAll']> {
+        if (!this.served) {
+          this.served = true
+          return staleSnapshot
+        }
+        return super.readAll()
+      }
+    }
+
+    // Actor 1 wins: A → duplicate(B) commits on the real store (B is qualifying ⇒ a valid survivor).
+    t.disposeDemand(a, { outcome: 'duplicate', handler: 'h1', reason: 'dup', duplicateOf: { kind: 'demand', id: b } })
+    const after = store2.readAll().length
+
+    // Actor 2: its facade fold is the STALE snapshot (A still qualifying ⇒ a "valid" survivor), so the facade
+    // assert PASSES; the under-lock recheck must re-fold the (now A=duplicate) log and REJECT — A is a
+    // non-survivor, so disposing B→duplicate(A) would leave NO survivor.
+    const racing = new StalePreLockStore(path)
+    let m = 0
+    const t2 = new Track(racing, { by: 'tester', now: () => NOW, newId: () => `id-${String(++m).padStart(4, '0')}` })
+    expect(() =>
+      t2.disposeDemand(b, { outcome: 'duplicate', handler: 'h2', reason: 'dup', duplicateOf: { kind: 'demand', id: a } }),
+    ).toThrow(/survivor/i)
+
+    // Nothing extra appended; exactly ONE survivor remains: A is duplicate, B is still qualifying (the survivor).
+    expect(store2.readAll().length).toBe(after)
+    expect(t.state().demands.get(a)!.status).toBe('duplicate')
+    expect(t.state().demands.get(b)!.status).toBe('qualifying')
+  })
+
+  it('rejects (at the facade) a duplicate whose survivor demand is itself terminal duplicate/rejected', () => {
+    // Even without a race, a `duplicateOf` target whose own status is a non-survivor (terminal duplicate or
+    // rejected) must be rejected at the facade — pointing at a non-survivor loses the demand with no real heir.
+    const survivor = raise()
+    const deadDup = raise()
+    const deadRej = raise()
+    track.claimDemand(survivor, { handler: 'h' })
+    track.claimDemand(deadDup, { handler: 'h' })
+    track.disposeDemand(deadDup, { outcome: 'duplicate', handler: 'h', reason: 'dup', duplicateOf: { kind: 'demand', id: survivor } })
+    track.claimDemand(deadRej, { handler: 'h' })
+    track.disposeDemand(deadRej, { outcome: 'rejected', handler: 'h', reason: 'no' })
+
+    const d = raise()
+    track.claimDemand(d, { handler: 'h' })
+    expect(() =>
+      track.disposeDemand(d, { outcome: 'duplicate', handler: 'h', reason: 'x', duplicateOf: { kind: 'demand', id: deadDup } }),
+    ).toThrow(/survivor/i)
+    expect(() =>
+      track.disposeDemand(d, { outcome: 'duplicate', handler: 'h', reason: 'x', duplicateOf: { kind: 'demand', id: deadRej } }),
+    ).toThrow(/survivor/i)
+    // a still-qualifying survivor is accepted
+    expect(() =>
+      track.disposeDemand(d, { outcome: 'duplicate', handler: 'h', reason: 'x', duplicateOf: { kind: 'demand', id: survivor } }),
+    ).not.toThrow()
   })
 })

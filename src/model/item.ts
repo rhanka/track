@@ -6,6 +6,13 @@ export type BlockerId = Ulid
 
 // `'defect'` is ADDITIVE (demand-lifecycle Mode A): a defect demand promotes into a `kind:'defect'` item.
 // Additive to the enum — pre-demand logs never carry it, so it changes no existing event/hash/bucket.
+//
+// `bug` vs `defect` — kept DISTINCT (rule):
+//   - `defect`  = promoted from a `DemandType:'defect'` demand (carries the `concerns` regression back-link;
+//                 reachable ONLY via demand promotion (`agreeDemand`), NEVER a direct `item.create`).
+//   - `bug`     = the legacy ad-hoc kind (a direct create with no demand parent).
+//   The `bug`→`defect` deprecation/merge is DEFERRED to a later lot. (See demand-lifecycle-modeA-DESIGN §Type.)
+//   `defect` is intentionally promotion-only ⇒ it is NOT in the ingest `ITEM_KINDS` / MCP direct-create enums.
 export type ItemKind = 'feature' | 'bug' | 'chore' | 'decision' | 'defect'
 /**
  * An optional, additive container marker (Workpackages design §2; Scope §B(a)). A workpackage is
