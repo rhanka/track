@@ -41,3 +41,26 @@ export {
   type ScopeValidateStatus,
   type SemanticStatus,
 } from './scope-validate.js'
+// Self-contained /read (1.11.0, additive) — the foundational/model types NAMED in the public shapes of the
+// read-contract interfaces above, so a versioned consumer (Focus-M1 L2) binds against `/read` ALONE without
+// reaching into the unversioned main `@sentropic/track` barrel. Pure type re-exports — no value, no logic.
+// from ../model/decision.js — Dossier (DecisionDossierView.dossier) + its constituents (Option/QAEntry on
+//   Dossier.{options,qa}; DossierArtifact on Dossier.artifacts; ComprehensionEvidence on a DossierArtifact)
+//   and Outcome (DecisionDossierView.outcome / decision affordances).
+export {
+  type ComprehensionEvidence,
+  type Dossier,
+  type DossierArtifact,
+  type Option,
+  type Outcome,
+  type QAEntry,
+} from '../model/decision.js'
+// from ../model/priority.js — PriorityAssessment (Dossier.decisionEvaluation — the frozen priority snapshot).
+export { type PriorityAssessment } from '../model/priority.js'
+// from ../model/item.js — ItemId (DecisionDossierView.id, CanevasOptions.decisionId, StalledItem.id, the
+//   amendmentTrace/verificationRuns/acceptanceDetail parameters).
+export { type ItemId } from '../model/item.js'
+// from ../events/types.js — ActorId (AmendmentStep.by), EventType (AmendmentStep.kind / the amendment event
+//   kinds), Provenance (AmendmentProv.auth / ProvLineage.auth = Provenance['auth']), Sha256 (Cursor.head,
+//   Freshness, BranchProvenance.{sourceHash,structureHash}).
+export { type ActorId, type EventType, type Provenance, type Sha256 } from '../events/types.js'

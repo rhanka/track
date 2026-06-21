@@ -2,6 +2,29 @@
 
 All notable changes to `@sentropic/track`. Format loosely follows [Keep a Changelog](https://keepachangelog.com); this package is pre-1.0 (the **event contract** is frozen, but the library/CLI surface may still evolve additively).
 
+## [0.17.0] — self-contained `@sentropic/track/read` (Focus-M1 L2 versioned binding)
+
+### Added
+- **`@sentropic/track/read` is now self-contained (purely additive).** The versioned read subpath
+  re-exports every foundational/model type NAMED in the public shape of a `/read`-exported interface, so a
+  consumer (Focus-M1 L2) can bind against `@sentropic/track/read` ALONE — without reaching into the
+  unversioned main `@sentropic/track` barrel's `export *` library surface. New **type-only** re-exports
+  (`export type { … }`, no value/runtime change):
+  - from `../model/decision.js` — `Dossier`, `Outcome`, `Option`, `QAEntry`, `DossierArtifact`,
+    `ComprehensionEvidence` (the `DecisionDossierView.dossier`/`outcome` closure).
+  - from `../model/priority.js` — `PriorityAssessment` (`Dossier.decisionEvaluation`).
+  - from `../model/item.js` — `ItemId` (`DecisionDossierView.id`, `CanevasOptions.decisionId`, `StalledItem.id`,
+    the `amendmentTrace`/`verificationRuns`/`acceptanceDetail` parameters).
+  - from `../events/types.js` — `ActorId` (`AmendmentStep.by`), `EventType` (`AmendmentStep.kind`),
+    `Provenance` (`AmendmentProv.auth` / `ProvLineage.auth`), `Sha256` (`Cursor.head`, `Freshness`,
+    `BranchProvenance`).
+
+### Notes
+- **Frozen event contract intact — no wire/logic change.** `READ_CONTRACT_VERSION` bumps `1.10.0` → `1.11.0`
+  (additive-only: the read surface only GROWS). `INGEST_CONTRACT_VERSION` is unchanged. Existing exports are
+  not removed, renamed, or reordered; this is a pure additive re-export lot guarded by
+  `src/read/read-self-contained.test.ts` (typecheck is the real gate).
+
 ## [0.16.0] — harness↔track seam v0 cross-contract drift-gate (BR-H1 atomic pair)
 
 ### Added

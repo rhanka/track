@@ -45,7 +45,7 @@ import { graphExportFromState, type TrackGraphFragment } from '../graph-export.j
  * shapes it returns may only GROW (new methods / new optional fields); nothing is removed or
  * repurposed without a major bump. Consumers gate on `reader.contractVersion`.
  */
-export const READ_CONTRACT_VERSION = '1.10.0' // +acceptanceDetail (anchor-freshness read detail) — additive
+export const READ_CONTRACT_VERSION = '1.11.0' // +self-contained /read: re-export referenced model/foundational types — additive
 
 /** Provenance of the last `branch.imported` for a locator (drawn from the raw event log). */
 export interface BranchProvenance {
