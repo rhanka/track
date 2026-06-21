@@ -10,7 +10,10 @@ export type Sha256 = `sha256:${string}`
 // acceptance evidence on `item`). A workspace-scoped VerificationRun (no wpRef) lands on a synthetic
 // `verification:<workspace>` aggregateId; a wpRef'd run records on the existing `item` aggregate.
 // Additive: absent on every pre-scope event ⇒ zero hash/seq/bucket change for existing aggregates.
-export const AGGREGATES = ['item', 'decision', 'blocker', 'verification'] as const
+// Demand lifecycle (Mode A) — `demand` is an ADDITIVE first-class aggregate that PROMOTES into an `item`
+// at `agreed` (DESIGN demand-lifecycle-modeA §D1). Additive: absent on every pre-demand event ⇒ zero
+// hash/seq/bucket change for existing aggregates (a demand has its own aggregateId namespace).
+export const AGGREGATES = ['item', 'decision', 'blocker', 'verification', 'demand'] as const
 export type Aggregate = (typeof AGGREGATES)[number]
 
 export const EVENT_TYPES = [
@@ -60,6 +63,17 @@ export const EVENT_TYPES = [
   // Folds `item.realizedCommit` (a READ DETAIL — does NOT touch AcceptanceStatus/buckets/gates). Additive:
   // absent on every pre-anchor event ⇒ zero hash/seq/bucket change; the anchor is purely the freshness anchor.
   'realization.anchored',
+  // Demand lifecycle (Mode A) — the `demand` aggregate's persisted lifecycle facts + the spec-attempt facts
+  // (DESIGN demand-lifecycle-modeA §Events). A `demand` is RAISED (issue), CLAIMED into qualifying, then
+  // either AGREED (the PIVOT — promotes to item(s) in one atomic batch) or DISPOSED (rejected/duplicate/
+  // parked). `spec.started`/`spec.abandoned` are durable facts of WHO attempted/abandoned an item's spec.
+  // All ADDITIVE: absent on every pre-demand log ⇒ zero hash/seq/bucket change (a new aggregate/event type).
+  'demand.raised',
+  'demand.qualifying-started',
+  'demand.agreed',
+  'demand.disposition',
+  'spec.started',
+  'spec.abandoned',
 ] as const
 export type EventType = (typeof EVENT_TYPES)[number]
 

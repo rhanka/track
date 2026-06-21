@@ -76,3 +76,21 @@ export {
   type SpecAmendment,
   type SpecAmendPayload,
 } from './spec-amend.js'
+// Demand lifecycle (Mode A) — the `demand` aggregate model + its lifecycle machine.
+export {
+  assertDemandRaised,
+  assertDemandTransition,
+  assertDispositionOutcome,
+  DEMAND_TRANSITIONS,
+  isDemandTerminal,
+  type DemandId,
+  type DemandRaisedPayload,
+  type DemandRaw,
+  type DemandRef,
+  type DemandSource,
+  type DemandState,
+  type DemandStatus,
+  type DemandType,
+  type DispositionOutcome,
+} from './demand.js'
+export { type TransitionHandlerFields } from './item.js'

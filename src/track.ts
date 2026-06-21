@@ -54,6 +54,15 @@ import {
 } from './model/item.js'
 import { assertVerificationRun, type VerificationRecordedPayload } from './model/verification.js'
 import { assertSpecAmend, type SpecAmendPayload } from './model/spec-amend.js'
+import {
+  assertDemandRaised,
+  assertDemandTransition,
+  assertDispositionOutcome,
+  type DemandId,
+  type DemandRaisedPayload,
+  type DemandRef,
+  type DemandStatus,
+} from './model/demand.js'
 import { fold, type State } from './state/fold.js'
 
 interface EventPart {
@@ -79,6 +88,14 @@ export type DedupeHook = (
   inputs: ReadonlyArray<CommandEvent>,
   existing: readonly TrackEvent[],
 ) => TrackEvent[] | null
+
+/**
+ * Under-lock DOMAIN-LEGALITY recheck (demand-lifecycle Mode A, F2). Receives a command's `inputs` and the
+ * just-read `existing` log UNDER THE STORE LOCK; re-folds it and re-asserts the demand transition (+ the
+ * duplicateOf containment); MUST THROW (a DomainError) when the command is no longer legal against the
+ * now-current state. Scoped to the new Mode A demand commands. See `EventStore.appendCommand`'s `recheck` opt.
+ */
+export type RecheckHook = (inputs: ReadonlyArray<CommandEvent>, existing: readonly TrackEvent[]) => void
 
 export interface TrackOptions {
   /** Injectable clock (ISO-8601 ms). Defaults to wall clock. */
@@ -150,6 +167,14 @@ export class Track {
    * across a re-minted aggregateId. Absent ⇒ the store's default `(clientToken, aggregateId)` backstop.
    */
   private activeDedupe: DedupeHook | undefined
+  /**
+   * Under-lock DOMAIN-LEGALITY recheck for the active scope (demand-lifecycle Mode A, F2 semantic-race
+   * guard). SCOPED to the new Mode A demand commands: when set (via `withDemandRecheck`), it is passed to
+   * `EventStore.appendCommand`'s `recheck` opt so the demand transition (+ duplicateOf containment) is
+   * re-asserted UNDER THE LOCK against the now-current folded log — rejecting a cross-actor race the
+   * per-aggregate lock does not cover. Absent for every existing append path (unchanged).
+   */
+  private activeRecheck: RecheckHook | undefined
 
   constructor(
     private readonly store: EventStore,
@@ -414,6 +439,234 @@ export class Track {
     }
     if (clientToken !== undefined) this.withClientToken(clientToken, apply)
     else apply()
+  }
+
+  // ---- Demand lifecycle (Mode A) — the demand aggregate write path (DESIGN demand-lifecycle-modeA) ----
+
+  /**
+   * Raise a demand (`demand.raise` → `demand.raised`) — the durable t=0 capture (the "nothing untracked"
+   * guarantee). NON-BINDING (any channel may capture an issue). Creates a new `demand` aggregate in status
+   * `raised`. The `raw`/`source` are the immutable capture; the `handler` (who is handling, resolved by
+   * precedence `ctx.handler ?? prov.principal ?? by`) is logged on this and every later lifecycle step. The
+   * payload is validated fail-closed (assertDemandRaised). Returns the new DemandId.
+   */
+  raiseDemand(input: {
+    type: DemandRaisedPayload['type']
+    raw: DemandRaisedPayload['raw']
+    source: DemandRaisedPayload['source']
+    handler?: ActorId
+    workspace?: string
+    sourceKey?: string
+    concerns?: DemandRaisedPayload['concerns']
+    links?: DemandRaisedPayload['links']
+  }): DemandId {
+    const handler = this.resolveHandler(input.handler)
+    const validated = assertDemandRaised({ ...input, handler })
+    const workspace = input.workspace ?? 'ws'
+    const demandId = this.newId()
+    // Result id = the PERSISTED event's aggregateId (createItem pattern) — stable under a concurrent-retry dedup.
+    const [persisted] = this.emit('demand', demandId, 'demand.raised', { ...validated, workspace })
+    return (persisted?.aggregateId as DemandId) ?? demandId
+  }
+
+  /**
+   * Claim a demand into qualifying (`demand.claim` → `demand.qualifying-started`) — `raised|parked →
+   * qualifying`, the mandatory step before any off-ramp (every outcome is attributable to a handler).
+   * BINDING. Asserts the transition AT APPEND (the facade fold) AND under the lock (F2 race guard). The
+   * `handler` is logged. Re-entrant from `parked` (a re-claim is a new handler attempt / handover).
+   */
+  claimDemand(demandId: DemandId, opts: { handler?: ActorId; leaseId?: string } = {}): void {
+    this.transitionDemand(demandId, 'qualifying', 'demand.qualifying-started', opts.handler, (payload) => {
+      if (opts.leaseId !== undefined) payload['leaseId'] = opts.leaseId // Build 2: lease holder
+    })
+  }
+
+  /**
+   * Agree a demand — the ATOMIC PROMOTION (`demand.agree`): emits `demand.agreed` + one `item.created` per
+   * promoted item (1..N) as ONE atomic cmdId batch (mirrors createDecision's decision.created+blocker batch)
+   * — no window where a demand is agreed without its item(s). BINDING. The transition `qualifying → agreed`
+   * is asserted at append AND under the lock (F2). Each promoted item back-links `demandId` and takes the
+   * demand's `type` as its `kind` (a defect demand ⇒ a `kind:'defect'` item). The `handler` is logged on the
+   * `demand.agreed` fact. Returns the promoted ItemIds (in input order).
+   */
+  agreeDemand(
+    demandId: DemandId,
+    input: {
+      handler?: ActorId
+      items: Array<{ title: string; body?: string; sourceKey?: string; links?: Link[] }>
+      qualification?: string
+      leaseId?: string
+    },
+  ): ItemId[] {
+    const demand = this.state().demands.get(demandId)
+    if (!demand) throw new DomainError(`unknown demand ${demandId}`)
+    if (!Array.isArray(input.items) || input.items.length === 0) {
+      throw new DomainError('agreeDemand: a promotion must yield at least one item')
+    }
+    assertDemandTransition(demand.status, 'agreed')
+    const handler = this.resolveHandler(input.handler)
+    const itemIds = input.items.map(() => this.newId())
+    const parts: EventPart[] = [
+      {
+        aggregate: 'demand',
+        aggregateId: demandId,
+        type: 'demand.agreed',
+        payload: {
+          handler,
+          itemIds,
+          ...(input.qualification !== undefined ? { qualification: input.qualification } : {}),
+          ...(input.leaseId !== undefined ? { leaseId: input.leaseId } : {}), // Build 2: lease holder
+        },
+      },
+    ]
+    input.items.forEach((it, i) => {
+      parts.push({
+        aggregate: 'item',
+        aggregateId: itemIds[i]!,
+        type: 'item.created',
+        payload: {
+          kind: demand.type, // a demand's type IS the promoted item's kind (incl. 'defect')
+          title: it.title,
+          workspace: demand.workspace,
+          demandId,
+          ...(it.body !== undefined ? { body: it.body } : {}),
+          ...(it.sourceKey !== undefined ? { sourceKey: it.sourceKey } : {}),
+          ...(it.links !== undefined ? { links: it.links } : {}),
+        },
+      })
+    })
+    // F2 under-lock recheck: re-fold the existing log under the lock and re-assert qualifying→agreed.
+    const recheck: RecheckHook = (_inputs, existing) => {
+      const fresh = fold(existing).demands.get(demandId)
+      if (!fresh) throw new DomainError(`unknown demand ${demandId}`)
+      assertDemandTransition(fresh.status, 'agreed')
+    }
+    const persisted = this.withDemandRecheck(recheck, () => this.emitBatch(parts))
+    // Result ids = the PERSISTED item.created events' aggregateIds (single source of truth; stable under dedup).
+    return persisted.filter((e) => e.type === 'item.created').map((e) => e.aggregateId)
+  }
+
+  /**
+   * Dispose a demand (`demand.disposition`) — the recorded qualification off-ramp `qualifying →
+   * rejected|duplicate|parked`. BINDING. `rejected`/`duplicate` are terminal; `parked` is re-claimable. A
+   * `duplicate` MUST carry a `duplicateOf` survivor that is SAME-WORKSPACE and NON-SELF (asserted at append
+   * AND under the lock — the cross-demand DEDUP race the per-subject lease does not cover). The `handler` +
+   * `reason` are logged.
+   */
+  disposeDemand(
+    demandId: DemandId,
+    input: { outcome: DemandStatus; handler?: ActorId; reason: string; duplicateOf?: DemandRef; parkedUntil?: string; leaseId?: string },
+  ): void {
+    const outcome = assertDispositionOutcome(input.outcome)
+    const demand = this.state().demands.get(demandId)
+    if (!demand) throw new DomainError(`unknown demand ${demandId}`)
+    assertDemandTransition(demand.status, outcome)
+    if (outcome === 'duplicate') this.assertDuplicateContainment(demand, input.duplicateOf)
+    const handler = this.resolveHandler(input.handler)
+    const payload: Record<string, unknown> = {
+      outcome,
+      handler,
+      reason: input.reason,
+      ...(input.duplicateOf !== undefined ? { duplicateOf: input.duplicateOf } : {}),
+      ...(input.parkedUntil !== undefined ? { parkedUntil: input.parkedUntil } : {}),
+      ...(input.leaseId !== undefined ? { leaseId: input.leaseId } : {}), // Build 2: lease holder
+    }
+    const recheck: RecheckHook = (_inputs, existing) => {
+      const state = fold(existing)
+      const fresh = state.demands.get(demandId)
+      if (!fresh) throw new DomainError(`unknown demand ${demandId}`)
+      assertDemandTransition(fresh.status, outcome)
+      if (outcome === 'duplicate') this.assertDuplicateContainment(fresh, input.duplicateOf, state)
+    }
+    this.withDemandRecheck(recheck, () => {
+      this.emit('demand', demandId, 'demand.disposition', payload)
+    })
+  }
+
+  /**
+   * Start a spec attempt on a promoted item (`spec.claim` → `spec.started`) — a durable fact of WHO is
+   * attempting the item's spec (the `specifying` overlay). BINDING. Recorded on the EXISTING item aggregate
+   * (next seq). The `handler` (+ optional `leaseId`/`attemptId`) is logged. Does NOT change specStatus
+   * (the spec axis is still driven by `spec.transition`); it is the durable handler/lease fact.
+   */
+  startSpec(itemId: ItemId, opts: { handler?: ActorId; leaseId?: string; attemptId?: string }): void {
+    if (!this.state().items.has(itemId)) throw new DomainError(`unknown item ${itemId}`)
+    const handler = this.resolveHandler(opts.handler)
+    this.emit('item', itemId, 'spec.started', {
+      itemId,
+      handler,
+      ...(opts.leaseId !== undefined ? { leaseId: opts.leaseId } : {}), // Build 2: lease holder
+      ...(opts.attemptId !== undefined ? { attemptId: opts.attemptId } : {}),
+    })
+  }
+
+  /**
+   * Abandon a spec attempt (`spec.abandon` → `spec.abandoned`) — the DURABLE explicit-abandon fact
+   * (who/when/why), distinct from a silent lease timeout (ephemeral, Build 2). BINDING. Recorded on the
+   * EXISTING item aggregate (next seq). The `handler` + `reason` are logged.
+   */
+  abandonSpec(itemId: ItemId, opts: { handler?: ActorId; reason: string; leaseId?: string }): void {
+    if (!this.state().items.has(itemId)) throw new DomainError(`unknown item ${itemId}`)
+    const handler = this.resolveHandler(opts.handler)
+    this.emit('item', itemId, 'spec.abandoned', {
+      itemId,
+      handler,
+      reason: opts.reason,
+      ...(opts.leaseId !== undefined ? { leaseId: opts.leaseId } : {}), // Build 2: lease holder
+    })
+  }
+
+  /** Demand lifecycle (Mode A) — the shared single-event transition emitter (claim today; handover later). */
+  private transitionDemand(
+    demandId: DemandId,
+    to: DemandStatus,
+    type: EventType,
+    handlerInput: ActorId | undefined,
+    decorate?: (payload: Record<string, unknown>) => void,
+  ): void {
+    const demand = this.state().demands.get(demandId)
+    if (!demand) throw new DomainError(`unknown demand ${demandId}`)
+    assertDemandTransition(demand.status, to)
+    const payload: Record<string, unknown> = { handler: this.resolveHandler(handlerInput) }
+    if (decorate) decorate(payload)
+    const recheck: RecheckHook = (_inputs, existing) => {
+      const fresh = fold(existing).demands.get(demandId)
+      if (!fresh) throw new DomainError(`unknown demand ${demandId}`)
+      assertDemandTransition(fresh.status, to)
+    }
+    this.withDemandRecheck(recheck, () => {
+      this.emit('demand', demandId, type, payload)
+    })
+  }
+
+  /**
+   * Demand lifecycle (Mode A) — the `duplicateOf` containment for a `duplicate` disposition: the survivor
+   * must exist (a same-workspace demand or item), be SAME-WORKSPACE as the duplicate, and be NON-SELF.
+   * Asserted at append AND under the lock (F2 cross-demand dedup race). `state` defaults to the live fold.
+   */
+  private assertDuplicateContainment(
+    demand: { id: DemandId; workspace: string },
+    duplicateOf: DemandRef | undefined,
+    state: State = this.state(),
+  ): void {
+    if (duplicateOf === undefined) {
+      throw new DomainError('demand.disposition: a duplicate requires a duplicateOf survivor {kind,id}')
+    }
+    if (duplicateOf.id === demand.id) {
+      throw new DomainError(`demand.disposition: a demand cannot be a duplicate of itself (${demand.id})`)
+    }
+    const survivorWorkspace =
+      duplicateOf.kind === 'demand'
+        ? state.demands.get(duplicateOf.id)?.workspace
+        : state.items.get(duplicateOf.id)?.workspace
+    if (survivorWorkspace === undefined) {
+      throw new DomainError(`demand.disposition: unknown duplicateOf ${duplicateOf.kind} ${duplicateOf.id}`)
+    }
+    if (survivorWorkspace !== demand.workspace) {
+      throw new DomainError(
+        `demand.disposition: a duplicateOf survivor must be in the same workspace "${demand.workspace}" (got "${survivorWorkspace}")`,
+      )
+    }
   }
 
   /**
@@ -1030,9 +1283,35 @@ export class Track {
       payload: part.payload,
     }))
     const dedupeOpt = this.activeDedupe !== undefined ? { dedupe: this.activeDedupe } : {}
+    const recheckOpt = this.activeRecheck !== undefined ? { recheck: this.activeRecheck } : {}
     if (events.length > 1) {
-      return this.store.appendCommand(events, { cmdId: this.newId(), ...dedupeOpt })
+      return this.store.appendCommand(events, { cmdId: this.newId(), ...dedupeOpt, ...recheckOpt })
     }
-    return this.store.appendCommand(events, dedupeOpt)
+    return this.store.appendCommand(events, { ...dedupeOpt, ...recheckOpt })
+  }
+
+  /**
+   * Run `fn` (one demand command) with `recheck` installed as the under-lock domain-legality guard (F2).
+   * Scoped (restored in `finally`), so it applies to exactly this command's append and nothing else. Used
+   * ONLY by the new Mode A demand commands — existing append paths never set it.
+   */
+  private withDemandRecheck<T>(recheck: RecheckHook, fn: () => T): T {
+    const prev = this.activeRecheck
+    this.activeRecheck = recheck
+    try {
+      return fn()
+    } finally {
+      this.activeRecheck = prev
+    }
+  }
+
+  /**
+   * Demand lifecycle (Mode A) — resolve the handler ("qui traite", the h2a instance id) for a lifecycle
+   * step. Precedence: `ctx.handler ?? prov.principal ?? by`. The lease-holder source (the live lease) is
+   * Build 2; for now an explicit handler ?? the channel principal ?? the event writer.
+   */
+  // Build 2: lease holder — `handler = activeLease.holder ?? ctx.handler ?? prov.principal ?? by`.
+  private resolveHandler(handler?: ActorId): ActorId {
+    return handler ?? this.prov?.principal ?? this.actor
   }
 }

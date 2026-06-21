@@ -28,6 +28,13 @@ import type {
 } from '../model/item.js'
 import type { VerificationRecordedPayload, VerificationRun } from '../model/verification.js'
 import type { SpecAmendment, SpecAmendPayload } from '../model/spec-amend.js'
+import type {
+  DemandId,
+  DemandRaisedPayload,
+  DemandState,
+  DispositionOutcome,
+  DemandRef,
+} from '../model/demand.js'
 
 /**
  * Materialized state (SPEC §2). The fold *mechanism* (replay in stream order, per-aggregate by
@@ -55,6 +62,14 @@ export interface State {
    * full prov-tagged human/machine trace is reconstructed by `TrackReader.amendmentTrace` over the raw log.
    */
   specAmendments: Map<ItemId, SpecAmendment[]>
+  /**
+   * Demand lifecycle (Mode A) — the `demand` aggregate's materialized state, keyed by DemandId. PURE
+   * last-writer-wins in stream order: legality (the lifecycle machine + duplicateOf containment) is checked
+   * AT APPEND in the facade, NEVER in the fold (the established pattern — cf. decision.outcome). The
+   * spec-attempt facts (`spec.started`/`spec.abandoned`) are NOT folded into a state field in Build 1; they
+   * are durable handler-log facts read raw from the log (the lease side-store + reads come in Build 2).
+   */
+  demands: Map<DemandId, DemandState>
 }
 
 function emptyState(): State {
@@ -66,6 +81,7 @@ function emptyState(): State {
     evidence: new Map(),
     verificationRuns: new Map(),
     specAmendments: new Map(),
+    demands: new Map(),
   }
 }
 
@@ -117,6 +133,9 @@ function applyEvent(state: State, event: TrackEvent): void {
         ...(payload.accountable !== undefined ? { accountable: payload.accountable } : {}),
         ...(payload.responsible !== undefined ? { responsible: payload.responsible } : {}),
         ...(payload.engagementRef !== undefined ? { engagementRef: payload.engagementRef } : {}),
+        // Demand lifecycle (Mode A, additive) — the parent demand back-link, set ONLY by the atomic
+        // agreeDemand promotion batch; absent on a directly-created item (drop-when-absent).
+        ...(payload.demandId !== undefined ? { demandId: payload.demandId } : {}),
       }
       state.items.set(item.id, item)
       break
@@ -376,6 +395,65 @@ function applyEvent(state: State, event: TrackEvent): void {
       const payload = event.payload as unknown as PriorityAssessment
       const item = state.items.get(event.aggregateId)
       if (item) item.priority = payload // latest in stream order = live priority (SPEC §2.8)
+      break
+    }
+
+    case 'demand.raised': {
+      // Demand lifecycle (Mode A) — materialize a new demand in status `raised`. The t=0 `raw`/`source` are
+      // the immutable capture; `handler` is a payload field (NOT folded into demand state in Build 1 — the
+      // per-step handler log is read raw from the events). Legality (none→raised) is implicit (a fresh id).
+      const payload = event.payload as unknown as DemandRaisedPayload & { workspace: string }
+      const demand: DemandState = {
+        id: event.aggregateId,
+        workspace: payload.workspace,
+        type: payload.type,
+        raw: payload.raw,
+        source: payload.source,
+        status: 'raised',
+        ...(payload.sourceKey !== undefined ? { sourceKey: payload.sourceKey } : {}),
+        ...(payload.concerns !== undefined ? { concerns: payload.concerns } : {}),
+        ...(payload.links !== undefined ? { links: payload.links } : {}),
+      }
+      state.demands.set(demand.id, demand)
+      break
+    }
+
+    case 'demand.qualifying-started': {
+      // raised|parked → qualifying (claim). PURE last-writer-wins; legality checked at append.
+      const demand = state.demands.get(event.aggregateId)
+      if (demand) demand.status = 'qualifying'
+      break
+    }
+
+    case 'demand.agreed': {
+      // The PIVOT — the demand is agreed and PROMOTED to its item(s) (the item.created siblings land in the
+      // SAME atomic batch). Record the agreed status + the promoted itemIds back-link. Legality (qualifying→
+      // agreed) checked at append.
+      const demand = state.demands.get(event.aggregateId)
+      if (demand) {
+        demand.status = 'agreed'
+        const itemIds = (event.payload as { itemIds?: ItemId[] }).itemIds
+        if (itemIds !== undefined) demand.itemIds = itemIds
+      }
+      break
+    }
+
+    case 'demand.disposition': {
+      // qualifying → rejected|duplicate|parked (the recorded qualification off-ramp). PURE last-writer-wins;
+      // legality (transition + duplicateOf containment) is checked at append. Records the outcome status +
+      // the reason on the matching field (rejectReason/parkReason) + the duplicateOf survivor.
+      const demand = state.demands.get(event.aggregateId)
+      if (demand) {
+        const payload = event.payload as {
+          outcome: DispositionOutcome
+          reason?: string
+          duplicateOf?: DemandRef
+        }
+        demand.status = payload.outcome
+        if (payload.outcome === 'rejected' && payload.reason !== undefined) demand.rejectReason = payload.reason
+        if (payload.outcome === 'parked' && payload.reason !== undefined) demand.parkReason = payload.reason
+        if (payload.outcome === 'duplicate' && payload.duplicateOf !== undefined) demand.duplicateOf = payload.duplicateOf
+      }
       break
     }
 

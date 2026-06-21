@@ -8,6 +8,7 @@ import type { DecisionState } from '../model/decision.js'
 import type { ItemState } from '../model/item.js'
 import type { VerificationRun } from '../model/verification.js'
 import type { SpecAmendment } from '../model/spec-amend.js'
+import type { DemandState } from '../model/demand.js'
 import { fold, type State } from './fold.js'
 
 /**
@@ -25,6 +26,9 @@ export interface SerializedState {
   // M5 (canevas) — per-item spec amendments, as [itemId, SpecAmendment[]] entries. Additive; absent in
   // older snapshots (rebuildable by re-folding).
   specAmendments?: Array<[string, SpecAmendment[]]>
+  // Demand lifecycle (Mode A) — the demand aggregate states. Additive; absent in older snapshots (a
+  // non-authoritative cache, rebuildable by re-folding).
+  demands?: DemandState[]
 }
 
 export interface Snapshot {
@@ -42,6 +46,7 @@ export function serializeState(state: State): SerializedState {
     evidence: [...state.evidence.values()].map((e) => structuredClone(e)),
     verificationRuns: [...state.verificationRuns.values()].map((v) => structuredClone(v)),
     specAmendments: [...state.specAmendments.entries()].map(([id, list]) => [id, structuredClone(list)]),
+    demands: [...state.demands.values()].map((d) => structuredClone(d)),
   }
 }
 
@@ -56,6 +61,7 @@ export function deserializeState(serialized: Partial<SerializedState>): State {
     evidence: new Map((serialized.evidence ?? []).map((e) => [e.id, e])),
     verificationRuns: new Map((serialized.verificationRuns ?? []).map((v) => [v.runId, v])),
     specAmendments: new Map(serialized.specAmendments ?? []),
+    demands: new Map((serialized.demands ?? []).map((d) => [d.id, d])),
   }
 }
 

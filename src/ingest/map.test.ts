@@ -63,6 +63,19 @@ describe('mapWorkEvent — valid kinds → normalized {method, settles, args}', 
       { method: 'anchorRealization', settles: 'evidence', args: ['i', 'sha-A', 'consolidate'] }],
     ['item.consolidate ⇒ always (caller-authoritative items)', ev('item.consolidate', { items: ['i1', 'i2'], mergeCommit: 'merge-sha' }),
       { method: 'consolidate', settles: 'always', args: [['i1', 'i2'], 'merge-sha'] }],
+    // Demand lifecycle (Mode A) — the six additive kinds (1.3.0).
+    ['demand.raise ⇒ never (payload passthrough; shape re-asserted in the facade)', ev('demand.raise', { type: 'feature', raw: { text: 'x' }, source: { kind: 'human' }, workspace: 'ws', handler: 'h' }),
+      { method: 'raiseDemand', settles: 'never', args: [{ type: 'feature', raw: { text: 'x' }, source: { kind: 'human' }, workspace: 'ws', handler: 'h' }] }],
+    ['demand.claim ⇒ always (handler optional)', ev('demand.claim', { demandId: 'd', handler: 'h' }),
+      { method: 'claimDemand', settles: 'always', args: ['d', { handler: 'h' }] }],
+    ['demand.agree ⇒ always (atomic promotion; items object[])', ev('demand.agree', { demandId: 'd', handler: 'h', items: [{ title: 'T' }] }),
+      { method: 'agreeDemand', settles: 'always', args: ['d', { items: [{ title: 'T' }], handler: 'h' }] }],
+    ['demand.disposition ⇒ always (duplicateOf containment re-asserted in the facade)', ev('demand.disposition', { demandId: 'd', outcome: 'rejected', reason: 'no', handler: 'h' }),
+      { method: 'disposeDemand', settles: 'always', args: ['d', { outcome: 'rejected', reason: 'no', handler: 'h' }] }],
+    ['spec.claim ⇒ always (durable WHO-is-attempting fact)', ev('spec.claim', { itemId: 'i', handler: 'h' }),
+      { method: 'startSpec', settles: 'always', args: ['i', { handler: 'h' }] }],
+    ['spec.abandon ⇒ always (durable explicit-abandon fact)', ev('spec.abandon', { itemId: 'i', handler: 'h', reason: 'ctx out' }),
+      { method: 'abandonSpec', settles: 'always', args: ['i', { reason: 'ctx out', handler: 'h' }] }],
   ]
 
   it.each(cases)('%s', (_name, input, expected) => {

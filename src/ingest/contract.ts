@@ -5,12 +5,15 @@
 // One WorkEvent ⇒ one Track command. This module is the SINGLE SOURCE of the write enums (so the CLI's
 // `oneOf` checks and the mapper cannot diverge on accepted values) and of the per-kind payload schema.
 
+// 1.3.0 — demand lifecycle (Mode A): six ADDITIVE new WorkEvent kinds (`demand.raise`/`demand.claim`/
+// `demand.agree`/`demand.disposition`/`spec.claim`/`spec.abandon`). MINOR bump (new optional kinds; no kind
+// removed, no required field added, envelope keys unchanged; old producers never send them and still validate).
 // 1.2.0 — acceptance-freshness lifecycle: two ADDITIVE new WorkEvent kinds (`item.anchor`→
 // `realization.anchored`, `item.consolidate`→the consolidate verb). MINOR bump (new optional kinds; no kind
 // removed, no required field added, envelope keys unchanged; old producers never send them and still validate).
 // 1.1.0 — seam v0 FREEZE: two ADDITIVE optional producer fields (artifactLocator on scope.verification,
 // caller-supplied evidenceId on acceptance.link).
-export const INGEST_CONTRACT_VERSION = '1.2.0'
+export const INGEST_CONTRACT_VERSION = '1.3.0'
 
 // --- write enums (shared with src/cli/index.ts) ------------------------------------------------------
 export const ITEM_KINDS = ['feature', 'bug', 'chore'] as const
@@ -27,6 +30,9 @@ export const RESULTS = ['pass', 'fail'] as const
 export const BLOCKER_SCOPES = ['intra', 'extra'] as const // Lot A — dependency blocker scope
 export const ITEM_ROLES = ['workpackage', 'spec-phase'] as const // Workpackages §2 / Scope §B(a) — container markers
 export const VERDICTS = ['clean', 'violation', 'conditional'] as const // Scope §B(c) — path verdict
+// Demand lifecycle (Mode A) — the demand type (carried to the item kind) + the disposition off-ramp outcome.
+export const DEMAND_TYPES = ['feature', 'defect', 'chore'] as const
+export const DISPOSITION_OUTCOMES = ['rejected', 'duplicate', 'parked'] as const
 
 // --- kinds -------------------------------------------------------------------------------------------
 export const WORK_EVENT_KINDS = [
@@ -52,6 +58,13 @@ export const WORK_EVENT_KINDS = [
   'item.spec-amend', // M5 (canevas) — record a LIVE spec amendment (verbatim JsonPatch) on an item
   'item.anchor', // Acceptance-freshness — re-point an item's realization ANCHOR commit (→ realization.anchored)
   'item.consolidate', // Acceptance-freshness — the squash/rebase heal: re-anchor + re-stamp pass runs at mergeCommit
+  // Demand lifecycle (Mode A) — the demand aggregate write path + the spec-attempt facts (DESIGN §Events).
+  'demand.raise', // → demand.raised (NON-binding: any channel may capture the t=0 issue)
+  'demand.claim', // → demand.qualifying-started (raised|parked → qualifying)
+  'demand.agree', // → demand.agreed + item.created (1..N) — the ATOMIC promotion
+  'demand.disposition', // → demand.disposition (qualifying → rejected|duplicate|parked)
+  'spec.claim', // → spec.started (durable WHO-is-attempting fact on an item)
+  'spec.abandon', // → spec.abandoned (durable explicit-abandon fact: who/why)
 ] as const
 export type WorkEventKind = (typeof WORK_EVENT_KINDS)[number]
 
@@ -314,5 +327,73 @@ export const WORK_EVENT_SCHEMA: Record<WorkEventKind, KindSchema> = {
     method: 'consolidate',
     settles: 'always',
     fields: { items: { type: 'string[]', required: true }, mergeCommit: str(true) },
+  },
+  'demand.raise': {
+    // Demand lifecycle (Mode A) — capture a demand (DESIGN §Events). NON-binding (`never`): the "nothing
+    // untracked" guarantee — any channel may capture the t=0 issue (an unauthenticated channel included).
+    // The `type`/`raw`/`source`/`concerns`/`links` SHAPES are re-asserted fail-closed in the facade
+    // (assertDemandRaised); the flat FieldSpec checks presence/type/enum. `workspace` pins the channel.
+    method: 'raiseDemand',
+    settles: 'never',
+    fields: {
+      type: str(true, DEMAND_TYPES),
+      raw: { type: 'object', required: true },
+      source: { type: 'object', required: true },
+      handler: str(false), // resolved by precedence in the facade (ctx.handler ?? prov.principal ?? by)
+      workspace: str(true),
+      sourceKey: str(false),
+      concerns: { type: 'object', required: false },
+      links: { type: 'object[]', required: false },
+    },
+  },
+  'demand.claim': {
+    // Demand lifecycle (Mode A) — claim a demand into qualifying (raised|parked → qualifying). Binding
+    // (`always`): a settling lifecycle write ⇒ requires auth ∈ {local-user, signed}.
+    method: 'claimDemand',
+    settles: 'always',
+    fields: { demandId: str(true), handler: str(false), leaseId: str(false) },
+  },
+  'demand.agree': {
+    // Demand lifecycle (Mode A) — the ATOMIC promotion: demand.agreed + item.created (1..N) in one batch.
+    // Binding (`always`): agreeing work onto the backlog is trust-sensitive ⇒ auth ∈ {local-user, signed}.
+    // `items` is an object[] of `{title, body?, sourceKey?, links?}`; the facade builds the item.created(s).
+    method: 'agreeDemand',
+    settles: 'always',
+    fields: {
+      demandId: str(true),
+      handler: str(false),
+      items: { type: 'object[]', required: true },
+      qualification: str(false),
+      leaseId: str(false),
+    },
+  },
+  'demand.disposition': {
+    // Demand lifecycle (Mode A) — the recorded qualification off-ramp (qualifying → rejected|duplicate|
+    // parked). Binding (`always`). The `duplicateOf` {kind,id} SHAPE + same-workspace/non-self containment
+    // is re-asserted in the facade; the flat FieldSpec checks the `outcome` enum + `reason` presence.
+    method: 'disposeDemand',
+    settles: 'always',
+    fields: {
+      demandId: str(true),
+      outcome: str(true, DISPOSITION_OUTCOMES),
+      handler: str(false),
+      reason: str(true),
+      duplicateOf: { type: 'object', required: false },
+      parkedUntil: str(false),
+      leaseId: str(false),
+    },
+  },
+  'spec.claim': {
+    // Demand lifecycle (Mode A) — a durable WHO-is-attempting-the-spec fact on an item. Binding (`always`).
+    method: 'startSpec',
+    settles: 'always',
+    fields: { itemId: str(true), handler: str(false), leaseId: str(false), attemptId: str(false) },
+  },
+  'spec.abandon': {
+    // Demand lifecycle (Mode A) — the durable explicit-abandon fact (who/why), distinct from a silent lease
+    // timeout (ephemeral, Build 2). Binding (`always`).
+    method: 'abandonSpec',
+    settles: 'always',
+    fields: { itemId: str(true), handler: str(false), reason: str(true), leaseId: str(false) },
   },
 }

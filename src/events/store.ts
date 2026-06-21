@@ -89,6 +89,17 @@ export class EventStore {
        * stable across a re-minted aggregateId (so a concurrent create-retry dedups to ONE event).
        */
       dedupe?: (inputs: ReadonlyArray<CommandEvent>, existing: readonly TrackEvent[]) => TrackEvent[] | null
+      /**
+       * Optional under-lock DOMAIN-LEGALITY recheck (demand-lifecycle Mode A, F2 semantic-race guard).
+       * Called AFTER existing-log integrity is proven and AFTER the dedupe short-circuit (a true idempotent
+       * retry is absorbed by `dedupe` and never rechecked), BEFORE framing, with the command's `inputs` and
+       * the just-read `existing` log. It re-folds the existing log under the lock and re-asserts the demand
+       * transition (+ duplicateOf containment); it MUST THROW (a DomainError) when the command is no longer
+       * legal against the now-current state — catching the cross-actor race the per-aggregate lock does NOT
+       * cover (two actors fold the same pre-lock state and append contradictory-but-individually-valid
+       * events). SCOPED to the new Mode A commands only — existing append paths pass no hook (unchanged).
+       */
+      recheck?: (inputs: ReadonlyArray<CommandEvent>, existing: readonly TrackEvent[]) => void
     } = {},
   ): TrackEvent[] {
     if (inputs.length === 0) {
@@ -132,6 +143,13 @@ export class EventStore {
       // command's events are framed/hashed only AFTER this skip.
       const deduped = (opts.dedupe ?? ((i, e) => this.dedupByClientToken(i, e)))(inputs, existing)
       if (deduped !== null) return deduped
+
+      // Under-lock DOMAIN-LEGALITY recheck (demand-lifecycle Mode A, F2). Runs ONLY for the new Mode A
+      // commands (existing paths pass no hook), AFTER the dedupe short-circuit (so an idempotent retry is
+      // absorbed, never rechecked), and re-asserts the demand transition against the NOW-current folded log.
+      // Throws (DomainError) on a contradiction ⇒ a racing second writer that saw a stale pre-lock state is
+      // rejected here rather than appending a contradictory event.
+      if (opts.recheck !== undefined) opts.recheck(inputs, existing)
 
       let prevHash: Sha256 | null =
         existing.length > 0 ? existing[existing.length - 1]!.contentHash : null
