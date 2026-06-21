@@ -2,6 +2,43 @@
 
 All notable changes to `@sentropic/track`. Format loosely follows [Keep a Changelog](https://keepachangelog.com); this package is pre-1.0 (the **event contract** is frozen, but the library/CLI surface may still evolve additively).
 
+## [0.16.0] — harness↔track seam v0 cross-contract drift-gate (BR-H1 atomic pair)
+
+### Added
+- **Cross-contract drift-gate** (`src/ingest/seam-harness-parity.test.ts`) — pins the harness-emitted
+  `VerificationRun` schema (frozen by harness PR #343, `@sentropic/harness@0.3.0`) against track's
+  `SEAM_V0_SCHEMA` agreement-mirror. The harness schema is vendored byte-identically at
+  `src/ingest/__fixtures__/harness-verification-run.schema.json` (+ a provenance `README.md`) and **pinned by
+  SHA-256**, so any upstream schema change surfaces as a reviewable fixture diff. The gate compares **normalized
+  projections** (enum arrays, `required` arrays, property-name sets) across the layer boundary — harness root +
+  `definitions` ↔ track mirror `$defs` + shared enum `$defs` — never a whole-document equality and never against
+  the post-projection wire payloads. This is track's half of the BR-H1 **atomic PR pair** (lands with harness #343).
+
+### Changed
+- **Mirror realigned to the frozen harness schema (ratified, non-breaking loosening).** The published
+  `SEAM_V0_SCHEMA` agreement-mirror `$defs` are relaxed so the two contracts agree byte-for-byte on shape:
+  - `$defs.VerificationCheck.required` drops `target` (D1) — a target-less check is legal producer-side; the
+    adapter still FAILS CLOSED on a track-ingested check with no target (`target` stays an optional property).
+  - `$defs.Violation.required` drops `path` (D2) — `path` is present only when the violation is path-scoped;
+    the deterministic `JSON.stringify({severity,code,path,message})` projection OMITs it when absent (never
+    empty-string fill).
+  - `$defs.VerificationRun.runId` description corrected (M1) to the PHYSICAL per-invocation id (matching harness);
+    the per-emitted-verdict PROJECTION id is adapter-minted and lives on `ScopeVerificationPayload.runId`.
+  These `$defs` are NOT used by track's runtime validation (the wire is enforced by `WORK_EVENT_SCHEMA` +
+  `assertVerificationRun`), so the relaxation has zero runtime effect — it re-aligns the published agreement
+  artifact only. Loosening `required` is non-breaking: any document valid under the old mirror stays valid.
+
+### Notes
+- **Frozen event contract intact — no wire/read change.** `INGEST_CONTRACT_VERSION` stays `1.2.0`,
+  `READ_CONTRACT_VERSION` unchanged. The pair-review (Codex 5.5xhigh + Opus 4.8max, both SHIP, mutation-tested
+  gate) is archived at `docs/reviews/brh1-cross-snapshot-SYNTHESIS.md` + `docs/reviews/brh1-build-FINAL.md`.
+- **Deferred follow-on (flagged, non-blocking):** the seam-wire hardening (REQUIRE `artifactLocator` on
+  `scope.verification` + `evidenceId` on `acceptance.link` for SEAM-SOURCED events only) is NOT in this lot —
+  the single `ingest()` path has no seam-source discriminator, and an unconditional tightening would break the
+  legacy/CLI back-compat. Clean path recorded: an optional `seamSourced?` marker on `IngestContext`, gated
+  per-path, landing with the full `VerificationRun → violations[]` ingestion adapter (where the D2 OMIT rule
+  becomes executable, not documentation-only).
+
 ## [0.15.0] — `@sentropic/track/ingest` submit export for the in-process M5 host
 
 ### Added
