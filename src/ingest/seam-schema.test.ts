@@ -80,9 +80,9 @@ describe('seam v0 JSON-Schema artifact (contract-snapshot)', () => {
         EvidenceKind: { enum: ['unit', 'integration', 'e2e', 'manual'] },
         RunResult: { description: 'Binary (no conditional home for acceptance).', enum: ['pass', 'fail'] },
         Violation: {
-          description: 'A scope.verification.violations[] entry is the deterministic JSON.stringify({severity,code,path,message}) projection (S2) — a display/index string track records VERBATIM and NEVER parses. The canonical detail is the full VerificationRun behind artifactLocator.',
+          description: 'A scope.verification.violations[] entry is the deterministic JSON.stringify({severity,code,path,message}) projection (S2) — a display/index string track records VERBATIM and NEVER parses. The canonical detail is the full VerificationRun behind artifactLocator. D2 (BR-H1): `path` is OPTIONAL (a violation need not be path-scoped — matches harness Violation.required). CANONICAL path-less rule: a violation WITHOUT a path OMITS the `path` key from the deterministic JSON.stringify({severity,code,path,message}) projection — NEVER an empty-string fill (the empty string is a real, distinct path; omission keeps the projection stable + collision-free). NOTE (BR-H1 lot): track does NOT perform this stringify yet — `violations[]` is a string[] recorded VERBATIM (see assertVerificationRun); the full VerificationRun→violations[] adapter is a later lot, so this OMIT rule is DOCUMENTATION-ONLY here.',
           type: 'object',
-          required: ['severity', 'code', 'path', 'message'],
+          required: ['severity', 'code', 'message'],
           additionalProperties: false,
           properties: {
             severity: { $ref: '#/$defs/Severity' },
@@ -92,9 +92,9 @@ describe('seam v0 JSON-Schema artifact (contract-snapshot)', () => {
           },
         },
         VerificationCheck: {
-          description: 'One check within a VerificationRun (per-CHECK target — one harness verify aggregates N checks across WPs/criteria). ≥1 target REQUIRED; a target-less check FAILS CLOSED at the adapter (never emitted).',
+          description: 'One check within a VerificationRun (per-CHECK target — one harness verify aggregates N checks across WPs/criteria). D1 (BR-H1): `target` is OPTIONAL on the check (matches harness VerificationCheck.required — producer-local checks stay representable). Fail-closed-no-target is an ADAPTER behavior (OQ-2), NOT a schema requirement: a track-ingested check needs ≥1 of scope|acceptance, and a target-less check FAILS CLOSED at the adapter (never emitted) — but the SCHEMA does not require it.',
           type: 'object',
-          required: ['category', 'result', 'target'],
+          required: ['category', 'result'],
           additionalProperties: false,
           properties: {
             category: { $ref: '#/$defs/VerificationCategory' },
@@ -127,12 +127,12 @@ describe('seam v0 JSON-Schema artifact (contract-snapshot)', () => {
           },
         },
         VerificationRun: {
-          description: 'The harness-internal per-check artifact behind artifactLocator (published for contract-snapshot; NOT a track kind — track ingests its target-routed projection). runId here is the per-emitted-verdict PROJECTION id (globally unique per emitted verdict — the M1 invariant), distinct from any physical run id inside the full artifact.',
+          description: 'The harness-internal per-check artifact behind artifactLocator (published for contract-snapshot; NOT a track kind — track ingests its target-routed projection). M1 (BR-H1): runId here is the PHYSICAL per-invocation run id (stable per harness invocation — matches the harness VerificationRun.runId). The per-emitted-verdict PROJECTION id (globally unique per emitted verdict — the M1 invariant) is adapter-MINTED and lives on the emitted ScopeVerificationPayload.runId, NOT here.',
           type: 'object',
           required: ['runId', 'runner', 'commit', 'artifactLocator', 'checks'],
           additionalProperties: false,
           properties: {
-            runId: { type: 'string', minLength: 1 },
+            runId: { type: 'string', minLength: 1, description: 'The PHYSICAL per-invocation harness run id (matches harness VerificationRun.runId). The per-verdict projection id is on ScopeVerificationPayload.runId (adapter-minted), not this physical id (M1).' },
             runner: { type: 'string', minLength: 1 },
             commit: { type: 'string', minLength: 1 },
             env: { type: 'string' },
