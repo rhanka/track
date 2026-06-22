@@ -85,3 +85,7 @@ export {
 //   kinds), Provenance (AmendmentProv.auth / ProvLineage.auth = Provenance['auth']), Sha256 (Cursor.head,
 //   Freshness, BranchProvenance.{sourceHash,structureHash}).
 export { type ActorId, type EventType, type Provenance, type Sha256 } from '../events/types.js'
+// from ../ingest/contract.js — WorkEventKind (DemandView.affordances + CanevasView.affordances element type:
+//   the legal next-action WorkEvent kinds), so a versioned consumer names the affordances element type
+//   against `/read` ALONE without reaching into the unversioned ingest contract.
+export { type WorkEventKind } from '../ingest/contract.js'
