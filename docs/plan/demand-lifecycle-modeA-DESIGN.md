@@ -89,8 +89,12 @@ A dedicated `handler: ActorId` on every lifecycle transition payload (the h2a in
 `claude:track:238a89077319`) — NOT `prov.by`/`principal` (the channel relays for N agents = confused-deputy).
 Three distinct identities kept separate: **source** (who raised, immutable on `demand.raised`) ≠ **handler** (who
 processes) ≠ **channel principal** (`prov.principal`, who relayed). Resolution precedence:
-`handler = activeLease.holder ?? ctx.handler ?? ctx.prov.principal ?? ctx.by`. Current handler = the live lease
-holder; recorded handler-per-step = folded from events; handover = a new claim with a different handler.
+`handler = ctx.handler ?? activeLease.holder ?? ctx.prov.principal ?? ctx.by`. The EXPLICIT `ctx.handler`
+outranks the live-lease holder — a HANDOVER records whoever ACTUALLY performed the action, not the prior
+claimant (else the action would be mis-attributed to a stale lease holder until TTL expiry). The lease holder is
+the advisory DEFAULT when no explicit handler is supplied (consistent with the lease being advisory, never
+authoritative). Recorded handler-per-step = folded from events. *(Corrected 2026-06-21: the earlier
+lease-first formula was a doc typo; pair-review confirmed explicit-first is the correct, shipped behavior.)*
 
 ## Lease — ephemeral (ratified)
 A mutable side-store `.track/leases.json` (gitignored, NOT the append-only log — heartbeats must not be events),
