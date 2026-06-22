@@ -6,7 +6,7 @@ import { INGEST_CONTRACT_VERSION, WORK_EVENT_KINDS, WORK_EVENT_SCHEMA } from './
 // required field) MUST fail here — this is the contract's snapshot gate (v2.3b-DESIGN.md §6/§7).
 describe('WorkEvent contract surface', () => {
   it('pins the contract version and the kind list', () => {
-    expect(INGEST_CONTRACT_VERSION).toBe('1.2.0') // acceptance-freshness lifecycle — MINOR bump (additive new kinds)
+    expect(INGEST_CONTRACT_VERSION).toBe('1.3.0') // demand lifecycle (Mode A) — MINOR bump (additive new kinds)
     expect([...WORK_EVENT_KINDS]).toEqual([
       'item.create',
       'item.reparent',
@@ -30,6 +30,13 @@ describe('WorkEvent contract surface', () => {
       'item.spec-amend',
       'item.anchor',
       'item.consolidate',
+      // Demand lifecycle (Mode A) — 1.3.0 additive kinds.
+      'demand.raise',
+      'demand.claim',
+      'demand.agree',
+      'demand.disposition',
+      'spec.claim',
+      'spec.abandon',
     ])
   })
 
@@ -87,6 +94,14 @@ describe('WorkEvent contract surface', () => {
       'item.spec-amend': { method: 'amendSpec', settles: 'always', required: ['baseHash', 'itemId', 'patch', 'resultHash'] },
       'item.anchor': { method: 'anchorRealization', settles: 'evidence', required: ['commit', 'itemId'] },
       'item.consolidate': { method: 'consolidate', settles: 'always', required: ['items', 'mergeCommit'] },
+      // Demand lifecycle (Mode A) — 1.3.0. `demand.raise` is NON-binding (any channel may capture); the rest
+      // are BINDING (auth ∈ {local-user, signed}). `handler` is OPTIONAL (resolved by precedence in the facade).
+      'demand.raise': { method: 'raiseDemand', settles: 'never', required: ['raw', 'source', 'type', 'workspace'] },
+      'demand.claim': { method: 'claimDemand', settles: 'always', required: ['demandId'] },
+      'demand.agree': { method: 'agreeDemand', settles: 'always', required: ['demandId', 'items'] },
+      'demand.disposition': { method: 'disposeDemand', settles: 'always', required: ['demandId', 'outcome', 'reason'] },
+      'spec.claim': { method: 'startSpec', settles: 'always', required: ['itemId'] },
+      'spec.abandon': { method: 'abandonSpec', settles: 'always', required: ['itemId', 'reason'] },
     })
   })
 })

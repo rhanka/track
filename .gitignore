@@ -11,3 +11,7 @@ HANDOVER.md
 
 # Playwright MCP session artifacts
 .playwright-mcp/
+
+# Demand lifecycle (Mode A) — the EPHEMERAL lease side-store is mutable, host-local, and NOT the
+# append-only event log (heartbeats must never be committed). Advisory + reconstructible.
+.track/leases.json

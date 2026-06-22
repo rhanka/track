@@ -222,6 +222,35 @@ export function mapWorkEvent(ev: WorkEvent): MappedCommand {
       // threaded via withClientToken (not an arg). Acceptance-freshness lifecycle (the squash/rebase heal).
       args = [p['items'], p['mergeCommit']]
       break
+    case 'demand.raise':
+      // raiseDemand({type, raw, source, handler?, workspace, sourceKey?, concerns?, links?}) — the payload
+      // SHAPE is re-asserted fail-closed in the facade (assertDemandRaised). Demand lifecycle (Mode A).
+      args = [{ ...p }]
+      break
+    case 'demand.claim':
+      // claimDemand(demandId, {handler?, leaseId?}) — Demand lifecycle (Mode A).
+      args = [p['demandId'], { ...opt('handler'), ...opt('leaseId') }]
+      break
+    case 'demand.agree':
+      // agreeDemand(demandId, {handler?, items, qualification?, leaseId?}) — the ATOMIC promotion (Mode A).
+      args = [p['demandId'], { items: p['items'], ...opt('handler'), ...opt('qualification'), ...opt('leaseId') }]
+      break
+    case 'demand.disposition':
+      // disposeDemand(demandId, {outcome, handler?, reason, duplicateOf?, parkedUntil?, leaseId?}) — the
+      // duplicateOf containment is re-asserted in the facade. Demand lifecycle (Mode A).
+      args = [
+        p['demandId'],
+        { outcome: p['outcome'], reason: p['reason'], ...opt('handler'), ...opt('duplicateOf'), ...opt('parkedUntil'), ...opt('leaseId') },
+      ]
+      break
+    case 'spec.claim':
+      // startSpec(itemId, {handler?, leaseId?, attemptId?}) — durable WHO-is-attempting fact (Mode A).
+      args = [p['itemId'], { ...opt('handler'), ...opt('leaseId'), ...opt('attemptId') }]
+      break
+    case 'spec.abandon':
+      // abandonSpec(itemId, {handler?, reason, leaseId?}) — durable explicit-abandon fact (Mode A).
+      args = [p['itemId'], { reason: p['reason'], ...opt('handler'), ...opt('leaseId') }]
+      break
   }
 
   return { kind, method, settles, payload: p, args, ...(clientToken !== undefined ? { clientToken } : {}) }

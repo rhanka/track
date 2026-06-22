@@ -30,7 +30,16 @@ import {
 } from '../report/build.js'
 import { fold, type State } from '../state/fold.js'
 import type { Dossier, Outcome } from '../model/decision.js'
+import type {
+  DemandId,
+  DemandRaw,
+  DemandRef,
+  DemandSource,
+  DemandStatus,
+  DemandType,
+} from '../model/demand.js'
 import type { WorkEventKind } from '../ingest/contract.js'
+import { LeaseStore, isLeaseAbandoned, leasesPathFor, type Lease } from '../lease/store.js'
 import {
   scopeValidate as runScopeValidate,
   type ScopeValidateInput,
@@ -45,7 +54,7 @@ import { graphExportFromState, type TrackGraphFragment } from '../graph-export.j
  * shapes it returns may only GROW (new methods / new optional fields); nothing is removed or
  * repurposed without a major bump. Consumers gate on `reader.contractVersion`.
  */
-export const READ_CONTRACT_VERSION = '1.11.0' // +self-contained /read: re-export referenced model/foundational types — additive
+export const READ_CONTRACT_VERSION = '1.12.0' // +demand lease (ephemeral) reads: demands()/lifecycleTrace()/workspaceActivity+canevas demand surfacing — additive (D7)
 
 /** Provenance of the last `branch.imported` for a locator (drawn from the raw event log). */
 export interface BranchProvenance {
@@ -89,12 +98,23 @@ export interface ExternalDependency {
   openedAt: string
 }
 
-/** Why a workspace item/decision is durably stuck (each reason is one PURE staleness predicate). */
+/**
+ * Why a workspace item/decision/demand is durably stuck (each reason is one PURE staleness predicate).
+ * The two demand-axis reasons (`demand-unqualified-idle` / `spec-abandoned-idle`) are ADDITIVE (Build 2):
+ * they reuse the EXACT stalled machinery (first-match-wins, `since`) WITHOUT overloading the existing four
+ * (an existing consumer that only knows the first four still reads its items unchanged).
+ */
 export type StalledReason =
   | 'awaited-open-blocker'
   | 'pending-decision'
   | 'in-progress-idle'
   | 'todo-idle'
+  // Demand lifecycle (Mode A, Build 2) — the two NEW demand-axis staleness predicates:
+  // a `qualifying` demand whose lease is ABANDONED (silent timeout) AND whose latest demand-event predates
+  // the window — the demand is unqualified and nobody is actively handling it.
+  | 'demand-unqualified-idle'
+  // an `agreed` (promoted) item with an ABANDONED spec-lease (a silent spec timeout) — the spec attempt died.
+  | 'spec-abandoned-idle'
 
 /** One durably-stuck item/decision, with the timestamp the staleness is measured from. */
 export interface StalledItem {
@@ -114,10 +134,25 @@ export interface WorkspaceActivity {
   workspace: string
   /** Count of items bucketed TO-DO or AWAITED for the workspace (open work; not DONE/DROPPED). */
   pending: number
-  /** Items/decisions stuck longer than `idleMs` — the disjunction of the 4 staleness predicates. */
+  /** Items/decisions/demands stuck longer than `idleMs` — the disjunction of the staleness predicates. */
   stalled: StalledItem[]
   /** Max `event.at` scoped to the workspace (informational — h2a corroborates vs live presence). */
   latestEventAt?: string
+  /**
+   * Demand lifecycle (Mode A, Build 2) — ADDITIVE demand counters for the workspace (absent before this lot;
+   * a consumer that never reads it is unaffected). Counts demands by their live lifecycle status.
+   */
+  demands?: WorkspaceDemandCounts
+}
+
+/** Demand counters surfaced on {@link WorkspaceActivity} (Build 2, additive). Open-lifecycle counts. */
+export interface WorkspaceDemandCounts {
+  /** Demands in `raised` (captured, not yet claimed). */
+  raised: number
+  /** Demands in `qualifying` (claimed, being qualified). */
+  qualifying: number
+  /** Demands that reached `agreed` (the PIVOT — promoted to item(s)). */
+  agreed: number
 }
 
 /** Options for {@link TrackReader.workspaceActivity}. `now`/`idleMs` are CALLER-supplied (no clock here). */
@@ -127,6 +162,12 @@ export interface WorkspaceActivityOptions {
   now: string
   /** Staleness window in ms; default 24h ⇒ "stalled" = DURABLY stuck. */
   idleMs?: number
+  /**
+   * Demand lifecycle (Mode A, Build 2) — the ephemeral leases to evaluate abandonment against (PURE: the
+   * caller injects them, so the read stays deterministic + testable). Omitted ⇒ read from the side-store
+   * beside the log (`.track/leases.json`). Abandonment is computed vs `now` (`now − heartbeatAt > ttlMs`).
+   */
+  leases?: Lease[]
 }
 
 const DEFAULT_IDLE_MS = 86_400_000 // 24h
@@ -320,6 +361,139 @@ function decisionAffordances(outcome: Outcome): WorkEventKind[] {
   return out
 }
 
+// ============================================================================================
+// Demand lifecycle (Mode A, Build 2) — the demand-axis read surface. PURE/clockless: a `demand`'s lease
+// state is computed by the READER against an injected `now` (`abandoned ⇔ now − heartbeatAt > ttlMs`); the
+// durable lifecycle facts (raised/qualifying/agreed/disposition + spec.started/spec.abandoned) come straight
+// from the folded state + the raw log. The ephemeral lease NEVER gates an append — it is purely a read input.
+// ============================================================================================
+
+/** The advisory lease state for a demand/item subject, evaluated vs an injected `now` (DESIGN §Reads). */
+export type LeaseState = 'none' | 'live' | 'abandoned'
+
+/**
+ * The materialized read view of ONE demand (DESIGN §Reads). PURE projection over the folded `DemandState`
+ * + the ephemeral lease (vs `now`). `lastHandler` is folded from the latest demand-axis event's `handler`;
+ * `currentHandler` is the LIVE lease holder (undefined when there is no lease OR it is abandoned). The
+ * `affordances` are the legal next WorkEvent kinds for the demand's status (the canevas's dead-button-free
+ * open actions).
+ */
+export interface DemandView {
+  id: DemandId
+  status: DemandStatus
+  type: DemandType
+  raw: DemandRaw
+  source: DemandSource
+  itemIds?: ItemId[]
+  duplicateOf?: DemandRef
+  /** The handler folded from the LATEST demand-axis event on this demand (who LAST acted). */
+  lastHandler?: ActorId
+  /** The handler of the LIVE lease on this demand (undefined when none/abandoned) — who is handling NOW. */
+  currentHandler?: ActorId
+  /** The advisory lease state vs the injected `now`: no lease / live / abandoned (silent-timeout F1). */
+  leaseState: LeaseState
+  /** The legal next WorkEvent kinds given the demand's status (open-action affordances). */
+  affordances: WorkEventKind[]
+}
+
+/**
+ * Open-action affordances for a demand by its lifecycle status (DESIGN §Reads):
+ *   raised → [demand.claim]; qualifying → [demand.agree, demand.disposition]; parked → [demand.claim];
+ *   terminal (agreed/rejected/duplicate) → []. Mirrors `DEMAND_TRANSITIONS` so the canevas never offers a
+ *   dead button (the facade re-checks legality at append).
+ */
+function demandAffordances(status: DemandStatus): WorkEventKind[] {
+  switch (status) {
+    case 'raised':
+    case 'parked':
+      return ['demand.claim']
+    case 'qualifying':
+      return ['demand.agree', 'demand.disposition']
+    default:
+      return [] // agreed / rejected / duplicate — terminal on the demand axis
+  }
+}
+
+// The persisted event types projected into a demand's lifecycle trace (the demand-axis amendment sibling).
+const DEMAND_LIFECYCLE_EVENT_TYPES: ReadonlySet<EventType> = new Set<EventType>([
+  'demand.raised',
+  'demand.qualifying-started',
+  'demand.agreed',
+  'demand.disposition',
+])
+// The persisted event types projected into an ITEM's lifecycle trace (the spec-attempt handler facts + the
+// item.created promotion + the spec/realization transitions that carry a handler).
+const ITEM_LIFECYCLE_EVENT_TYPES: ReadonlySet<EventType> = new Set<EventType>([
+  'item.created',
+  'spec.started',
+  'spec.abandoned',
+  'spec.transition',
+  'realization.transition',
+])
+
+/** Origin of a lifecycle step's write — `'agent'` iff `prov.proposed` (an AI proposal), else `'human'`. */
+export type LifecycleOrigin = AmendmentOrigin
+
+/**
+ * The demand status a lifecycle STEP transitions TO (for demand-axis events only). raised⇒raised;
+ * qualifying-started⇒qualifying; agreed⇒agreed; disposition⇒its `outcome` (rejected|duplicate|parked).
+ * Returns undefined for item/spec steps (those carry no demand status).
+ */
+function demandStatusOfStep(type: EventType, outcome: unknown): DemandStatus | undefined {
+  switch (type) {
+    case 'demand.raised':
+      return 'raised'
+    case 'demand.qualifying-started':
+      return 'qualifying'
+    case 'demand.agreed':
+      return 'agreed'
+    case 'demand.disposition':
+      return typeof outcome === 'string' ? (outcome as DemandStatus) : undefined
+    default:
+      return undefined
+  }
+}
+
+/**
+ * One ordered, prov-tagged + HANDLER-tagged step in a demand/item aggregate's lifecycle trace (DESIGN
+ * §Reads — the demand-axis sibling of `amendmentTrace`). A PURE replay projection over the aggregate's
+ * lifecycle events (ZERO new event data). Carries `{seq, at, by, handler?, status?, prov, origin}`: `by` is
+ * the event writer; `handler` is the folded "qui traite" (the h2a instance id from the payload); `status` is
+ * the demand status this step transitions TO (for a demand step); `origin` derives from `prov.proposed`.
+ */
+export interface LifecycleStep {
+  seq: number
+  at: string
+  by: ActorId
+  kind: EventType
+  /** The handler ("qui traite", the h2a instance id) recorded on the step's payload (when present). */
+  handler?: ActorId
+  /** The demand status this step transitions TO (demand steps only; absent for item/spec steps). */
+  status?: DemandStatus
+  prov: AmendmentProv
+  /** `'machine'` iff `prov.proposed` (an AI proposal); else `'human'`. Derived, not stored. */
+  origin: LifecycleOrigin
+}
+
+/** The subject of a {@link TrackReader.lifecycleTrace} — a demand or an item aggregate. */
+export interface LifecycleSubject {
+  kind: 'demand' | 'item'
+  id: string
+}
+
+/** Options for {@link TrackReader.demands}. `now` is CALLER-supplied (track holds no clock). */
+export interface DemandsOptions {
+  /** ISO-8601 "current" time supplied by the caller — abandonment is computed vs this (no clock here). */
+  now: string
+  /**
+   * The ephemeral leases to evaluate (PURE: caller-injected ⇒ deterministic + testable). Omitted ⇒ read from
+   * the side-store beside the log (`.track/leases.json`). Abandonment: `now − heartbeatAt > ttlMs`.
+   */
+  leases?: Lease[]
+  /** Reserved staleness window (ms) — accepted for forward-compat with the DESIGN signature; unused today. */
+  idleMs?: number
+}
+
 /**
  * Read-only, versioned consumption surface over a frozen track log. Holds NO `git` and only reads
  * the event file/head via `fs` — a baseline commit is supplied by the caller via `ReportOptions`
@@ -450,6 +624,14 @@ export class TrackReader {
       surface(d.id)
       affordances[d.id] = decisionAffordances(d.outcome)
     }
+    // Demand lifecycle (Mode A, Build 2) — surface demands ON THE CANEVAS (reuse the latestProvAt loop keyed
+    // on the demand aggregateId) + demand affordances (legal next actions by status). Demands are NOT items,
+    // so they never appear in `report.buckets`; they get their own prov-lineage + affordance entries here.
+    for (const demand of state.demands.values()) {
+      if (demand.workspace !== workspace) continue
+      surface(demand.id)
+      affordances[demand.id] = demandAffordances(demand.status)
+    }
 
     const view: CanevasView = { workspace, report, prov, affordances }
     if (opts.decisionId !== undefined) {
@@ -492,6 +674,93 @@ export class TrackReader {
       })
     }
     return steps.sort((a, b) => a.seq - b.seq)
+  }
+
+  /**
+   * Demand lifecycle (Mode A, Build 2) — the materialized DEMAND views for ONE workspace (DESIGN §Reads).
+   * PURE/clockless: per demand, the folded lifecycle state (`status`/`type`/`raw`/`source`/`itemIds`/
+   * `duplicateOf`) + `lastHandler` (folded from the LATEST demand-axis event's handler) + `currentHandler`
+   * (the LIVE lease holder, undefined when none/abandoned) + `leaseState` (`none`/`live`/`abandoned`, vs the
+   * injected `now`) + `affordances` (legal next WorkEvent kinds by status). The leases are caller-injected
+   * (deterministic) OR read from the side-store beside the log; the lease NEVER gated the durable facts.
+   */
+  demands(workspace: string, opts: DemandsOptions): DemandView[] {
+    const events = this.events()
+    const state = fold(events)
+    const leases = this.loadLeases(opts.leases)
+    // The handler folded from the LATEST demand-axis event per demand (who LAST acted on the demand axis).
+    const lastHandler = new Map<DemandId, ActorId>()
+    for (const e of events) {
+      if (!DEMAND_LIFECYCLE_EVENT_TYPES.has(e.type)) continue
+      const h = (e.payload as { handler?: unknown }).handler
+      if (typeof h === 'string') lastHandler.set(e.aggregateId, h) // stream order ⇒ last write wins
+    }
+    const out: DemandView[] = []
+    for (const demand of state.demands.values()) {
+      if (demand.workspace !== workspace) continue
+      const lease = leases.find((l) => l.subject.kind === 'demand' && l.subject.id === demand.id)
+      const leaseState: LeaseState =
+        lease === undefined ? 'none' : isLeaseAbandoned(lease, opts.now) ? 'abandoned' : 'live'
+      const handler = lastHandler.get(demand.id)
+      out.push({
+        id: demand.id,
+        status: demand.status,
+        type: demand.type,
+        raw: demand.raw,
+        source: demand.source,
+        leaseState,
+        affordances: demandAffordances(demand.status),
+        ...(demand.itemIds !== undefined ? { itemIds: demand.itemIds } : {}),
+        ...(demand.duplicateOf !== undefined ? { duplicateOf: demand.duplicateOf } : {}),
+        ...(handler !== undefined ? { lastHandler: handler } : {}),
+        // currentHandler = the LIVE lease holder ONLY (undefined when none/abandoned — F1 silent timeout).
+        ...(leaseState === 'live' ? { currentHandler: lease!.holder } : {}),
+      })
+    }
+    return out
+  }
+
+  /**
+   * Demand lifecycle (Mode A, Build 2) — the ORDERED (by seq), prov-tagged + HANDLER-tagged lifecycle
+   * projection over an aggregate's lifecycle events (DESIGN §Reads — the demand-axis sibling of
+   * `amendmentTrace`). For a `demand`: demand.raised / qualifying-started / agreed / disposition. For an
+   * `item`: item.created (the promotion) + spec.started / spec.abandoned (the durable handler facts) +
+   * spec/realization transitions. PURE replay; ZERO new event data. Each step carries
+   * `{seq, at, by, handler?, status?, prov, origin}` — `origin` derives from `prov.proposed`. The DURABLE
+   * `spec.abandoned` (explicit abandon, F1) surfaces here, distinct from a silent lease timeout (which has
+   * NO durable fact and surfaces only via `demands()`/`workspaceActivity`'s lease state).
+   */
+  lifecycleTrace(subject: LifecycleSubject): LifecycleStep[] {
+    const wanted = subject.kind === 'demand' ? DEMAND_LIFECYCLE_EVENT_TYPES : ITEM_LIFECYCLE_EVENT_TYPES
+    const steps: LifecycleStep[] = []
+    for (const e of this.events()) {
+      if (e.aggregateId !== subject.id) continue
+      if (!wanted.has(e.type)) continue
+      const proposed = e.prov?.proposed ?? false
+      const p = e.payload as { handler?: unknown; outcome?: unknown }
+      const status = demandStatusOfStep(e.type, p.outcome)
+      steps.push({
+        seq: e.seq,
+        at: e.at,
+        by: e.by,
+        kind: e.type,
+        prov: {
+          proposed,
+          auth: e.prov?.auth ?? 'local-user',
+          ...(e.prov?.principal !== undefined ? { principal: e.prov.principal } : {}),
+        },
+        origin: proposed ? 'machine' : 'human',
+        ...(typeof p.handler === 'string' ? { handler: p.handler } : {}),
+        ...(status !== undefined ? { status } : {}),
+      })
+    }
+    return steps.sort((a, b) => a.seq - b.seq)
+  }
+
+  /** Load the leases to evaluate: caller-injected (deterministic) OR the side-store beside the log. */
+  private loadLeases(injected?: Lease[]): Lease[] {
+    if (injected !== undefined) return injected
+    return new LeaseStore(leasesPathFor(this.eventsPath)).readAll()
   }
 
   /**
@@ -652,11 +921,31 @@ export class TrackReader {
     const stalled: StalledItem[] = []
     const isOld = (at: string | undefined): at is string => at !== undefined && Date.parse(at) < threshold
 
+    // Demand lifecycle (Mode A, Build 2) — leases for the two new demand-axis stalled reasons. Caller-
+    // injected (deterministic) OR read from the side-store; abandonment is computed vs `opts.now`.
+    const leases = this.loadLeases(opts.leases)
+    const leaseFor = (kind: 'demand' | 'item', id: string): Lease | undefined =>
+      leases.find((l) => l.subject.kind === kind && l.subject.id === id)
+    const isAbandoned = (lease: Lease | undefined): lease is Lease =>
+      lease !== undefined && isLeaseAbandoned(lease, opts.now)
+
     for (const item of state.items.values()) {
       if (item.workspace !== workspace) continue
       if (isRoleContainer(item)) continue // a WP/spec-phase is a container, never a flat leaf (Scope §B(a))
       const bucket = bucketOf(state, item, config)
       if (bucket === 'TO-DO' || bucket === 'AWAITED') pending++
+
+      // (6) spec-abandoned-idle — a PROMOTED (agreed) item with an ABANDONED spec-lease (a silent spec
+      // timeout). MORE SPECIFIC than the generic to-do/in-progress idle below ⇒ checked FIRST (first-match-
+      // wins): a silently-timed-out spec attempt is the meaningful stall, not "this item is just old". The
+      // `since` = the lease `heartbeatAt` (when the silent timeout began).
+      if (item.demandId !== undefined && bucket !== 'DONE' && bucket !== 'DROPPED') {
+        const lease = leaseFor('item', item.id)
+        if (isAbandoned(lease) && isOld(lease.heartbeatAt)) {
+          stalled.push({ id: item.id, title: item.title, reason: 'spec-abandoned-idle', since: lease.heartbeatAt })
+          continue // exclusive of the generic idle predicates below (first-match-wins)
+        }
+      }
 
       if (bucket === 'AWAITED') {
         // (1) awaited-open-blocker — oldest open blocker openedAt drives the staleness.
@@ -696,11 +985,36 @@ export class TrackReader {
       }
     }
 
+    // Demand lifecycle (Mode A, Build 2) — ADDITIVE demand counters + the demand-unqualified-idle reason.
+    // Reuses the EXACT stalled machinery (first-match-wins per id, a `since` anchor).
+    let raised = 0
+    let qualifying = 0
+    let agreed = 0
+    let hasDemands = false
+    for (const demand of state.demands.values()) {
+      if (demand.workspace !== workspace) continue
+      hasDemands = true
+      if (demand.status === 'raised') raised++
+      else if (demand.status === 'qualifying') qualifying++
+      else if (demand.status === 'agreed') agreed++
+
+      // (5) demand-unqualified-idle — a `qualifying` demand whose lease is ABANDONED (silent timeout) AND
+      // whose latest demand-event predates the window. The `since` = the latest demand-axis event `at`.
+      if (demand.status === 'qualifying') {
+        const lease = leaseFor('demand', demand.id)
+        const since = latestAt.get(demand.id)
+        if (isAbandoned(lease) && isOld(since)) {
+          stalled.push({ id: demand.id, title: demand.raw.title ?? demand.raw.text, reason: 'demand-unqualified-idle', since })
+        }
+      }
+    }
+
     return {
       workspace,
       pending,
       stalled,
       ...(latestEventAt !== undefined ? { latestEventAt } : {}),
+      ...(hasDemands ? { demands: { raised, qualifying, agreed } } : {}),
     }
   }
 

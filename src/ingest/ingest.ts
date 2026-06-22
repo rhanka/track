@@ -17,6 +17,7 @@ import type { DecisionCreatedPayload } from '../model/decision.js'
 import type { WsjfInputs } from '../model/priority.js'
 import type { VerificationRecordedPayload } from '../model/verification.js'
 import type { SpecAmendPayload } from '../model/spec-amend.js'
+import type { DemandId } from '../model/demand.js'
 import type { ActorId, CommandEvent, Provenance, ProvenanceAuth, TrackEvent, Ulid } from '../events/types.js'
 import type { EventStore } from '../events/store.js'
 import { fold, type State } from '../state/fold.js'
@@ -97,6 +98,9 @@ function resolveWorkspace(cmd: MappedCommand, state: State): { create: boolean; 
   switch (cmd.kind) {
     case 'item.create':
     case 'decision.create':
+    case 'demand.raise':
+      // Demand lifecycle (Mode A) — a create: the demand carries its workspace in the payload (pinned to the
+      // channel, like item.create/decision.create). The other demand kinds address a pre-existing aggregate.
       return { create: true, workspace: p['workspace'] as string }
     case 'item.realize':
       // setRealization resolves items ∪ decisions (a decision has a prep/realization axis); resolving
@@ -158,6 +162,18 @@ function resolveWorkspace(cmd: MappedCommand, state: State): { create: boolean; 
       const wpRef = p['wpRef']
       return { create: false, workspace: wpRef !== undefined ? item(wpRef) : undefined }
     }
+    case 'demand.claim':
+    case 'demand.agree':
+    case 'demand.disposition':
+      // Demand lifecycle (Mode A) — these address the named demand aggregate; contained by the demand's
+      // workspace (a W-pinned channel can't drive a V demand). Resolved from folded state. The agree's
+      // promoted item.created(s) inherit the demand's (channel) workspace, so there is nothing extra to gate.
+      return { create: false, workspace: state.demands.get(p['demandId'] as DemandId)?.workspace }
+    case 'spec.claim':
+    case 'spec.abandon':
+      // Demand lifecycle (Mode A) — a durable spec-attempt fact on the named item aggregate; contained by
+      // the item's workspace. Resolved from folded state.
+      return { create: false, workspace: item(p['itemId']) }
   }
 }
 
@@ -303,6 +319,26 @@ function applyCommand(track: Track, cmd: MappedCommand, ctx: IngestContext): str
       // double-pass); `items` are CALLER-AUTHORITATIVE. Acceptance-freshness lifecycle (the squash/rebase heal).
       track.consolidate(a[0] as ItemId[], a[1] as string)
       return undefined
+    case 'demand.raise':
+      // raiseDemand(input) — returns the new DemandId. Demand lifecycle (Mode A).
+      return track.raiseDemand(a[0] as Parameters<Track['raiseDemand']>[0])
+    case 'demand.claim':
+      track.claimDemand(a[0] as DemandId, a[1] as Parameters<Track['claimDemand']>[1])
+      return undefined
+    case 'demand.agree':
+      // agreeDemand returns the promoted ItemIds; the ingest seam surfaces the DEMAND id as the result (the
+      // demand is the addressed aggregate), so the demand→item back-link is read via the demand's itemIds.
+      track.agreeDemand(a[0] as DemandId, a[1] as Parameters<Track['agreeDemand']>[1])
+      return a[0] as string
+    case 'demand.disposition':
+      track.disposeDemand(a[0] as DemandId, a[1] as Parameters<Track['disposeDemand']>[1])
+      return undefined
+    case 'spec.claim':
+      track.startSpec(a[0] as ItemId, a[1] as Parameters<Track['startSpec']>[1])
+      return undefined
+    case 'spec.abandon':
+      track.abandonSpec(a[0] as ItemId, a[1] as Parameters<Track['abandonSpec']>[1])
+      return undefined
   }
 }
 
@@ -312,6 +348,8 @@ function resultIdOf(e: TrackEvent): string | null {
     case 'item.created':
     case 'decision.created':
     case 'blocker.opened':
+    case 'demand.raised':
+      // Demand lifecycle (Mode A) — the demand's own aggregateId is the stable result id for a retried raise.
       return e.aggregateId
     case 'acceptance.criterion.added':
       return (e.payload as { criterionId?: string }).criterionId ?? null
@@ -338,6 +376,9 @@ function eventWorkspace(e: TrackEvent, state: State): string | undefined {
       // the workspace is the suffix; a wpRef'd run uses the item aggregate (handled by case 'item' above,
       // never here). Parsing the suffix scopes the token namespace correctly (per-workspace idempotency).
       return e.aggregateId.startsWith('verification:') ? e.aggregateId.slice('verification:'.length) : undefined
+    case 'demand':
+      // Demand lifecycle (Mode A) — the demand aggregate's workspace, for scoping the per-workspace token index.
+      return state.demands.get(e.aggregateId)?.workspace
   }
 }
 

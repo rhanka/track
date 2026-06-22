@@ -4,7 +4,16 @@ import type { PriorityAssessment } from './priority.js'
 export type ItemId = Ulid
 export type BlockerId = Ulid
 
-export type ItemKind = 'feature' | 'bug' | 'chore' | 'decision'
+// `'defect'` is ADDITIVE (demand-lifecycle Mode A): a defect demand promotes into a `kind:'defect'` item.
+// Additive to the enum — pre-demand logs never carry it, so it changes no existing event/hash/bucket.
+//
+// `bug` vs `defect` — kept DISTINCT (rule):
+//   - `defect`  = promoted from a `DemandType:'defect'` demand (carries the `concerns` regression back-link;
+//                 reachable ONLY via demand promotion (`agreeDemand`), NEVER a direct `item.create`).
+//   - `bug`     = the legacy ad-hoc kind (a direct create with no demand parent).
+//   The `bug`→`defect` deprecation/merge is DEFERRED to a later lot. (See demand-lifecycle-modeA-DESIGN §Type.)
+//   `defect` is intentionally promotion-only ⇒ it is NOT in the ingest `ITEM_KINDS` / MCP direct-create enums.
+export type ItemKind = 'feature' | 'bug' | 'chore' | 'decision' | 'defect'
 /**
  * An optional, additive container marker (Workpackages design §2; Scope §B(a)). A workpackage is
  * `kind:'chore'` + `role:'workpackage'` — WP-ness comes ONLY from this field, never inferred from kind,
@@ -70,6 +79,13 @@ export interface ItemState {
    * Set by the `realization.anchored` event (LAST-write-wins); absent ⇒ no anchor (fall back to baseline).
    */
   realizedCommit?: string
+  /**
+   * Demand lifecycle (Mode A, additive) — the parent `demand` this item was PROMOTED from at `agreed`.
+   * Set by `item.created{demandId}` (the atomic promotion batch); absent on every directly-created item
+   * (canonicalize drops undefined ⇒ a pre-demand item.created hashes byte-identical). A stable back-link
+   * for the demand→item read trace.
+   */
+  demandId?: Ulid // = DemandId; kept as the foundational Ulid to avoid an item↔demand model import cycle
 }
 
 /**
@@ -94,6 +110,23 @@ export interface ItemCreatedPayload {
   accountable?: ActorId
   responsible?: ActorId[]
   engagementRef?: string
+  /**
+   * Demand lifecycle (Mode A, additive) — the parent `demand` this item is promoted from (set ONLY by the
+   * atomic `agreeDemand` batch). Absent on a directly-created item ⇒ canonicalize drops it ⇒ byte-identical.
+   */
+  demandId?: Ulid
+}
+
+/**
+ * Demand lifecycle (Mode A, additive) — the optional WHO-is-handling fields carried on a spec/realization
+ * transition payload. `handler` = the h2a instance id (DISTINCT from the channel `by`/`prov.principal`);
+ * `leaseId` correlates to the ephemeral lease (Build 2). Both drop-when-absent ⇒ a pre-demand transition
+ * hashes byte-identical (the additive invariant). Folded into NO new state field in Build 1 (handler logging
+ * is reconstructed from the raw log by the read surface — the demand sibling of amendmentTrace).
+ */
+export interface TransitionHandlerFields {
+  handler?: ActorId
+  leaseId?: string
 }
 
 /** A rejected domain command (illegal transition, unknown aggregate, …). */

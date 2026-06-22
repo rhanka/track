@@ -31,6 +31,7 @@ import type {
   Provenance,
   QAEntry,
   Sha256,
+  WorkEventKind,
 } from './index.js'
 
 describe('@sentropic/track/read is self-contained (Focus-M1 L2 versioned binding)', () => {
@@ -42,6 +43,7 @@ describe('@sentropic/track/read is self-contained (Focus-M1 L2 versioned binding
     const sha: Sha256 = 'sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855'
     const provAuth: Provenance['auth'] = 'signed'
     const outcome: Outcome = 'go'
+    const affordance: WorkEventKind = 'demand.raise'
 
     const option: Option = { id: 'A', title: 'Option A', summary: 'do A' }
     const qa: QAEntry = { id: 'q1', question: 'why?' }
@@ -96,9 +98,10 @@ describe('@sentropic/track/read is self-contained (Focus-M1 L2 versioned binding
     expect(view.id).toBe(itemId)
     expect(step.kind).toBe('decision.outcome')
     expect(canevas.dossier?.outcome).toBe('go')
+    expect(affordance).toBe('demand.raise')
   })
 
-  it('pins READ_CONTRACT_VERSION at 1.11.0 (+self-contained /read re-exports — additive)', () => {
-    expect(READ_CONTRACT_VERSION).toBe('1.11.0')
+  it('pins READ_CONTRACT_VERSION at 1.12.0 (+demand lease/reads — additive)', () => {
+    expect(READ_CONTRACT_VERSION).toBe('1.12.0')
   })
 })
