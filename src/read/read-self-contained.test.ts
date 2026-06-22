@@ -98,7 +98,7 @@ describe('@sentropic/track/read is self-contained (Focus-M1 L2 versioned binding
     expect(canevas.dossier?.outcome).toBe('go')
   })
 
-  it('pins READ_CONTRACT_VERSION at 1.11.0 (+self-contained /read re-exports — additive)', () => {
-    expect(READ_CONTRACT_VERSION).toBe('1.11.0')
+  it('pins READ_CONTRACT_VERSION at 1.12.0 (+demand lease/reads — additive)', () => {
+    expect(READ_CONTRACT_VERSION).toBe('1.12.0')
   })
 })

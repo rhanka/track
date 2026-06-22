@@ -10,6 +10,7 @@ import { EventStore } from './events/store.js'
 import type { Provenance, TrackEvent, Ulid } from './events/types.js'
 import { validate } from './events/validate.js'
 import { fold } from './state/fold.js'
+import { LeaseStore, leasesPathFor } from './lease/store.js'
 import { Track } from './track.js'
 
 let dir: string
@@ -18,13 +19,14 @@ let track: Track
 
 const NOW = '2026-06-21T10:00:00.000Z'
 
-function freshTrack(over: { by?: string; prov?: Provenance } = {}): Track {
+function freshTrack(over: { by?: string; prov?: Provenance; leases?: LeaseStore; now?: string } = {}): Track {
   let n = 0
   return new Track(store, {
     by: over.by ?? 'tester',
-    now: () => NOW,
+    now: () => over.now ?? NOW,
     newId: () => `id-${String(++n).padStart(4, '0')}`,
     ...(over.prov !== undefined ? { prov: over.prov } : {}),
+    ...(over.leases !== undefined ? { leases: over.leases } : {}),
   })
 }
 
@@ -276,6 +278,67 @@ describe('handler precedence (handler = ctx.handler ?? prov.principal ?? by)', (
     void d
     const ev = store.readAll().find((e) => e.type === 'demand.raised')!
     expect((ev.payload as { handler: string }).handler).toBe('explicit:handler')
+  })
+})
+
+describe('Build 2 — the LIVE lease holder defaults the handler (top of the precedence)', () => {
+  const leasesAt = (when: string): LeaseStore =>
+    new LeaseStore(leasesPathFor(join(dir, '.track', 'events.jsonl')), { now: () => when, newId: () => `tok-${when}` })
+
+  function leases(when = NOW): LeaseStore {
+    return leasesAt(when)
+  }
+
+  it('a live lease on the demand defaults the transition handler to the lease HOLDER', () => {
+    const raiseT = freshTrack({ by: 'cli-user' })
+    const d = raiseT.raiseDemand({ type: 'feature', workspace: 'ws', raw, source, handler: 'h:raiser' })
+    const lease = leases()
+    lease.acquire({ workspace: 'ws', subject: { kind: 'demand', id: d }, phase: 'qualifying', holder: 'h:leaseholder' })
+    // claim with NO explicit handler ⇒ the lease holder wins over `by` (cli-user) and any principal.
+    const t = freshTrack({ by: 'cli-user', leases: lease })
+    t.claimDemand(d)
+    const ev = store.readAll().find((e) => e.type === 'demand.qualifying-started')!
+    expect((ev.payload as { handler: string }).handler).toBe('h:leaseholder')
+  })
+
+  it('an ABANDONED lease does NOT default the handler (falls back to by)', () => {
+    const raiseT = freshTrack({ by: 'cli-user' })
+    const d = raiseT.raiseDemand({ type: 'feature', workspace: 'ws', raw, source, handler: 'h:raiser' })
+    // acquire at NOW with a tiny ttl; resolve at a much later now ⇒ the lease is abandoned ⇒ no default.
+    leasesAt(NOW).acquire({
+      workspace: 'ws',
+      subject: { kind: 'demand', id: d },
+      phase: 'qualifying',
+      holder: 'h:dead',
+      ttlMs: 1_000,
+    })
+    const later = new Date(Date.parse(NOW) + 10_000).toISOString()
+    const t = freshTrack({ by: 'cli-user', leases: leasesAt(later), now: later })
+    t.claimDemand(d)
+    const ev = store.readAll().find((e) => e.type === 'demand.qualifying-started')!
+    expect((ev.payload as { handler: string }).handler).toBe('cli-user') // NOT h:dead
+  })
+
+  it('an explicit handler STILL wins over a live lease holder (explicit handover override)', () => {
+    const raiseT = freshTrack({ by: 'cli-user' })
+    const d = raiseT.raiseDemand({ type: 'feature', workspace: 'ws', raw, source, handler: 'h:raiser' })
+    const lease = leases()
+    lease.acquire({ workspace: 'ws', subject: { kind: 'demand', id: d }, phase: 'qualifying', holder: 'h:leaseholder' })
+    const t = freshTrack({ by: 'cli-user', leases: lease })
+    t.claimDemand(d, { handler: 'h:explicit' })
+    const ev = store.readAll().find((e) => e.type === 'demand.qualifying-started')!
+    expect((ev.payload as { handler: string }).handler).toBe('h:explicit')
+  })
+
+  it('a live spec lease on an ITEM defaults the spec.started handler', () => {
+    const t0 = freshTrack({ by: 'cli-user' })
+    const item = t0.createItem({ kind: 'feature', title: 'A', workspace: 'ws' })
+    const lease = leases()
+    lease.acquire({ workspace: 'ws', subject: { kind: 'item', id: item }, phase: 'specifying', holder: 'h:specwriter' })
+    const t = freshTrack({ by: 'cli-user', leases: lease })
+    t.startSpec(item, {})
+    const ev = store.readAll().find((e) => e.type === 'spec.started')!
+    expect((ev.payload as { handler: string }).handler).toBe('h:specwriter')
   })
 })
 

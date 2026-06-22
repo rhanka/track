@@ -64,6 +64,7 @@ import {
   type DemandStatus,
 } from './model/demand.js'
 import { fold, type State } from './state/fold.js'
+import { isLeaseAbandoned, type LeaseStore, type LeaseSubject } from './lease/store.js'
 
 interface EventPart {
   aggregate: Aggregate
@@ -106,6 +107,13 @@ export interface TrackOptions {
   by?: ActorId
   /** D3 provenance stamped on every emitted event (transport/trust). Omitted ⇒ no `prov` field. */
   prov?: Provenance
+  /**
+   * Demand lifecycle (Mode A, Build 2) — the ADVISORY ephemeral lease side-store. When supplied, a lifecycle
+   * transition on a subject that has a LIVE lease defaults the recorded `handler` to the lease HOLDER (the
+   * top of the resolution precedence). Omitted ⇒ no lease lookup (handler = ctx.handler ?? prov.principal ??
+   * by). The lease NEVER gates an append — it only sources the default handler.
+   */
+  leases?: LeaseStore
 }
 
 /** Resolution scope for `resolveExternalDependency` — REQUIRED so unscoped resolution is never implicit.
@@ -158,6 +166,8 @@ export class Track {
   private readonly newId: () => Ulid
   private readonly actor: ActorId
   private readonly prov: Provenance | undefined
+  /** Demand lifecycle (Mode A, Build 2) — the optional advisory lease store (sources the default handler). */
+  private readonly leases: LeaseStore | undefined
   /** Delivery idempotency token stamped on emitted events for the duration of a `withClientToken` scope. */
   private activeClientToken: string | undefined
   /**
@@ -187,6 +197,7 @@ export class Track {
     // the caller can never make events carry divergent provenance. `structuredClone` deep-copies the
     // nested `sig` (M3) — a shallow spread would share `sig` by reference and reopen the D3 mutation hole.
     this.prov = opts.prov ? structuredClone(opts.prov) : undefined
+    this.leases = opts.leases
   }
 
   /** Materialized state from a full replay of the log. */
@@ -507,7 +518,7 @@ export class Track {
       throw new DomainError('agreeDemand: a promotion must yield at least one item')
     }
     assertDemandTransition(demand.status, 'agreed')
-    const handler = this.resolveHandler(input.handler)
+    const handler = this.resolveHandler(input.handler, { kind: 'demand', id: demandId })
     const itemIds = input.items.map(() => this.newId())
     const parts: EventPart[] = [
       {
@@ -565,7 +576,7 @@ export class Track {
     if (!demand) throw new DomainError(`unknown demand ${demandId}`)
     assertDemandTransition(demand.status, outcome)
     if (outcome === 'duplicate') this.assertDuplicateContainment(demand, input.duplicateOf)
-    const handler = this.resolveHandler(input.handler)
+    const handler = this.resolveHandler(input.handler, { kind: 'demand', id: demandId })
     const payload: Record<string, unknown> = {
       outcome,
       handler,
@@ -594,7 +605,7 @@ export class Track {
    */
   startSpec(itemId: ItemId, opts: { handler?: ActorId; leaseId?: string; attemptId?: string }): void {
     if (!this.state().items.has(itemId)) throw new DomainError(`unknown item ${itemId}`)
-    const handler = this.resolveHandler(opts.handler)
+    const handler = this.resolveHandler(opts.handler, { kind: 'item', id: itemId })
     this.emit('item', itemId, 'spec.started', {
       itemId,
       handler,
@@ -610,7 +621,7 @@ export class Track {
    */
   abandonSpec(itemId: ItemId, opts: { handler?: ActorId; reason: string; leaseId?: string }): void {
     if (!this.state().items.has(itemId)) throw new DomainError(`unknown item ${itemId}`)
-    const handler = this.resolveHandler(opts.handler)
+    const handler = this.resolveHandler(opts.handler, { kind: 'item', id: itemId })
     this.emit('item', itemId, 'spec.abandoned', {
       itemId,
       handler,
@@ -630,7 +641,9 @@ export class Track {
     const demand = this.state().demands.get(demandId)
     if (!demand) throw new DomainError(`unknown demand ${demandId}`)
     assertDemandTransition(demand.status, to)
-    const payload: Record<string, unknown> = { handler: this.resolveHandler(handlerInput) }
+    const payload: Record<string, unknown> = {
+      handler: this.resolveHandler(handlerInput, { kind: 'demand', id: demandId }),
+    }
     if (decorate) decorate(payload)
     const recheck: RecheckHook = (_inputs, existing) => {
       const fresh = fold(existing).demands.get(demandId)
@@ -1333,11 +1346,22 @@ export class Track {
 
   /**
    * Demand lifecycle (Mode A) — resolve the handler ("qui traite", the h2a instance id) for a lifecycle
-   * step. Precedence: `ctx.handler ?? prov.principal ?? by`. The lease-holder source (the live lease) is
-   * Build 2; for now an explicit handler ?? the channel principal ?? the event writer.
+   * step. Precedence (DESIGN §Handler logging): `activeLease.holder ?? ctx.handler ?? prov.principal ?? by`.
+   * When a `subject` is given AND a lease store is configured AND a LIVE (non-abandoned vs `now`) lease
+   * covers that subject, the lease holder is the CURRENT handler ⇒ it defaults the recorded handler (Build 2).
+   * An explicit `handler` still wins over the lease (an explicit handover override). The lease is advisory:
+   * it sources the default handler, it NEVER gates the append.
    */
-  // Build 2: lease holder — `handler = activeLease.holder ?? ctx.handler ?? prov.principal ?? by`.
-  private resolveHandler(handler?: ActorId): ActorId {
-    return handler ?? this.prov?.principal ?? this.actor
+  private resolveHandler(handler?: ActorId, subject?: LeaseSubject): ActorId {
+    const leaseHolder = subject !== undefined ? this.liveLeaseHolder(subject) : undefined
+    return handler ?? leaseHolder ?? this.prov?.principal ?? this.actor
+  }
+
+  /** The holder of the LIVE (non-abandoned vs the injected clock) lease on `subject`, or undefined. */
+  private liveLeaseHolder(subject: LeaseSubject): ActorId | undefined {
+    if (this.leases === undefined) return undefined
+    const lease = this.leases.forSubject(subject)
+    if (lease === undefined || isLeaseAbandoned(lease, this.clock())) return undefined
+    return lease.holder
   }
 }
