@@ -14,9 +14,14 @@ v1 = read-only render. L4 (write-path) = a separate co-designed lot.
 - `./track`'s `readDecisionDossier` **re-opens the log itself** (takes an `eventsPath` STRING, builds its own
   `TrackReader`, gates `majorOf(contractVersion)!==1`, calls `canevas(ws,{baselineCommit,decisionId}).dossier`
   + `amendmentTrace` + `cursor`). No reader/dossier injection seam at the published surface.
-- `@sentropic/focus` deps `@sentropic/track:^0.17.0`; track is 0.18.0 (major 1) → npm DEDUPES to one track
-  instance; focus's `EXPECTED_TRACK_READ_MAJOR=1` satisfied by READ 1.12.0. The `DecisionDossierView`/
-  ComprehensionEvidence shapes + `/read` self-contained barrel are confirmed sufficient for focus's type imports.
+- `@sentropic/focus` deps `@sentropic/track:^0.17.0`. **CORRECTION (pair-review):** on a `0.x` version, caret
+  locks the MINOR — `^0.17.0` ⟹ `>=0.17.0 <0.18.0`, so **0.18.0/0.19.0 do NOT satisfy it.** focus therefore pulls a
+  SEPARATE nested `@sentropic/track@0.17.x` in EVERY install (dev, prod, monorepo, global) — there is NO dedupe to
+  the consumer's 0.18/0.19. `track focus` reads the log through **focus's bundled 0.17.x reader**, never the local
+  one. This is SAFE: the event contract is ADDITIVE and the fold SKIPS unknown event types (`default: break`,
+  verified in 0.17.x), so the 0.17.x reader tolerates 0.18.0+ `demand.*` events (skips them) and reads the decision
+  dossier correctly; `EXPECTED_TRACK_READ_MAJOR=1` is satisfied (0.17.x = READ 1.11.0, major 1). The
+  `DecisionDossierView`/ComprehensionEvidence shapes + `/read` self-contained barrel are sufficient for focus's imports.
 
 ## 1. Consumption — `./track` + `.` (NOT `./cli`)
 `track focus` resolves the store + flags THE TRACK WAY, then calls focus's `readDecisionDossier` + dispatches the
@@ -39,8 +44,9 @@ layering (track = substrate, focus = consumer). Resolution:
 - The `focus` handler does `await import('@sentropic/focus/track')` + `await import('@sentropic/focus')`, wrapping a
   `MODULE_NOT_FOUND` into a helpful "rendering requires @sentropic/focus — run `npm i @sentropic/focus`" (rc=1).
 - Keeps track's CORE publishable + usable with ZERO knowledge of focus; `track focus` is an additive, opt-in
-  capability (matches track's posture: MCP read-only, writes CLI, capabilities additive). npm dedupes the back-edge
-  to the already-present track 0.18.0 (no second instance, no loop).
+  capability (matches track's posture: MCP read-only, writes CLI, capabilities additive). The optional back-edge
+  resolves to focus's pinned `@sentropic/track@0.17.x` (a separate nested install — NOT a dedupe; see §0/§4); npm
+  does not fail/loop because optionalDeps are best-effort and 0.17.x is a leaf the install satisfies independently.
 
 ## 3. CLI wiring (`src/cli/index.ts`)
 - The focus case is **async** (dynamic import) → make `runCli` return `number | Promise<number>`; `bin.ts` →
@@ -55,14 +61,21 @@ layering (track = substrate, focus = consumer). Resolution:
 - Error map (preserve focus's scriptable exit codes): missing args → 2 + usage; `DecisionNotFoundError` → 3;
   `TrackContractMismatchError` → 4; focus-not-installed → 1 + install hint; other → 1. Add one `USAGE` line.
 
-## 4. One source of truth (self-consumption note)
-npm dedupes to a single `@sentropic/track@0.18.0` → no two `TrackReader` classes, no type duplication; the boundary
-is **primitives-in (eventsPath, {workspace,baselineCommit,decisionId}, readAt), focus-type-out (doc)**. Clean.
-KNOWN seam (accept for v1): focus's `./track` only takes an `eventsPath` string → for one command there are TWO log
-reads + TWO contract gates (track's implicit + focus's explicit). **v1.1 escape hatch (deferred):** track builds
-its own `TrackReader`, calls `canevas`/`amendmentTrace`/`cursor` (reads it already owns), then focus's exported
-`toDecisionDossierDocument(view, amendmentTrace, meta)` → one reader, one gate, focus reduced to pure render. Defer
-(it duplicates focus's orchestration conventions into track); use only if the double-read/gate ever bites.
+## 4. Read authority (self-consumption — CORRECTED by pair-review)
+**There is NO dedupe** (§0): under `^0.17.0`-on-0.x, focus reads through its OWN bundled `@sentropic/track@0.17.x`
+in EVERY install. So `track focus`'s read goes through the **0.17.x reader, NOT the local 0.19.0** — this is the
+PERMANENT v1 behavior, not a rare seam. The boundary is **primitives-in (eventsPath, {workspace,baselineCommit,
+decisionId}, readAt), focus-type-out (doc)**; the value `instanceof` error checks work because they reference
+focus's own bundled classes. SAFE for v1: the READ contract is additive within major 1 and the fold SKIPS unknown
+event types (`default: break`), so the 0.17.x reader reads 0.19.0-written logs (incl. `demand.*`, which it skips)
+and renders the decision dossier correctly (proven by the test suite + fold inspection).
+**KNOWN LIMITATION (concrete trigger):** the 0.17.x reader lags the LOCAL track — it bites the day the decision
+dossier needs a READ-contract feature shipped AFTER 0.17.x (e.g. a future `canevas`/`dossier` field). **v1.1 escape
+hatch (the real fix, deferred):** `track focus` builds its OWN local `TrackReader`, calls
+`canevas`/`amendmentTrace`/`cursor` (reads it already owns), then focus's exported
+`toDecisionDossierDocument(view, amendmentTrace, meta)` → the read is ALWAYS the local/authoritative track, focus
+reduced to pure render. Defer (v1 render is stable under 0.17.x; the hatch duplicates focus's orchestration
+conventions into track) — adopt when focus's pinned reader first lags a needed dossier feature.
 
 ## 5. v1 scope + the L4 write seam (NOT here)
 v1 = read-only render (focus@0.3.0 is itself read-only: no auth, no identity, no clock, no write). `track focus`
