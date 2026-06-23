@@ -89,7 +89,8 @@ describe('CLI smoke (Milestone 1): init -> branch import -> report', () => {
 describe('CLI full verb surface (Lot 7) end-to-end', () => {
   function r(args: string[]): { code: number; text: string } {
     out.length = 0
-    const code = runCli(args, io)
+    // sync commands only here → runCli returns a plain number (the async `focus` path is not exercised)
+    const code = runCli(args, io) as number
     return { code, text: out.join('').trim() }
   }
 

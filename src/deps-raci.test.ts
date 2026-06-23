@@ -247,7 +247,8 @@ describe('D6-B — decision sponsor (= accountable) surfaced end-to-end', () => 
   const cli = (...argv: string[]): { code: number; out: string } => {
     const out: string[] = []
     const io: CliIO = { cwd: dir, out: (s) => out.push(s), err: (s) => out.push(s) }
-    return { code: runCli(argv, io), out: out.join('') }
+    // sync commands only here → runCli returns a plain number (the async `focus` path is not exercised)
+    return { code: runCli(argv, io) as number, out: out.join('') }
   }
 
   it('track decision new --accountable <actor> persists the sponsor', () => {

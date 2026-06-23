@@ -6,10 +6,14 @@
 // same posture as track-mcp's cli.ts and cannot regress that way. `index.ts` stays import-only.
 import { runCli } from './index.js'
 
-process.exit(
+// `runCli` returns `number | Promise<number>` — the `focus` command is async (it dynamically imports the
+// optional `@sentropic/focus`); every other command stays sync and returns a plain number. `Promise.resolve`
+// normalizes both into one exit path, so a sync command still exits with no added microtask churn beyond a
+// resolved-promise tick.
+Promise.resolve(
   runCli(process.argv.slice(2), {
     cwd: process.cwd(),
     out: (s) => process.stdout.write(s),
     err: (s) => process.stderr.write(s),
   }),
-)
+).then((rc) => process.exit(rc))

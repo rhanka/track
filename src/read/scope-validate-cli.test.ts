@@ -19,7 +19,8 @@ const cli = (...argv: string[]): { code: number; out: string; err: string } => {
   const out: string[] = []
   const err: string[] = []
   const io = { cwd: dir, out: (s: string) => out.push(s), err: (s: string) => err.push(s) }
-  return { code: runCli(argv, io), out: out.join(''), err: err.join('') }
+  // sync commands only here → runCli returns a plain number (the async `focus` path is not exercised)
+  return { code: runCli(argv, io) as number, out: out.join(''), err: err.join('') }
 }
 
 describe('scope LOT(b) — CLI `track scope validate`', () => {

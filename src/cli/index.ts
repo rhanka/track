@@ -91,6 +91,7 @@ const USAGE = `usage: track <command>
   workspace-activity --workspace <id> [--baseline-commit <sha>] [--now <iso>] [--idle-ms <ms>] [--format json|text]
   scope validate --workspace <id> [--baseline-commit <sha>] [--content <path>] [--locator <l>] [--claimed-item <id>] [--infer-delivered-out-of-scope] [--format json|text]
   validate [--commit <sha>]
+  focus <decision-id> --workspace <w> [--format terminal|md|html] [--baseline-commit <sha>]
   branch import <BRANCH.md> [--commit <sha>]
   ingest <file.jsonl> --workspace <w>
   install-skills --host <claude|codex|gemini|agy|all> [--scope user|project] [--force]
@@ -299,7 +300,7 @@ function extractTrackDirFlag(argv: string[]): { trackDirFlag?: string; rest: str
   return trackDirFlag !== undefined ? { trackDirFlag, rest } : { rest }
 }
 
-export function runCli(rawArgv: string[], io: CliIO): number {
+export function runCli(rawArgv: string[], io: CliIO): number | Promise<number> {
   const { trackDirFlag, rest: argv } = extractTrackDirFlag(rawArgv)
   const cmd = argv[0]
   const rest = argv.slice(1)
@@ -341,6 +342,7 @@ export function runCli(rawArgv: string[], io: CliIO): number {
       case 'query':
       case 'validate':
       case 'scope':
+      case 'focus':
       case 'workspace-activity': {
         const trackDir = resolveTrackDirOrNull(resolveOpts)
         if (trackDir === null) {
@@ -366,6 +368,11 @@ export function runCli(rawArgv: string[], io: CliIO): number {
             return cmdValidate(rest, ctx, trackDir === null)
           case 'scope':
             return cmdScope(rest, ctx)
+          case 'focus':
+            // The ONLY async command (dynamic `import('@sentropic/focus')`); it returns a Promise<number>
+            // and OWNS its full error→rc map internally (the outer sync try/catch can't see async
+            // rejections). `runCli` returns `number | Promise<number>`; `bin.ts` awaits it.
+            return cmdFocus(rest, ctx, trackDir === null)
           case 'workspace-activity':
             return cmdWorkspaceActivity(rest, ctx)
         }
@@ -900,6 +907,114 @@ function cmdWorkspaceActivity(args: string[], ctx: Ctx): number {
   lines.push(`latestEventAt: ${activity.latestEventAt ?? '-'}`)
   io.out(`${lines.join('\n')}\n`)
   return 0
+}
+
+/**
+ * Minimal HTML entity escape for the focus HTML render hook — escapes the five XML-significant chars so
+ * markdown prose injected into the document can't break out of its `<pre>` wrapper. focus's own
+ * `defaultHtmlHooks` are NOT exported, so track supplies its own (no markdown/sanitizer lib in core).
+ */
+function htmlEscape(s: string): string {
+  return s
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;')
+}
+
+/**
+ * Render hooks the focus HTML renderer requires (focus carries NO marked/DOMPurify, and its
+ * `defaultHtmlHooks` is not exported). `renderMarkdown` emits prose verbatim inside an escaped
+ * `<pre>` (no markdown engine in track core); `sanitizeHtml` is identity — track's HTML is for a
+ * trusted local-CLI surface, not untrusted network output. An L4/web host would supply real hooks.
+ */
+const HTML_HOOKS = {
+  renderMarkdown: (md: string): string => `<pre class="focus-md-raw">${htmlEscape(md)}</pre>`,
+  sanitizeHtml: (h: string): string => h,
+}
+
+/**
+ * `track focus <decision-id> --workspace <w> [--format terminal|md|html] [--baseline-commit <sha>]` —
+ * a READ-ONLY render of a track decision as a focus DecisionDossierDocument (focus@0.3.0 is itself
+ * read-only). track resolves the store THE TRACK WAY (`ctx.eventsPath` — NO `--events-path`; track owns
+ * store resolution via `--track-dir`/`TRACK_DIR`/ancestor-walk) and the baseline commit via `resolveCommit`,
+ * then calls focus's `readDecisionDossier(eventsPath, {workspace, baselineCommit, decisionId}, readAt)` and
+ * dispatches the render-core (terminal/md/html). It is the HOME of Focus (`stp focus` is a shortcut alias).
+ *
+ * ASYNC (the only such command): `@sentropic/focus` is an `optionalDependency` consumed via dynamic
+ * `import()`, so track's CORE stays publishable with ZERO knowledge of focus and `track focus` is an
+ * additive, opt-in capability. A MODULE_NOT_FOUND (focus not installed) maps to rc=1 + an install hint.
+ *
+ * Error map (preserves focus's scriptable exit codes): missing decision-id/--workspace → 2 + usage;
+ * `DecisionNotFoundError` → 3; `TrackContractMismatchError` → 4; focus-not-installed → 1 + hint; other → 1.
+ */
+async function cmdFocus(args: string[], ctx: Ctx, _noStore: boolean): Promise<number> {
+  const { io } = ctx
+  const FOCUS_USAGE = 'usage: track focus <decision-id> --workspace <w> [--format terminal|md|html] [--baseline-commit <sha>]\n'
+  const { positional, flags } = parseFlags(args)
+  // decision-id is positional + REQUIRED; --workspace is a REQUIRED flag (both gate at the CLI boundary
+  // with rc=2 + usage, never reaching focus). Validate BEFORE the dynamic import so a usage error is
+  // independent of whether focus is installed.
+  const decisionId = positional[0]
+  const workspace = opt(flags, 'workspace')
+  if (decisionId === undefined || workspace === undefined) {
+    io.err(FOCUS_USAGE)
+    return 2
+  }
+  // `--format` is validated via the shared `oneOf` (CLI-boundary input check) BEFORE the import too, so a
+  // bad format fails fast as a usage error rather than a render error.
+  let format: 'terminal' | 'md' | 'html'
+  try {
+    format = oneOf(opt(flags, 'format') ?? 'terminal', ['terminal', 'md', 'html'], '--format')
+  } catch (error) {
+    io.err(`error: ${error instanceof Error ? error.message : String(error)}\n`)
+    return 2
+  }
+
+  // Load the focus render binding + core. focus is an optionalDependency → a MODULE_NOT_FOUND means the
+  // consumer never ran `npm i @sentropic/focus`: map it to rc=1 + a helpful hint (NOT a stack trace).
+  let focusTrack: typeof import('@sentropic/focus/track')
+  let core: typeof import('@sentropic/focus')
+  try {
+    focusTrack = await import('@sentropic/focus/track')
+    core = await import('@sentropic/focus')
+  } catch (error) {
+    const code = (error as { code?: string }).code
+    if (code === 'ERR_MODULE_NOT_FOUND' || code === 'MODULE_NOT_FOUND') {
+      io.err('error: rendering requires @sentropic/focus — run `npm i @sentropic/focus`\n')
+      return 1
+    }
+    io.err(`error: ${error instanceof Error ? error.message : String(error)}\n`)
+    return 1
+  }
+
+  try {
+    // PURE / read-only / clockless: `readAt` is supplied at the CLI boundary (track holds no clock), the
+    // baseline commit resolves HEAD/refs/short-SHA → 40-char, and `ctx.eventsPath` is the single store.
+    const doc = focusTrack.readDecisionDossier(
+      ctx.eventsPath,
+      { workspace, baselineCommit: resolveCommit(io.cwd, opt(flags, 'baseline-commit')), decisionId },
+      new Date().toISOString(),
+    )
+    const rendered =
+      format === 'md' ? core.renderMd(doc) : format === 'html' ? core.renderHtml(doc, HTML_HOOKS) : core.renderTerminal(doc)
+    io.out(rendered.endsWith('\n') ? rendered : `${rendered}\n`)
+    return 0
+  } catch (error) {
+    // Preserve focus's scriptable exit codes: a missing decision is rc=3, an incompatible read contract
+    // is rc=4 (both detected via `instanceof` from the focus/track import — same module, real classes).
+    if (error instanceof focusTrack.DecisionNotFoundError) {
+      io.err(`error: ${error.message}\n`)
+      return 3
+    }
+    if (error instanceof focusTrack.TrackContractMismatchError) {
+      io.err(`error: ${error.message}\n`)
+      return 4
+    }
+    io.err(`error: ${error instanceof Error ? error.message : String(error)}\n`)
+    return 1
+  }
 }
 
 /**
