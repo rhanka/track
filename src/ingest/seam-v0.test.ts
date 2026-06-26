@@ -50,8 +50,8 @@ describe('seam v0 — contract version bumps (additive, backward-compatible)', (
   it('INGEST_CONTRACT_VERSION ≥ seam-v0 1.1.0 (now 1.3.0 — demand-lifecycle additive kinds, still MINOR)', () => {
     expect(INGEST_CONTRACT_VERSION).toBe('1.3.0')
   })
-  it('READ_CONTRACT_VERSION ≥ seam-v0 1.9.0 (now 1.12.0 — demand lease/reads additive surface, still MINOR)', () => {
-    expect(READ_CONTRACT_VERSION).toBe('1.12.0')
+  it('READ_CONTRACT_VERSION ≥ seam-v0 1.9.0 (now 1.13.0 — Objective Loop refs additive surface, still MINOR)', () => {
+    expect(READ_CONTRACT_VERSION).toBe('1.13.0')
   })
 })
 

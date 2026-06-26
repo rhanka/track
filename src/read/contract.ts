@@ -54,7 +54,7 @@ import { graphExportFromState, type TrackGraphFragment } from '../graph-export.j
  * shapes it returns may only GROW (new methods / new optional fields); nothing is removed or
  * repurposed without a major bump. Consumers gate on `reader.contractVersion`.
  */
-export const READ_CONTRACT_VERSION = '1.12.0' // +demand lease (ephemeral) reads: demands()/lifecycleTrace()/workspaceActivity+canevas demand surfacing — additive (D7)
+export const READ_CONTRACT_VERSION = '1.13.0' // +Objective Loop structured track-ref helpers — additive/read-only
 
 /** Provenance of the last `branch.imported` for a locator (drawn from the raw event log). */
 export interface BranchProvenance {
@@ -85,6 +85,94 @@ export class StaleSidecarError extends Error {
 }
 
 const isSha256 = (v: unknown): v is Sha256 => typeof v === 'string' && v.startsWith('sha256:')
+
+export type ObjectiveTrackRefKind = 'wp' | 'item' | 'decision' | 'blocker' | 'criterion' | 'evidence' | 'scope'
+
+export type ObjectiveRefRole =
+  | 'primary'
+  | 'target'
+  | 'dependency'
+  | 'blocker'
+  | 'decision-gate'
+  | 'acceptance'
+  | 'review'
+  | 'evidence'
+  | 'advisory'
+
+export interface TrackObjectiveRef {
+  system: 'track'
+  locator: string
+  repoKey: string
+  workspace: string
+  aggregateKind: ObjectiveTrackRefKind
+  aggregateId: string
+  role: ObjectiveRefRole
+  baselineCommit: string
+}
+
+export interface TrackObjectiveRefInput {
+  repoKey: string
+  workspace: string
+  aggregateKind: ObjectiveTrackRefKind
+  aggregateId: string
+  role: ObjectiveRefRole
+  baselineCommit: string
+  locator?: string
+}
+
+export function trackObjectiveRef(input: TrackObjectiveRefInput): TrackObjectiveRef {
+  const locator = input.locator ?? objectiveRefLocator(input)
+  const ref: TrackObjectiveRef = { system: 'track', ...input, locator }
+  if (ref.locator !== objectiveRefLocator(ref)) throw new Error('track objective ref locator does not match fields')
+  return ref
+}
+
+export function parseTrackObjectiveRef(locator: string): TrackObjectiveRef {
+  const [system, repoKey, workspace, aggregateKind, aggregateId, role, baselineCommit, ...extra] = locator.split(':')
+  if (extra.length > 0) throw new Error('track objective ref locator has too many fields')
+  if (system !== 'track') throw new Error('track objective ref locator must start with "track"')
+  if (!isObjectiveRefKind(aggregateKind)) throw new Error('track objective ref locator has invalid aggregateKind')
+  if (!isObjectiveRefRole(role)) throw new Error('track objective ref locator has invalid role')
+  return trackObjectiveRef({
+    repoKey: decodeLocatorPart(repoKey),
+    workspace: decodeLocatorPart(workspace),
+    aggregateKind,
+    aggregateId: decodeLocatorPart(aggregateId),
+    role,
+    baselineCommit: decodeLocatorPart(baselineCommit),
+    locator,
+  })
+}
+
+function objectiveRefLocator(ref: Omit<TrackObjectiveRef, 'system' | 'locator'>): string {
+  return [
+    'track',
+    encodeLocatorPart(ref.repoKey),
+    encodeLocatorPart(ref.workspace),
+    ref.aggregateKind,
+    encodeLocatorPart(ref.aggregateId),
+    ref.role,
+    encodeLocatorPart(ref.baselineCommit),
+  ].join(':')
+}
+
+function encodeLocatorPart(value: string): string {
+  if (value.length === 0) throw new Error('track objective ref fields must be non-empty')
+  return encodeURIComponent(value)
+}
+
+function decodeLocatorPart(value: string | undefined): string {
+  if (value === undefined || value.length === 0) throw new Error('track objective ref locator is incomplete')
+  return decodeURIComponent(value)
+}
+
+function isObjectiveRefKind(value: unknown): value is ObjectiveTrackRefKind {
+  return typeof value === 'string' && ['wp', 'item', 'decision', 'blocker', 'criterion', 'evidence', 'scope'].includes(value)
+}
+
+function isObjectiveRefRole(value: unknown): value is ObjectiveRefRole {
+  return typeof value === 'string' && ['primary', 'target', 'dependency', 'blocker', 'decision-gate', 'acceptance', 'review', 'evidence', 'advisory'].includes(value)
+}
 
 /**
  * An OPEN external (`scope:'extra'`) dependency — a cross-repo/cross-agent blocker awaiting its h2a

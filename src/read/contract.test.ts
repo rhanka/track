@@ -6,7 +6,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 
 import { EventStore } from '../events/store.js'
 import { Track } from '../track.js'
-import { READ_CONTRACT_VERSION, StaleSidecarError, TrackReader } from './contract.js'
+import { READ_CONTRACT_VERSION, StaleSidecarError, TrackReader, parseTrackObjectiveRef, trackObjectiveRef } from './contract.js'
 
 // Base BRANCH.md. The variants below isolate one dimension each.
 const FIXTURE = `# Feature: BR-99 — Demo Feature
@@ -103,12 +103,56 @@ afterEach(() => {
 
 describe('read contract — version + curated surface (snapshot gate)', () => {
   it('exposes a stable semver and the documented read methods', () => {
-    expect(READ_CONTRACT_VERSION).toBe('1.12.0') // +demand lease (ephemeral) reads: demands()/lifecycleTrace() + additive workspaceActivity/canevas — additive (D7)
+    expect(READ_CONTRACT_VERSION).toBe('1.13.0') // +Objective Loop structured track-ref helpers — additive/read-only
     expect(reader.contractVersion).toBe(READ_CONTRACT_VERSION)
+    expect(typeof trackObjectiveRef).toBe('function')
+    expect(typeof parseTrackObjectiveRef).toBe('function')
     const api = reader as unknown as Record<string, unknown>
     for (const m of ['report', 'query', 'validate', 'branchProvenance', 'freshness', 'requireFresh', 'externalDependencies', 'workspaceActivity', 'statusByLevel', 'verificationRuns', 'scopeValidate', 'cursor', 'changesSince', 'graphExport', 'canevas', 'amendmentTrace', 'acceptanceDetail', 'demands', 'lifecycleTrace']) {
       expect(typeof api[m]).toBe('function')
     }
+  })
+
+  it('round-trips Objective Loop track refs without owning objective state', () => {
+    const ref = trackObjectiveRef({
+      repoKey: 'track',
+      workspace: 'track',
+      aggregateKind: 'wp',
+      aggregateId: 'WP-objective-rollup',
+      role: 'dependency',
+      baselineCommit: 'abc123',
+    })
+
+    expect(ref).toEqual({
+      system: 'track',
+      locator: 'track:track:track:wp:WP-objective-rollup:dependency:abc123',
+      repoKey: 'track',
+      workspace: 'track',
+      aggregateKind: 'wp',
+      aggregateId: 'WP-objective-rollup',
+      role: 'dependency',
+      baselineCommit: 'abc123',
+    })
+    expect(parseTrackObjectiveRef(ref.locator)).toEqual(ref)
+  })
+
+  it('encodes locator fields and rejects mismatched explicit locators', () => {
+    const ref = trackObjectiveRef({
+      repoKey: 'repo:with space',
+      workspace: 'work/main',
+      aggregateKind: 'decision',
+      aggregateId: 'DEC:42',
+      role: 'decision-gate',
+      baselineCommit: 'sha with/slash',
+    })
+
+    expect(ref.locator).toBe('track:repo%3Awith%20space:work%2Fmain:decision:DEC%3A42:decision-gate:sha%20with%2Fslash')
+    expect(parseTrackObjectiveRef(ref.locator)).toEqual(ref)
+    expect(() => trackObjectiveRef({ ...ref, locator: 'track:other:track:wp:x:target:abc123' })).toThrow(
+      /locator does not match fields/,
+    )
+    expect(() => parseTrackObjectiveRef('track:repo:ws:unknown:id:target:abc123')).toThrow(/invalid aggregateKind/)
+    expect(() => parseTrackObjectiveRef('track:repo:ws:wp:id:unknown:abc123')).toThrow(/invalid role/)
   })
 
   it('pins the report-row shape so a breaking field change fails CI', () => {
