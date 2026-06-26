@@ -65,10 +65,19 @@ describe('./ingest barrel — the submit-facing surface', () => {
     expect([...BINDING_AUTH].sort()).toEqual(['local-user', 'signed'])
 
     // The barrel exposes ONLY the curated runtime value names (types erase at runtime, so they do not
-    // appear here): ingest, isBindingAuth, BINDING_AUTH, INGEST_CONTRACT_VERSION, IngestError. A
+    // appear here): ingest, isBindingAuth, BINDING_AUTH, INGEST_CONTRACT_VERSION, IngestError, plus the Focus L4 action-binding constants. A
     // deliberate, documented contract — not `export *`.
     expect(new Set(Object.keys(Ingest))).toEqual(
-      new Set(['ingest', 'isBindingAuth', 'INGEST_CONTRACT_VERSION', 'IngestError', 'BINDING_AUTH']),
+      new Set([
+        'ingest',
+        'isBindingAuth',
+        'INGEST_CONTRACT_VERSION',
+        'IngestError',
+        'BINDING_AUTH',
+        'FOCUS_L4_ACTIONS',
+        'FOCUS_L4_ACTION_BINDINGS',
+        'focusL4ActionBinding',
+      ]),
     )
   })
 

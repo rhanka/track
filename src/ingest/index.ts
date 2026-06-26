@@ -34,6 +34,9 @@ export { ingest, isBindingAuth, BINDING_AUTH, type IngestContext, type IngestRes
 // The neutral submit ENVELOPE + the kind enum/type — the WorkEvent the host constructs per gesture.
 export { INGEST_CONTRACT_VERSION, type WorkEvent, type WorkEventKind } from './contract.js'
 
+// Focus L4 / canevas host action vocabulary mapped to existing WorkEvent kinds.
+export { FOCUS_L4_ACTIONS, FOCUS_L4_ACTION_BINDINGS, focusL4ActionBinding, type FocusL4Action, type FocusL4ActionBinding, type FocusL4Aggregate } from './focus-l4.js'
+
 // The fail-closed rejection a caller MUST catch (a malformed/illegal WorkEvent, a containment violation, or
 // a binding write on an unauthenticated channel). Distinct from a domain error thrown by the facade.
 export { IngestError } from './map.js'
