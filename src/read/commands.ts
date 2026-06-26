@@ -11,7 +11,7 @@ import type { TrackReader } from './contract.js'
 /**
  * `report` rendered exactly as the CLI renders it (SPEC §7).
  *
- * Default (no `--wp`): the flat bucket dump, unchanged (back-compat).
+ * Default for text/md: the conductor WP view when a WP forest exists. Use `--flat` to force the legacy bucket dump. JSON stays the flat structured contract unless `--wp` is explicit.
  *
  * `--wp` (report-revamp): the CONDUCTOR view ONLY — the 3-table FAIT / À-FAIRE(%·WP) / ATTENDUS
  * status (the owner reports THROUGH it), NOT the flat buckets too. For `json` we carry the structured
@@ -25,8 +25,9 @@ export function reportText(reader: TrackReader, options: ReportOptions, format: 
       // Additive: emit the whole report (buckets stay for back-compat) plus the global WP totals.
       return `${JSON.stringify({ ...report, wpTotals: wpTotals(report.wpTree) }, null, 2)}\n`
     }
-    // Structured view ONLY — no flat bucket dump in --wp mode.
-    return formatWpConductor(report.wpTree, format)
+    // Structured conductor view only when there is an actual WP forest. If a repo has no WP containers
+    // yet, default human report falls back to the legacy flat buckets instead of showing an empty shell.
+    if (report.wpTree.length > 0) return formatWpConductor(report.wpTree, format)
   }
 
   return formatReport(report, format)

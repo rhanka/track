@@ -123,3 +123,21 @@ Implement Lot 1 as a Track-side contract artifact:
 2. add a small exported mapping/helper or doc-backed fixture;
 3. test authenticated vs unauthenticated binding behavior through `@sentropic/track/ingest`;
 4. report back with a WP5/WP6 table: Fait / A faire / Prochaine action / Decision.
+
+## Execution mode update — subagent + consensus routing
+
+WP5/WP6 must be manageable by subagents, not only by the current conductor.
+
+Default routing:
+
+| Work slice | Mode | Consensus requirement |
+|---|---|---|
+| Focus L4 action-to-WorkEvent mapping | local or subagent | local tests sufficient unless auth semantics change |
+| Ingest auth/workspace boundary | subagent review | require Opus/Claude 4.8xhigh + Codex 5.5xhigh consensus before shipping a binding-auth change |
+| Canevas host write path | subagent + h2a coordination | require 4.8xhigh/5.5xhigh consensus for cross-host contract changes |
+| UI skin/render-only change | subagent | no consensus unless it changes state semantics |
+| Event names / read or ingest contract version | consensus gate | 4.8xhigh + Codex 5.5xhigh required |
+
+Track-side reports must expose this execution mode as a recommended next action, not bury it in prose.
+For WP5/WP6 the default recommendation is: continue via subagent; escalate to consensus only for binding auth,
+contract versioning, or cross-host write semantics.

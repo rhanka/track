@@ -85,7 +85,7 @@ const USAGE = `usage: track <command>
   accept waive <criterionId> --reason <r>
   consolidate --items <id,id> --commit <mergeCommit> [--client-token <t>]
   priority assess <itemId> --ubv <n> --tc <n> --rr <n> --js <n>
-  report [--decisions] [--require-accepted] [--wp] [--level <spec|plan|wp|lot|task>] [--format json|text|md] [--commit <sha>]
+  report [--decisions] [--require-accepted] [--wp|--flat] [--level <spec|plan|wp|lot|task>] [--format json|text|md] [--commit <sha>]
   export-graph [--repo-key <repo:key>] [--source-id <id>] [--observed-at <iso>]
   query [--kind <k>] [--role workpackage] [--workspace <w>] [--bucket <AWAITED|DROPPED|DONE|TO-DO>] [--realization <r>] [--acceptance <a>] [--format json|text|md] [--commit <sha>]
   workspace-activity --workspace <id> [--baseline-commit <sha>] [--now <iso>] [--idle-ms <ms>] [--format json|text]
@@ -823,7 +823,9 @@ function cmdReport(args: string[], ctx: Ctx): number {
         baselineCommit: resolveCommit(io.cwd, opt(flags, 'commit')),
         requireAccepted: flags['require-accepted'] === true,
         decisions: flags['decisions'] === true,
-        wpTree: flags['wp'] === true,
+        // Directive default: human text/md reports use the WP conductor view unless --flat is explicit.
+        // JSON keeps the legacy structured bucket contract unless --wp is explicit.
+        wpTree: flags['wp'] === true || (flags['flat'] !== true && fmt(flags) !== 'json'),
       },
       fmt(flags),
     ),

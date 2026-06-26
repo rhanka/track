@@ -228,6 +228,32 @@ export function formatWpConductor(tree: readonly WpNode[], format: Format): stri
     const tag = owner ? 'décision: owner' : 'action: agent'
     lines.push(`- ${title(leaf.title, format)} [${wp.label}] — ${tag}`)
   }
+  lines.push('')
+
+  // ---- PROCHAINES ACTIONS — directive continuation queue, not a passive "if you want" dump. ----
+  lines.push(h('PROCHAINES ACTIONS PRÉCONISÉES'))
+  const candidates = flat
+    .filter((n) => n.pct !== 100)
+    .map((n) => ({ wp: n, leaves: openLeaves(n) }))
+    .filter((x) => x.leaves.length > 0)
+  if (candidates.length === 0) {
+    lines.push('- aucune action ouverte dans les WP actifs')
+  } else {
+    for (const { wp, leaves } of candidates) {
+      const first = leaves[0]!
+      const mode = first.awaitedOnDecision === true
+        ? 'human decision'
+        : first.engagementRef !== undefined
+          ? 'h2a/subagent'
+          : 'local/subagent'
+      const action = first.awaitedOnDecision === true
+        ? 'trancher la décision bloquante puis relancer le WP'
+        : first.engagementRef !== undefined
+          ? 'relancer l’engagement/subagent associé et suivre le retour'
+          : 'continuer le premier item ouvert puis enregistrer preuve/acceptance'
+      lines.push(`- ${wpLabel(wp)} — ${action} — mode:${mode} — cible:${title(first.title, format)}`)
+    }
+  }
 
   return lines.join('\n').trimEnd() + '\n'
 }

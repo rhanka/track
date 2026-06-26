@@ -99,6 +99,31 @@ describe('report-revamp — `--wp` structured view only (no flat bucket dump)', 
     expect(text).not.toMatch(/^TO-DO \(/m)
   })
 
+
+  it('CLI `track report` defaults to conductor view for human text; --flat keeps legacy buckets', () => {
+    seed()
+    const out: string[] = []
+    const err: string[] = []
+    const io = { cwd: dir, out: (s: string) => out.push(s), err: (s: string) => err.push(s) }
+
+    expect(runCli(['report', '--commit', 'c1'], io)).toBe(0)
+    expect(out.join('')).toContain('PROCHAINES ACTIONS PRÉCONISÉES')
+    expect(out.join('')).not.toMatch(/^DONE \(/m)
+
+    out.length = 0
+    expect(runCli(['report', '--flat', '--commit', 'c1'], io)).toBe(0)
+    expect(out.join('')).toMatch(/^DONE \(/m)
+    expect(out.join('')).toMatch(/^TO-DO \(/m)
+  })
+
+  it('the conductor view recommends next actions with an execution mode', () => {
+    seed()
+    const text = reportText(new TrackReader(eventsPath), { ...base, wpTree: true }, 'text')
+    const actions = text.slice(text.indexOf('PROCHAINES ACTIONS PRÉCONISÉES'))
+    expect(actions).toContain('mode:')
+    expect(actions).toMatch(/continuer|trancher|relancer/)
+  })
+
   it('report WITHOUT --wp keeps the flat-bucket behavior (back-compat)', () => {
     seed()
     const text = reportText(new TrackReader(eventsPath), base, 'text')
