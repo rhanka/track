@@ -42,10 +42,11 @@ export interface StatusGroup {
 const isWp = (item: ItemState): boolean => isRoleContainer(item)
 
 /** Roll a set of leaf buckets up to a group status (first match wins, mirroring `bucketOf` precedence). */
-function rollupStatus(leaves: readonly WpLeaf[]): GroupStatus {
+function rollupStatus(leaves: readonly WpLeaf[], emptyStatus: GroupStatus): GroupStatus {
+  if (leaves.length === 0) return emptyStatus
   if (leaves.some((l) => l.bucket === 'AWAITED')) return 'AWAITED'
   const active = leaves.filter((l) => l.bucket !== 'DROPPED')
-  if (active.length === 0) return 'DROPPED' // only dropped (or empty) remain
+  if (active.length === 0) return 'DROPPED' // only dropped remain
   if (active.every((l) => l.bucket === 'DONE')) return 'DONE'
   return 'TO-DO'
 }
@@ -95,7 +96,7 @@ export function statusByLevel(state: State, level: StatusLevel, config: ReportCo
       title: wp.title,
       label,
       depth,
-      status: rollupStatus(leaves),
+      status: rollupStatus(leaves, bucketOf(state, wp, config)),
       done,
       active,
       dropped,

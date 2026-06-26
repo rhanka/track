@@ -107,7 +107,15 @@ describe('statusByLevel — generalized computeWpTree projection (LOT 2)', () =>
     const leaf = track.createItem({ kind: 'feature', title: 'l', workspace: 'ws', parentId: wp })
     track.setRealization(leaf, 'cancelled') // DROPPED — excluded from denominator
     const groups = statusByLevel(track.state(), 'plan', CONFIG)
-    expect(groups[0]).toMatchObject({ done: 0, active: 0, dropped: 1, pct: 'n/a' })
+    expect(groups[0]).toMatchObject({ status: 'DROPPED', done: 0, active: 0, dropped: 1, pct: 'n/a' })
+  })
+
+  it('0/0 empty leaf-WP uses its own bucket instead of defaulting to DROPPED', () => {
+    const store = new EventStore(join(dir, 'empty-wp', '.track', 'events.jsonl'))
+    const track = new Track(store, { now, newId: counter(), by: 'h', prov: { transport: 'cli', proposed: false, auth: 'local-user' } })
+    const wp = track.createItem({ kind: 'feature', title: 'Empty current WP', workspace: 'ws', role: 'workpackage' })
+    const groups = statusByLevel(track.state(), 'plan', CONFIG)
+    expect(groups[0]).toMatchObject({ id: wp, status: 'TO-DO', done: 0, active: 0, dropped: 0, pct: 'n/a' })
   })
 
   it("group rollup: AWAITED if any active descendant awaited, DROPPED if only dropped, DONE if all done", () => {
