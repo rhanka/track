@@ -100,6 +100,7 @@ describe('report-revamp — `--wp` structured view only (no flat bucket dump)', 
   })
 
 
+
   it('CLI `track report` defaults to conductor view for human text; --flat keeps legacy buckets', () => {
     seed()
     const out: string[] = []
@@ -128,11 +129,20 @@ describe('report-revamp — `--wp` structured view only (no flat bucket dump)', 
     expect(text).toMatch(/continuer|trancher|relancer/)
   })
 
-  it('report WITHOUT --wp keeps the flat-bucket behavior (back-compat)', () => {
+  it('report --flat keeps the legacy flat-bucket behavior (deprecated back-compat)', () => {
     seed()
-    const text = reportText(new TrackReader(eventsPath), base, 'text')
+    const text = reportText(new TrackReader(eventsPath), { ...base, wpTree: false }, 'text')
     expect(text).toMatch(/^DONE \(/m)
     expect(text).toMatch(/^TO-DO \(/m)
+  })
+
+
+  it('report defaults to the conductor view when a WP forest exists (0.19.1)', () => {
+    seed()
+    const text = reportText(new TrackReader(eventsPath), { ...base, wpTree: true }, 'text')
+    expect(text).toContain('FAIT')
+    expect(text).toContain('À-FAIRE')
+    expect(text).not.toMatch(/^TO-DO \(/m)
   })
 
   it('FAIT / À-FAIRE / ATTENDUS sections are present with correct membership', () => {
@@ -191,7 +201,7 @@ describe('report-revamp — CLI `track report --wp` end-to-end', () => {
     cli('init')
     const wp = cli('item', 'new', '--kind', 'chore', '--title', 'WP1 — Record Integrity', '--workspace', 'ws', '--role', 'workpackage').out.trim()
     cli('item', 'new', '--kind', 'chore', '--title', 'record-only (0.1.0)', '--workspace', 'ws', '--parent', wp)
-    const r = cli('report', '--wp', '--commit', 'c1')
+    const r = cli('report', '--commit', 'c1')
     expect(r.code).toBe(0)
     expect(r.out).toContain('WP1 · Record Integrity')
     expect(r.out).not.toContain('WP1 · WP1')

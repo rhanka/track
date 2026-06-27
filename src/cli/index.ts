@@ -800,8 +800,8 @@ function cmdReport(args: string[], ctx: Ctx): number {
   const { flags } = parseFlags(args)
   // Reads go through the shared TrackReader command layer (same path the MCP server uses).
   const reader = new TrackReader(ctx.eventsPath)
-  // Scope §A/§B — `--level <spec|plan|wp|lot|task>` switches to the status(level) projection (additive:
-  // absent ⇒ the unchanged bucket/WP report). requireAccepted/--commit govern the underlying buckets.
+  // Scope §A/§B — `--level <spec|plan|wp|lot|task>` switches to the status(level) projection.
+  // Otherwise 0.19.1 prefers the WP/table conductor view; `--flat` is the deprecated legacy opt-out.
   if (opt(flags, 'level') !== undefined) {
     io.out(
       statusText(
@@ -903,8 +903,9 @@ function cmdWorkspaceActivity(args: string[], ctx: Ctx): number {
     io.out(`${JSON.stringify(activity)}\n`)
     return 0
   }
-  // text: a readable summary — `pending: N`, one line per stalled item, then `latestEventAt`.
+  // text: a readable summary — `pending: N`, each pending item, each stalled item, then `latestEventAt`.
   const lines = [`pending: ${activity.pending}`]
+  for (const p of activity.pendingItems) lines.push(`pending-item ${p.bucket} ${p.id} ${p.title} [${p.realization}]`)
   for (const s of activity.stalled) lines.push(`${s.reason} ${s.id} ${s.title} (since ${s.since})`)
   lines.push(`latestEventAt: ${activity.latestEventAt ?? '-'}`)
   io.out(`${lines.join('\n')}\n`)

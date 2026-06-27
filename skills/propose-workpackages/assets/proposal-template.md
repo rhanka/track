@@ -53,5 +53,5 @@
 Approve this WP set + reparent plan? Options: **approve** (apply via `track item new --role workpackage` +
 `track item reparent`) · **revise** (<which WP / boundary to change>) · **defer**.
 
-> On **approve**: create each WP, reparent each item, apply splits, then `track report --wp` to verify the
+> On **approve**: create each WP, reparent each item, apply splits, then `track report` to verify the
 > rolled-up `%`. On **revise/defer**: do not write — fold the change and re-present.

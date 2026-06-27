@@ -52,7 +52,7 @@ afterEach(() => {
 })
 
 describe('track workspace-activity', () => {
-  it('parity: the verb returns the same {pending,stalled,latestEventAt} as the library method', () => {
+  it('parity: the verb returns the same activity object as the library method', () => {
     seed()
     const code = runCli(
       ['workspace-activity', '--workspace', 'ws-1', '--baseline-commit', 'c1', '--now', NOW, '--format', 'json'],
@@ -71,7 +71,7 @@ describe('track workspace-activity', () => {
     expect(err.join('')).toMatch(/workspace-activity/)
   })
 
-  it('--format json prints the raw {pending, stalled, latestEventAt} shape', () => {
+  it('--format json prints pending count plus pendingItems, stalled, latestEventAt', () => {
     seed()
     const code = runCli(
       ['workspace-activity', '--workspace', 'ws-1', '--baseline-commit', 'c1', '--now', NOW, '--format', 'json'],
@@ -80,6 +80,9 @@ describe('track workspace-activity', () => {
     expect(code).toBe(0)
     const obj = JSON.parse(out.join(''))
     expect(obj).toHaveProperty('pending')
+    expect(obj).toHaveProperty('pendingItems')
+    expect(Array.isArray(obj.pendingItems)).toBe(true)
+    expect(obj.pendingItems.length).toBe(obj.pending)
     expect(obj).toHaveProperty('stalled')
     expect(Array.isArray(obj.stalled)).toBe(true)
     expect(obj).toHaveProperty('latestEventAt')
@@ -98,12 +101,13 @@ describe('track workspace-activity', () => {
     expect(item.reason).toBe('in-progress-idle')
   })
 
-  it('--format text prints a readable summary (pending, each stalled item with reason, latestEventAt)', () => {
+  it('--format text prints a readable summary (pending items, each stalled item with reason, latestEventAt)', () => {
     const { inProgressId } = seed()
     const code = runCli(['workspace-activity', '--workspace', 'ws-1', '--baseline-commit', 'c1', '--now', NOW], io(root))
     expect(code).toBe(0)
     const text = out.join('')
     expect(text).toMatch(/pending: \d+/)
+    expect(text).toMatch(/pending-item/)
     expect(text).toMatch(/in-progress-idle/)
     expect(text).toContain(inProgressId)
     expect(text).toMatch(/latestEventAt/)
@@ -118,6 +122,7 @@ describe('track workspace-activity', () => {
       expect(err.join('')).toMatch(/track init/)
       const obj = JSON.parse(out.join(''))
       expect(obj.pending).toBe(0)
+      expect(obj.pendingItems).toEqual([])
       expect(obj.stalled).toEqual([])
       expect(existsSync(join(unadopted, '.track'))).toBe(false)
     } finally {

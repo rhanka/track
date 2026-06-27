@@ -11,11 +11,14 @@ import type { TrackReader } from './contract.js'
 /**
  * `report` rendered exactly as the CLI renders it (SPEC §7).
  *
- * Default for text/md: a directive action report — WP conductor when a WP forest exists, concise action/decision fallback otherwise. Use `--flat` to force the legacy bucket dump. JSON stays the flat structured contract unless `--wp` is explicit.
+ * Default for text/md (0.19.1): a directive action report — WP/table conductor when a WP forest exists,
+ * concise action/decision fallback otherwise. Use `--flat` to force the deprecated legacy bucket dump.
+ * JSON stays the flat structured contract unless `--wp` is explicit.
  *
- * `--wp` (report-revamp): the CONDUCTOR view ONLY — the 3-table FAIT / À-FAIRE(%·WP) / ATTENDUS
- * status (the owner reports THROUGH it), NOT the flat buckets too. For `json` we carry the structured
- * `wpTree` plus the global `wpTotals` so a conductor can render programmatically.
+ * The CONDUCTOR view is the 3-table FAIT / À-FAIRE(%·WP) / ATTENDUS status (the owner reports THROUGH
+ * it), NOT the flat buckets too. For `json` we carry the structured `wpTree` plus the global `wpTotals`
+ * so a conductor can render programmatically. If no WP forest exists, text/md falls back to legacy flat
+ * buckets so unstructured repos still report useful status.
  */
 export function reportText(reader: TrackReader, options: ReportOptions, format: Format): string {
   const report = reader.report(options)

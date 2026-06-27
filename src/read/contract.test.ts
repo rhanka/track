@@ -103,7 +103,7 @@ afterEach(() => {
 
 describe('read contract — version + curated surface (snapshot gate)', () => {
   it('exposes a stable semver and the documented read methods', () => {
-    expect(READ_CONTRACT_VERSION).toBe('1.13.0') // +Objective Loop structured track-ref helpers — additive/read-only
+    expect(READ_CONTRACT_VERSION).toBe('1.13.0') // +Objective refs + workspaceActivity.pendingItems — additive/read-only
     expect(reader.contractVersion).toBe(READ_CONTRACT_VERSION)
     expect(typeof trackObjectiveRef).toBe('function')
     expect(typeof parseTrackObjectiveRef).toBe('function')

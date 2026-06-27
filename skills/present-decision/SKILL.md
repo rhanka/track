@@ -32,9 +32,9 @@ Two *medium* triggers (moderate cost, partial reversibility, one repo but a shar
 
 ## Step 2 — Gather inputs (full-dossier path)
 
-1. **Local context first.** User request; repo entrypoints (`AGENTS.md`, then the host-specific pointer); applicable repo rules; existing track state when `.track/` exists; and **`track report --wp`** (fait / à-faire %·WP / attendus) when track is available. Use your code-search tool to ground claims in the actual code, not memory.
+1. **Local context first.** User request; repo entrypoints (`AGENTS.md`, then the host-specific pointer); applicable repo rules; existing track state when `.track/` exists; and **`track report`** (default table: fait / à-faire %·WP / attendus) when track is available. Use your code-search tool to ground claims in the actual code, not memory.
 2. **The double-instruction (standing rule).** For a complex *design* decision, get **independent Codex + Opus passes** via your second-opinion tool before recommending. **Synthesize — do not blend away disagreements.** If a hard-trigger decision lacks the second pass, mark the dossier **Incomplete** and ask whether to wait or proceed provisionally; only reversible prep may continue meanwhile.
-3. **Owner criteria.** Seed from `assets/owner-criteria.template.md`; source the live criteria from the request, repo rules, prior owner decisions, existing track decisions/dossiers, and the `track report --wp` attendus.
+3. **Owner criteria.** Seed from `assets/owner-criteria.template.md`; source the live criteria from the request, repo rules, prior owner decisions, existing track decisions/dossiers, and the `track report` attendus.
 
 ## Step 3 — Build the 8-section dossier
 

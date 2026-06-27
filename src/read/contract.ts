@@ -15,9 +15,9 @@ import { readHead } from '../events/head.js'
 import { EventStore } from '../events/store.js'
 import type { ActorId, EventType, Provenance, Sha256, TrackEvent } from '../events/types.js'
 import { validate, type IntegrityResult } from '../events/validate.js'
-import { isRoleContainer, type ItemId } from '../model/item.js'
+import { isRoleContainer, type ItemId, type Realization } from '../model/item.js'
 import type { VerificationRun } from '../model/verification.js'
-import { bucketOf } from '../report/buckets.js'
+import { bucketOf, type Bucket } from '../report/buckets.js'
 import { statusByLevel, type StatusGroup, type StatusLevel } from '../report/status-by-level.js'
 import { effectiveOpenBlockersForItem } from '../report/blocker-status.js'
 import {
@@ -54,7 +54,7 @@ import { graphExportFromState, type TrackGraphFragment } from '../graph-export.j
  * shapes it returns may only GROW (new methods / new optional fields); nothing is removed or
  * repurposed without a major bump. Consumers gate on `reader.contractVersion`.
  */
-export const READ_CONTRACT_VERSION = '1.13.0' // +Objective Loop structured track-ref helpers — additive/read-only
+export const READ_CONTRACT_VERSION = '1.13.0' // +Objective refs + workspaceActivity.pendingItems — additive/read-only
 
 /** Provenance of the last `branch.imported` for a locator (drawn from the raw event log). */
 export interface BranchProvenance {
@@ -204,6 +204,15 @@ export type StalledReason =
   // an `agreed` (promoted) item with an ABANDONED spec-lease (a silent spec timeout) — the spec attempt died.
   | 'spec-abandoned-idle'
 
+/** One open leaf item counted in {@link WorkspaceActivity.pending}. */
+export interface PendingItem {
+  id: ItemId
+  title: string
+  /** The report bucket that made this item pending (TO-DO or AWAITED). */
+  bucket: Extract<Bucket, 'TO-DO' | 'AWAITED'>
+  realization: Realization
+}
+
 /** One durably-stuck item/decision, with the timestamp the staleness is measured from. */
 export interface StalledItem {
   id: ItemId
@@ -222,6 +231,8 @@ export interface WorkspaceActivity {
   workspace: string
   /** Count of items bucketed TO-DO or AWAITED for the workspace (open work; not DONE/DROPPED). */
   pending: number
+  /** The concrete open leaf items behind `pending` (same order as the folded item map; containers excluded). */
+  pendingItems: PendingItem[]
   /** Items/decisions/demands stuck longer than `idleMs` — the disjunction of the staleness predicates. */
   stalled: StalledItem[]
   /** Max `event.at` scoped to the workspace (informational — h2a corroborates vs live presence). */
@@ -1005,6 +1016,7 @@ export class TrackReader {
     }
 
     let pending = 0
+    const pendingItems: PendingItem[] = []
     // First match wins per aggregate (reasons are listed in priority order); an id appears once.
     const stalled: StalledItem[] = []
     const isOld = (at: string | undefined): at is string => at !== undefined && Date.parse(at) < threshold
@@ -1021,7 +1033,10 @@ export class TrackReader {
       if (item.workspace !== workspace) continue
       if (isRoleContainer(item)) continue // a WP/spec-phase is a container, never a flat leaf (Scope §B(a))
       const bucket = bucketOf(state, item, config)
-      if (bucket === 'TO-DO' || bucket === 'AWAITED') pending++
+      if (bucket === 'TO-DO' || bucket === 'AWAITED') {
+        pending++
+        pendingItems.push({ id: item.id, title: item.title, bucket, realization: item.realization })
+      }
 
       // (6) spec-abandoned-idle — a PROMOTED (agreed) item with an ABANDONED spec-lease (a silent spec
       // timeout). MORE SPECIFIC than the generic to-do/in-progress idle below ⇒ checked FIRST (first-match-
@@ -1100,6 +1115,7 @@ export class TrackReader {
     return {
       workspace,
       pending,
+      pendingItems,
       stalled,
       ...(latestEventAt !== undefined ? { latestEventAt } : {}),
       ...(hasDemands ? { demands: { raised, qualifying, agreed } } : {}),

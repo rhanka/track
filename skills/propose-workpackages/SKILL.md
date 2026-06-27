@@ -21,19 +21,22 @@ If `.track/` is absent, do not structure anything: **recommend `track init`** an
 represented *in* track (a parent `Item` with `role:'workpackage'`, children via `parentId`); without a
 store there is nothing to mark or roll up. If track is present, read the live state before proposing.
 
-## Step 1 — Read the flat backlog
+## Step 1 — Read the backlog data + default table
 
 Pull the backlog as data, not from memory. Use your code-search tool to ground every claim in the actual
 items.
 
-- **`track report --format json`** — the bucketed view: each row carries `id`, `title`, `kind`, `bucket`,
-  and (when set) `accountable`, `engagementRef`, `role`. WPs (`role:'workpackage'`) are excluded from the
-  flat buckets — an already-structured repo shows them under `track report --wp`.
+- **`track report --format text`** first for the human-readable default table. Since track 0.19.1 it shows
+  the conductor view (FAIT / À-FAIRE %·WP / ATTENDUS) when WPs exist, and falls back to flat buckets in an
+  unstructured repo.
+- **`track report --format json`** for data. It carries the flat `buckets`; when WPs exist/default table is
+  active it also carries `wpTree` and `wpTotals`. Each bucket row carries `id`, `title`, `kind`, `bucket`,
+  and (when set) `accountable`, `engagementRef`, `role`.
 - **`track query --format json`** (optionally `--role workpackage`) and **`track item show <id>`** for the
   **existing hierarchy** — `parentId`, current parents, what is already a WP. Reparenting operates on `id`,
   so resolve the real ids before proposing a plan.
-- **`track report --wp`** when WPs already exist — the fait / à-faire %·WP / attendus view tells you what is
-  already structured and what is still homeless.
+- Use **legacy `track report --flat`** only if the user explicitly asks for flat buckets or a script requires
+  them; do not prefer it for human status.
 
 ## Step 2 — Cluster by DURABLE concern, NOT milestone
 
@@ -113,7 +116,7 @@ the lighter quick-ask path; when in doubt, escalate the path.
 - **Reparent each todo**: `track item reparent <itemId> --parent <wpId>`. (A WP nests only under a WP; a
   leaf may nest under a WP or a leaf.)
 - **Apply any splits** as new items first, then reparent each half.
-- **Verify with `track report --wp`** — the `%` is rolled up from leaf buckets (`done / active`, `0/0 ⇒
+- **Verify with `track report` (default table; `--wp` only to force it)** — the `%` is rolled up from leaf buckets (`done / active`, `0/0 ⇒
   n/a`), never asserted by hand. This retires hand-maintained `%` tables.
 
 If the human deferred or revised, do not write — fold the revisions into the WP set and re-present. Only
@@ -128,7 +131,7 @@ reversible prep (drafting the next proposal) may continue meanwhile.
 - **Multi-home an item** — split it instead; one item, one parent.
 - **Drop a homeless todo** — surface it as a taxonomy gap; never let work vanish.
 - **Collapse owner seams** — record vs render vs logic, referent vs contract (D5 ≠ M5) stay distinct.
-- **Assert `%` by hand** — let `track report --wp` roll it up from leaves.
+- **Assert `%` by hand** — let `track report` roll it up from leaves.
 - **Impose globally or init/edit another repo or its rules.** Work on the repo you are invoked in; if track
   is absent, *recommend* `track init` — never force it, never touch a foreign entrypoint.
 

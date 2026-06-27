@@ -63,8 +63,12 @@ Use direct CLI writes only for the event they actually represent:
 
 Report track results from the verified state, not from memory:
 
-- Use `track report --format text` for human status.
-- Use `track report --wp` only when the repo is structured into workpackages.
+- Use `track report --format text` for human status. Since track 0.19.1 this prefers the WP/table
+  conductor view (FAIT / À-FAIRE %·WP / ATTENDUS) when workpackages exist, and falls back to flat buckets
+  in unstructured repos.
+- Use `track report --wp` only to force the conductor table explicitly. Use legacy `track report --flat`
+  only when the user asks for flat buckets or a downstream script still needs them; treat `--flat` as
+  deprecated for human reporting.
 - Mention if `.track/` was intentionally not written because the current checkout is not the designated
   writer.
 

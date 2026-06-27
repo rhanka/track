@@ -20,13 +20,14 @@ export {
   type ObjectiveRefRole,
   type ObjectiveTrackRefKind,
   type ProvLineage,
+  type PendingItem,
   type TrackObjectiveRef,
   type TrackObjectiveRefInput,
   type StalledItem,
   type StalledReason,
   type WorkspaceActivity,
   type WorkspaceActivityOptions,
-  // Demand lifecycle (Mode A, Build 2 — READ 1.12.0) — the demand-axis read surface + lease state.
+  // Demand lifecycle (Mode A, Build 2 — READ 1.12.0+) — the demand-axis read surface + lease state.
   type DemandView,
   type DemandsOptions,
   type LeaseState,
@@ -77,7 +78,7 @@ export { type PriorityAssessment } from '../model/priority.js'
 // from ../model/item.js — ItemId (DecisionDossierView.id, CanevasOptions.decisionId, StalledItem.id, the
 //   amendmentTrace/verificationRuns/acceptanceDetail parameters).
 export { type ItemId } from '../model/item.js'
-// from ../model/demand.js (Build 2, 1.12.0) — the demand-axis types NAMED in DemandView's public shape
+// from ../model/demand.js (Build 2, 1.12.0+) — the demand-axis types NAMED in DemandView's public shape
 //   (id/status/type/raw/source/duplicateOf) so a versioned consumer binds against `/read` ALONE.
 export {
   type DemandId,

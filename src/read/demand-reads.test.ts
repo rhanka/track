@@ -9,7 +9,7 @@ import { LeaseStore, leasesPathFor, type Lease } from '../lease/store.js'
 import { Track } from '../track.js'
 import { READ_CONTRACT_VERSION, TrackReader } from './contract.js'
 
-// Demand lifecycle (Mode A, Build 2 — READ 1.12.0) reads: demands() / lifecycleTrace() / the additive
+// Demand lifecycle (Mode A, Build 2 — READ 1.13.0) reads: demands() / lifecycleTrace() / the additive
 // workspaceActivity demand counters + two new stalled reasons / canevas demand surfacing. PURE/clockless:
 // the caller injects `now` (+ leases); abandonment is the reader's call (`now − heartbeatAt > ttlMs`).
 

@@ -1,7 +1,7 @@
 # Owner validation criteria — seed checklist
 
 > Per-decision, not a global standard. Source the live criteria from the request, repo rules,
-> prior owner decisions, existing track decisions/dossiers, and `track report --wp` attendus.
+> prior owner decisions, existing track decisions/dossiers, and `track report` attendus.
 > Persist per decision/dossier; never edit repo rules unless the owner explicitly asks.
 
 | criterion | source | covered by | gap |

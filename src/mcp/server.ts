@@ -152,7 +152,7 @@ export const READ_TOOLS = [
   },
   {
     name: 'track_workspace_activity',
-    description: 'Poll-able activity signal for ONE workspace (h2a conductor-launch gating), as JSON {workspace, pending, stalled[], latestEventAt?}. PURE: the caller supplies `now` (and optional `idleMs`, default 24h) — track holds no clock. `pending` = TO-DO+AWAITED count; `stalled` = items/decisions durably stuck (awaited-open-blocker | pending-decision | in-progress-idle | todo-idle).',
+    description: 'Poll-able activity signal for ONE workspace (h2a conductor-launch gating), as JSON {workspace, pending, pendingItems[], stalled[], latestEventAt?}. PURE: the caller supplies `now` (and optional `idleMs`, default 24h) — track holds no clock. `pending` = TO-DO+AWAITED count and `pendingItems` lists the concrete open leaves; `stalled` = items/decisions durably stuck (awaited-open-blocker | pending-decision | in-progress-idle | todo-idle).',
     inputSchema: {
       type: 'object',
       properties: {
