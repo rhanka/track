@@ -65,7 +65,8 @@ Report track results from the verified state, not from memory:
 
 - Use `track report --format text` for human status. Since track 0.19.1 this prefers the WP/table
   conductor view (FAIT / À-FAIRE %·WP / ATTENDUS) when workpackages exist, and falls back to flat buckets
-  in unstructured repos.
+  in unstructured repos. **When the user asks for a report/status, paste the raw command output verbatim in
+  a fenced code block; do not summarize it, do not convert it to bullets, and do not drop the table layout.**
 - Use `track report --wp` only to force the conductor table explicitly. Use legacy `track report --flat`
   only when the user asks for flat buckets or a downstream script still needs them; treat `--flat` as
   deprecated for human reporting.

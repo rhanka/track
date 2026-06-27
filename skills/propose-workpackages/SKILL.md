@@ -28,7 +28,8 @@ items.
 
 - **`track report --format text`** first for the human-readable default table. Since track 0.19.1 it shows
   the conductor view (FAIT / À-FAIRE %·WP / ATTENDUS) when WPs exist, and falls back to flat buckets in an
-  unstructured repo.
+  unstructured repo. If presenting this report to the human, paste the raw output verbatim in a fenced code
+  block; never rewrite the report table as bullets or prose.
 - **`track report --format json`** for data. It carries the flat `buckets`; when WPs exist/default table is
   active it also carries `wpTree` and `wpTotals`. Each bucket row carries `id`, `title`, `kind`, `bucket`,
   and (when set) `accountable`, `engagementRef`, `role`.
