@@ -97,6 +97,42 @@ interface InstallResult {
   readonly unchanged: string[]
 }
 
+const TRACK_SLASH_COMMAND_MD = `---
+description: Run Track commands from the repo root; use /track report for the human status table.
+argument-hint: report [--commit <ref>] | <track args...>
+---
+
+You are the Track slash command.
+
+If \`$ARGUMENTS\` is empty or starts with \`report\`, run the Track report from the repository root:
+
+\`\`\`bash
+track report --format text --commit HEAD
+\`\`\`
+
+If the user supplied \`report --commit <ref>\`, use that commit/ref instead of \`HEAD\`. For any other
+arguments, run \`track $ARGUMENTS\` from the repository root.
+
+When returning a report/status, paste the raw command output verbatim inside a fenced \`text\` code block.
+Do not summarize it, do not convert it to bullets, and do not drop the table layout.
+`
+
+const TRACK_SLASH_COMMAND_TOML = `description = "Run Track commands; /track report shows the status table"
+prompt = '''
+You are the Track custom command.
+
+If the argument is empty or starts with \`report\`, run from the repository root:
+
+    track report --format text --commit HEAD
+
+If the user supplied \`report --commit <ref>\`, use that commit/ref instead of \`HEAD\`. For any other
+arguments, run \`track <arguments>\` from the repository root.
+
+When returning a report/status, paste the raw command output verbatim inside a fenced \`text\` code block.
+Do not summarize it, do not convert it to bullets, and do not drop the table layout.
+'''
+`
+
 /** Write `content` to `target`, honoring idempotency + the no-clobber-without-force rule. */
 function writeGuarded(target: string, content: string, force: boolean, result: InstallResult): void {
   if (existsSync(target)) {
@@ -207,6 +243,21 @@ function ensureGeminiPointer(repoRoot: string, result: InstallResult): void {
 }
 
 /** Install ONE named skill onto a single host. */
+function installTrackSlashCommand(host: Host, scope: Scope, force: boolean, repoRoot: string, result: InstallResult): void {
+  const base = scope === 'user' ? userHome() : repoRoot
+  if (host === 'claude') {
+    writeGuarded(join(base, '.claude', 'commands', 'track.md'), TRACK_SLASH_COMMAND_MD, force, result)
+    return
+  }
+  if (host === 'codex') {
+    // Codex prompt-command directory; harmless for hosts that only consume ~/.codex/skills.
+    writeGuarded(join(base, '.codex', 'prompts', 'track.md'), TRACK_SLASH_COMMAND_MD, force, result)
+    return
+  }
+  // gemini + agy share ~/.gemini/commands/<name>.toml.
+  writeGuarded(join(base, '.gemini', 'commands', 'track.toml'), TRACK_SLASH_COMMAND_TOML, force, result)
+}
+
 function installOne(skillName: string, host: Host, scope: Scope, force: boolean, repoRoot: string, result: InstallResult): void {
   const srcDir = join(SKILLS_DIR, skillName)
   if (!existsSync(srcDir)) {
@@ -283,6 +334,7 @@ export function cmdInstallSkills(args: string[], io: CliIO): number {
       for (const skillName of skills) {
         installOne(skillName, host, resolvedScope, force, io.cwd, result)
       }
+      installTrackSlashCommand(host, resolvedScope, force, io.cwd, result)
     }
   } catch (error) {
     io.err(`track install-skills: ${error instanceof Error ? error.message : String(error)}\n`)
