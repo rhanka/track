@@ -107,8 +107,12 @@ describe('report-revamp — `--wp` structured view only (no flat bucket dump)', 
     const io = { cwd: dir, out: (s: string) => out.push(s), err: (s: string) => err.push(s) }
 
     expect(runCli(['report', '--commit', 'c1'], io)).toBe(0)
-    expect(out.join('')).toContain('PROCHAINES ACTIONS PRÉCONISÉES')
-    expect(out.join('')).not.toMatch(/^DONE \(/m)
+    const text = out.join('')
+    expect(text).toContain('FAIT')
+    expect(text).toContain('À-FAIRE')
+    expect(text).toContain('DÉCISIONS/ACTIONS')
+    expect(text).toContain('préconisation')
+    expect(text).not.toMatch(/^DONE \(/m)
 
     out.length = 0
     expect(runCli(['report', '--flat', '--commit', 'c1'], io)).toBe(0)
@@ -119,9 +123,9 @@ describe('report-revamp — `--wp` structured view only (no flat bucket dump)', 
   it('the conductor view recommends next actions with an execution mode', () => {
     seed()
     const text = reportText(new TrackReader(eventsPath), { ...base, wpTree: true }, 'text')
-    const actions = text.slice(text.indexOf('PROCHAINES ACTIONS PRÉCONISÉES'))
-    expect(actions).toContain('mode:')
-    expect(actions).toMatch(/continuer|trancher|relancer/)
+    expect(text).toContain('DÉCISIONS/ACTIONS')
+    expect(text).toMatch(/(action|décision) \(/)
+    expect(text).toMatch(/continuer|trancher|relancer/)
   })
 
   it('report WITHOUT --wp keeps the flat-bucket behavior (back-compat)', () => {
@@ -136,41 +140,39 @@ describe('report-revamp — `--wp` structured view only (no flat bucket dump)', 
     const text = reportText(new TrackReader(eventsPath), { ...base, wpTree: true }, 'text')
     expect(text).toContain('FAIT')
     expect(text).toContain('À-FAIRE')
-    expect(text).toContain('ATTENDUS')
-    // FAIT carries the 100% WP + a global done/total pct
-    expect(text).toMatch(/FAIT[\s\S]*WP1 · Done WP/)
+    expect(text).toContain('DÉCISIONS/ACTIONS')
+    expect(text).toContain('WP1 · Done WP')
     // global total = sum of all WP leaves (1 done of 3 active: d1 + open-todo + awaited-leaf) ⇒ 1/3, 33%
-    expect(text).toMatch(/1\/3, 33%/)
+    expect(text).toContain('1/3 (33%)')
   })
 
   it('an AWAITED leaf lands in ATTENDUS with a derived disposition', () => {
     seed()
     const text = reportText(new TrackReader(eventsPath), { ...base, wpTree: true }, 'text')
-    const attendus = text.slice(text.indexOf('ATTENDUS'))
-    expect(attendus).toContain('awaited-leaf')
-    // AWAITED-on-a-decision ⇒ owner decision disposition
-    expect(attendus).toContain('décision: owner')
+    expect(text).toContain('awaited-leaf')
+    // AWAITED-on-a-decision ⇒ decision recommendation, not a passive blocker line
+    expect(text).toContain('décision')
+    expect(text).toContain('trancher outcome')
   })
 
-  it('an open OPEN (TO-DO) leaf appears under its WP in À-FAIRE (◦ marker)', () => {
+  it('an open OPEN (TO-DO) leaf appears under its WP in À-FAIRE', () => {
     seed()
     const text = reportText(new TrackReader(eventsPath), { ...base, wpTree: true }, 'text')
-    const afaire = text.slice(text.indexOf('À-FAIRE'), text.indexOf('ATTENDUS'))
-    expect(afaire).toContain('◦ open-todo')
+    expect(text).toContain('open-todo')
   })
 })
 
 // ---- 4. json path carries wpTree + global totals ----------------------------------------------
 
 describe('report-revamp — json path emits wpTree + global totals', () => {
-  it('--format json carries report.wpTree and a global done/total', () => {
+  it('--format json emits the conductor report view model', () => {
     const wp = t.createItem({ kind: 'chore', title: 'WP1', workspace: 'ws', role: 'workpackage' })
     done(t.createItem({ kind: 'chore', title: 'd', workspace: 'ws', parentId: wp }))
     t.createItem({ kind: 'chore', title: 'td', workspace: 'ws', parentId: wp })
     const json = reportText(new TrackReader(eventsPath), { ...base, wpTree: true }, 'json')
-    const parsed = JSON.parse(json) as { wpTree?: unknown; wpTotals?: { done: number; active: number; pct: number | string } }
-    expect(parsed.wpTree).toBeDefined()
-    expect(parsed.wpTotals).toEqual({ done: 1, active: 2, dropped: 0, pct: 50 })
+    const parsed = JSON.parse(json) as { kind: string; tables: { id: string; rows: Record<string, string>[] }[] }
+    expect(parsed.kind).toBe('wp-conductor-report')
+    expect(parsed.tables.find((t) => t.id === 'done')!.rows[0]!['progress']).toBe('1/2 (50%)')
   })
 })
 

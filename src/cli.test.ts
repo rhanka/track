@@ -52,8 +52,13 @@ describe('CLI smoke (Milestone 1): init -> branch import -> report', () => {
     const text = out.join('')
     expect(text).toContain('Initialized .track/')
     expect(text).toContain('Imported br-99: 4 created') // feature + 2 lots + 1 UAT criterion
-    expect(text).toContain('DONE (1)') // Lot 0 done
+    expect(text).toContain('SYNTHÈSE')
+    expect(text).toContain('DÉCISIONS/ACTIONS')
     expect(text).toContain('Scaffold the thing')
+
+    out = []
+    expect(runCli(['report', '--flat', '--format', 'text', '--commit', 'c1'], io)).toBe(0)
+    expect(out.join('')).toContain('DONE (1)') // Lot 0 done in legacy full dump
 
     // BRANCH.md is the source of truth — the importer must never write it.
     expect(sha256File(branchFile)).toBe(hashBefore)
@@ -66,7 +71,10 @@ describe('CLI smoke (Milestone 1): init -> branch import -> report', () => {
     runCli(['branch', 'import', branchFile, '--commit', 'c1'], io)
     out = []
     runCli(['report', '--format', 'md', '--commit', 'c1'], io)
-    expect(out.join('')).toContain('## DONE')
+    expect(out.join('')).toContain('## SYNTHÈSE')
+    expect(out.join('')).toContain('## DÉCISIONS/ACTIONS')
+    expect(out.join('')).toContain('scope/gate')
+    expect(out.join('')).toContain('préconisation')
   })
 
   it('prints usage and returns non-zero on an unknown command', () => {

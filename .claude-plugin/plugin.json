@@ -1,15 +1,22 @@
 {
   "name": "track",
   "description": "Record-only spec / realization / acceptance system of record. Bundles the read-only track-mcp server (report / query / validate / branch-provenance / freshness) over a project's .track/ event log. Writes stay on the `track` CLI (record-only, append-only, integrity-chained).",
-  "version": "0.4.0",
-  "author": { "name": "Fabien Antoine" },
+  "version": "0.4.1",
+  "author": {
+    "name": "Fabien Antoine"
+  },
   "homepage": "https://github.com/rhanka/track#readme",
   "skillsComment": "Skill source of truth lives in .claude-plugin/skills/present-decision/ (tool-neutral SKILL.md + assets). NOTE: Claude Code auto-discovers skills only at <plugin-root>/skills/ — NOT under .claude-plugin/ — and the manifest has no `skills` field (skills are discovered by location). So this dir is NOT natively auto-loaded; it is the canonical, tool-neutral source rendered onto each host (Claude/Codex/Gemini) by `track install-skills` (next lot). Until then, install manually by copying present-decision/ into the host's skills path.",
   "mcpServers": {
     "track": {
       "command": "npx",
       "comment": "-p selects the package so npx runs the `track-mcp` bin (not the `track` CLI bin, which shares the package).",
-      "args": ["-y", "-p", "@sentropic/track", "track-mcp"]
+      "args": [
+        "-y",
+        "-p",
+        "@sentropic/track",
+        "track-mcp"
+      ]
     }
   }
 }

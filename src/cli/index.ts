@@ -822,9 +822,9 @@ function cmdReport(args: string[], ctx: Ctx): number {
       {
         baselineCommit: resolveCommit(io.cwd, opt(flags, 'commit')),
         requireAccepted: flags['require-accepted'] === true,
-        decisions: flags['decisions'] === true,
-        // Directive default: human text/md reports use the WP conductor view unless --flat is explicit.
-        // JSON keeps the legacy structured bucket contract unless --wp is explicit.
+        decisions: flags['decisions'] === true || (flags['flat'] !== true && fmt(flags) !== 'json'),
+        // Directive default: human text/md reports include decision recommendations and use the WP conductor
+        // view unless --flat is explicit. JSON keeps the legacy structured bucket contract unless requested.
         wpTree: flags['wp'] === true || (flags['flat'] !== true && fmt(flags) !== 'json'),
       },
       fmt(flags),

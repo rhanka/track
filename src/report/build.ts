@@ -29,6 +29,9 @@ export interface DecisionRow {
   realization: Realization
   outcome: Outcome
   accountable?: ActorId // the decision sponsor (D6)
+  optionCount?: number
+  openQuestionCount?: number
+  hasRecommendation?: boolean
   // M5 (additive) — record-only pointers to an h2a decision dossier / rendered view / mockup, the read
   // surface the DS render consumes. Present iff the decision has appended artifacts.
   artifacts?: DossierArtifact[]
@@ -103,6 +106,9 @@ export function buildReport(state: State, options: ReportOptions): Report {
       realization: d.realization,
       outcome: d.outcome,
       ...(d.accountable !== undefined ? { accountable: d.accountable } : {}),
+      optionCount: d.dossier.options.length,
+      openQuestionCount: d.dossier.qa.filter((q) => q.answer === undefined || q.answer.trim() === '').length,
+      hasRecommendation: d.dossier.recommendation !== undefined,
       ...(d.dossier.artifacts !== undefined ? { artifacts: d.dossier.artifacts } : {}),
     }))
   }

@@ -1,5 +1,5 @@
 import { BUCKETS } from './buckets.js'
-import type { Report, ReportRow } from './build.js'
+import type { DecisionRow, Report, ReportRow } from './build.js'
 import type { WpNode } from './rollup.js'
 
 export type Format = 'json' | 'text' | 'md'
@@ -77,6 +77,142 @@ export function formatReport(report: Report, format: Format): string {
       )
     }
   }
+  return lines.join('\n').trimEnd() + '\n'
+}
+
+const topRows = (rows: readonly ReportRow[], max: number): ReportRow[] => rows.slice(0, max)
+
+function actionDisposition(r: ReportRow): string {
+  if (r.engagementRef !== undefined) return 'relancer engagement/subagent'
+  if (r.acceptance === 'fail' || r.acceptance === 'stale') return 'corriger puis revalider acceptance'
+  if (r.realization === 'in-progress') return 'terminer ou expliciter blocage'
+  return 'exécuter prochain incrément'
+}
+
+function decisionNeedsFocus(d: { optionCount?: number; openQuestionCount?: number; artifacts?: readonly unknown[]; hasRecommendation?: boolean }): boolean {
+  return (d.openQuestionCount ?? 0) >= 3 || (d.optionCount ?? 0) >= 3 || (d.artifacts?.length ?? 0) > 0 || d.hasRecommendation !== true
+}
+
+function decisionDisposition(d: { id: string; decisionKind: string; optionCount?: number; openQuestionCount?: number; artifacts?: readonly unknown[]; hasRecommendation?: boolean }): string {
+  if (decisionNeedsFocus(d)) {
+    return `focus décision HTML conseillé: track focus ${d.id} --format html`
+  }
+  if ((d.openQuestionCount ?? 0) > 0) return 'répondre aux questions ouvertes puis trancher'
+  if (d.decisionKind === 'commitment') return 'trancher go/no-go et enregistrer outcome'
+  return 'choisir l’orientation recommandée puis enregistrer outcome'
+}
+
+function cell(s: string): string {
+  return clean(s).replaceAll('|', '¦')
+}
+
+function wrapCell(s: string, width: number, maxLines = 3): string[] {
+  const c = cell(s).trim()
+  if (c.length === 0) return ['']
+  const words = c.split(/\s+/)
+  const lines: string[] = []
+  let line = ''
+  let consumed = 0
+  for (const word of words) {
+    if (lines.length >= maxLines) break
+    if (word.length > width) {
+      if (line.length > 0) {
+        lines.push(line)
+        line = ''
+        if (lines.length >= maxLines) break
+      }
+      lines.push(word.slice(0, width))
+      consumed++
+      continue
+    }
+    const next = line.length === 0 ? word : `${line} ${word}`
+    if (next.length <= width) line = next
+    else {
+      lines.push(line)
+      line = word
+      if (lines.length >= maxLines) break
+    }
+    consumed++
+  }
+  if (line.length > 0 && lines.length < maxLines) lines.push(line)
+  if (consumed < words.length && lines.length > 0) lines[lines.length - 1] = `${lines[lines.length - 1]} ↳ détail --flat`
+  return lines
+}
+
+function table(headers: readonly string[], rows: readonly (readonly string[])[]): string[] {
+  // Terminal-first padded table: aligned columns, bounded width, MULTI-LINE cells.
+  // No ellipsis: long content wraps inside the column so the report stays readable and complete enough.
+  const caps = headers.map((h) => {
+    const k = h.toLowerCase()
+    if (k.includes('sujet') || k.includes('items') || k.includes('à faire')) return 72
+    if (k.includes('préconisation') || k.includes('dernières actions')) return 64
+    if (k.includes('complexité') || k.includes('notes') || k.includes('dropped')) return 38
+    if (k.includes('scope') || k.includes('wp')) return 42
+    return 24
+  })
+  const head = headers.map((h, i) => cell(h).slice(0, caps[i]!))
+  const wrappedRows = rows.map((row) => headers.map((_, i) => wrapCell(row[i] ?? '', caps[i]!)))
+  const widths = head.map((h, i) => Math.min(caps[i]!, Math.max(h.length, ...wrappedRows.flatMap((r) => r[i]!).map((v) => v.length))))
+  const renderLine = (row: readonly string[]): string => row.map((v, i) => v.padEnd(widths[i]!)).join('   ')
+  const out = [renderLine(head), renderLine(widths.map((w) => '─'.repeat(w)))]
+  for (const row of wrappedRows) {
+    const height = Math.max(...row.map((cellLines) => cellLines.length))
+    for (let y = 0; y < height; y++) out.push(renderLine(row.map((cellLines) => cellLines[y] ?? '')))
+    out.push('') // breathing room between logical rows
+  }
+  if (out[out.length - 1] === '') out.pop()
+  return out
+}
+
+/**
+ * Directive fallback for repos that have no WP containers yet. This is intentionally NOT the exhaustive
+ * flat dump: it keeps the “decision/action recommendation” spirit while `--flat` remains available for
+ * the full bucket listing.
+ */
+export function formatActionReport(report: Report, format: Format): string {
+  if (format === 'json') return JSON.stringify(report, null, 2)
+  const h = (label: string): string => (format === 'md' ? `## ${label}` : label)
+  const lines: string[] = []
+  const awaited = report.buckets.AWAITED
+  const todo = report.buckets['TO-DO']
+  const done = report.buckets.DONE
+  const dropped = report.buckets.DROPPED
+  const pendingDecisions = report.decisions?.filter((d) => d.outcome === 'pending') ?? []
+
+  lines.push(h('SYNTHÈSE'))
+  lines.push(...table(['fait', 'à-faire', 'attendus', 'dropped', 'décisions pending'], [[String(done.length), String(todo.length), String(awaited.length), String(dropped.length), String(pendingDecisions.length)]]))
+  lines.push('')
+
+  lines.push(h('DÉCISIONS/ACTIONS'))
+  const candidates = [...awaited, ...todo].slice(0, 10)
+  const actionRows: string[][] = []
+  const focusCount = pendingDecisions.filter(decisionNeedsFocus).length
+  if (focusCount >= 2 || pendingDecisions.length >= 4) {
+    actionRows.push(['focus', 'décisions accumulées', 'focus (humain+MCP): lancer focus HTML local; retour outcome via vue interactive/MCP'])
+  }
+  for (const d of pendingDecisions.slice(0, 8)) {
+    actionRows.push([
+      d.decisionKind,
+      title(d.title, format),
+      `décision (${d.accountable ?? 'owner'}): ${decisionDisposition(d)}`,
+    ])
+  }
+  for (const r of candidates) {
+    actionRows.push([
+      r.bucket,
+      title(r.title, format),
+      `action (${r.engagementRef !== undefined ? 'h2a/subagent' : 'local/subagent'}): ${actionDisposition(r)}`,
+    ])
+  }
+  lines.push(...table(['scope/gate', 'sujet', 'préconisation'], actionRows.length > 0 ? actionRows : [['-', 'aucune décision/action ouverte', '-']]))
+  lines.push('')
+
+  lines.push(h('FAIT RÉCENT / REPÈRES'))
+  const doneRows = topRows(done, 5).map((r) => ['done', title(r.title, format), r.acceptance])
+  if (done.length > 5) doneRows.push(['info', `${done.length - 5} autres done; utiliser --flat pour le détail complet`, ''])
+  if (dropped.length > 0) doneRows.push(['dropped', `${dropped.length}; utiliser --flat pour audit`, ''])
+  lines.push(...table(['type', 'sujet', 'acceptance'], doneRows.length > 0 ? doneRows : [['-', 'aucun repère récent', '-']]))
+
   return lines.join('\n').trimEnd() + '\n'
 }
 
@@ -181,81 +317,107 @@ function droppedLeaves(node: WpNode): WpNode['leaves'] {
  *                      else `action: agent`).
  * `format` gates escaping (md escapes; text is clean). The forest's leaves drive every section.
  */
-export function formatWpConductor(tree: readonly WpNode[], format: Format): string {
-  const lines: string[] = []
-  const h = (label: string): string => (format === 'md' ? `## ${label}` : label)
-  const wpLabel = (n: WpNode): string => `${n.label} · ${title(stripWpPrefix(n.title), format)}`
+export interface ReportViewTable {
+  id: string
+  title: string
+  columns: readonly { id: string; label: string }[]
+  rows: readonly Record<string, string>[]
+}
 
-  // Flatten the forest to a label-bearing list so À-FAIRE/FAIT can iterate every (sub-)WP once.
+export interface ReportView {
+  kind: 'wp-conductor-report'
+  locale: 'fr'
+  tables: readonly ReportViewTable[]
+  generalRecommendation: string
+}
+
+export function buildWpConductorView(tree: readonly WpNode[], decisions: readonly DecisionRow[] = []): ReportView {
+  const wpName = (n: WpNode): string => `${n.label} · ${clean(stripWpPrefix(n.title))}`
   const flat: WpNode[] = []
   const collect = (n: WpNode): void => {
     flat.push(n)
     for (const c of n.children) collect(c)
   }
   for (const n of tree) collect(n)
-
   const totals = wpTotals(tree)
+  const pendingDecisions = decisions.filter((d) => d.outcome === 'pending')
+  const complexDecisionCount = pendingDecisions.filter(decisionNeedsFocus).length
+  const generalRecommendation = complexDecisionCount >= 2 || pendingDecisions.length >= 4
+    ? 'Prévoir un temps de focus HTML pour trancher les décisions accumulées, puis reprendre les WP par premier item ouvert.'
+    : 'Avancer par premier item ouvert, enregistrer preuve/acceptance, et escalader uniquement les décisions réellement bloquantes.'
 
-  // ---- FAIT — WPs at 100% + the global progress line ----
-  lines.push(h('FAIT'))
-  lines.push(`global: ${totals.done}/${totals.active}, ${pctStr(totals.pct)}`)
-  const fait = tree.filter((n) => n.pct === 100)
-  for (const n of fait) lines.push(`- ${wpLabel(n)} (${n.done}/${n.active}, 100%)`)
-  lines.push('')
+  const doneRows: Record<string, string>[] = [
+    { scope: 'global', progress: `${totals.done}/${totals.active} (${pctStr(totals.pct)})`, lastActions: `${totals.done} items faits; poursuivre les WP ouverts` },
+    ...tree.filter((n) => n.pct === 100).map((n) => ({ scope: wpName(n), progress: `${n.done}/${n.active} (100%)`, lastActions: 'WP clos; preuve/acceptance enregistrée' })),
+  ]
 
-  // ---- À-FAIRE (% par WP) — one row per non-100% top-level WP, its open leaves, dropped aside ----
-  lines.push(h('À-FAIRE (% par WP)'))
-  for (const n of tree) {
-    if (n.pct === 100) continue
-    lines.push(`- ${wpLabel(n)} — ${n.done}/${n.active} ${pctStr(n.pct)}`)
-    for (const l of openLeaves(n)) lines.push(`  ◦ ${title(l.title, format)}`)
-    const dropped = droppedLeaves(n)
-    if (dropped.length > 0) {
-      lines.push(`  (dropped: ${dropped.map((l) => title(l.title, format)).join(', ')})`)
-    }
-  }
-  lines.push('')
+  const todoRows = tree.filter((n) => n.pct !== 100).map((n) => ({
+    wp: wpName(n),
+    progress: `${n.done}/${n.active} (${pctStr(n.pct)})`,
+    todo: openLeaves(n).slice(0, 2).map((l) => clean(l.title)).join(' / ') || 'aucun item ouvert direct',
+  }))
 
-  // ---- ATTENDUS (décision) — AWAITED leaves, with a derived disposition tag ----
-  lines.push(h('ATTENDUS (décision)'))
   const attendus = flat.flatMap((n) =>
     n.leaves
       .filter((l) => l.bucket === 'AWAITED' || (l.engagementRef !== undefined && l.bucket !== 'DONE' && l.bucket !== 'DROPPED'))
       .map((l) => ({ wp: n, leaf: l })),
   )
-  for (const { wp, leaf } of attendus) {
-    const owner = leaf.awaitedOnDecision === true || leaf.engagementRef !== undefined
-    const tag = owner ? 'décision: owner' : 'action: agent'
-    lines.push(`- ${title(leaf.title, format)} [${wp.label}] — ${tag}`)
+  const decisionWaits = attendus.filter(({ leaf }) => leaf.awaitedOnDecision === true || leaf.engagementRef !== undefined)
+  const actionRows: Record<string, string>[] = []
+  if (decisionWaits.length >= 3 || pendingDecisions.length >= 4 || complexDecisionCount >= 2) {
+    actionRows.push({ scope: '-', subject: 'décisions accumulées', recommendation: 'focus (humain+MCP): lancer focus HTML local; retour outcome via vue interactive/MCP' })
   }
-  lines.push('')
-
-  // ---- PROCHAINES ACTIONS — directive continuation queue, not a passive "if you want" dump. ----
-  lines.push(h('PROCHAINES ACTIONS PRÉCONISÉES'))
+  for (const d of pendingDecisions.slice(0, 8)) {
+    actionRows.push({ scope: d.decisionKind, subject: clean(d.title), recommendation: `décision (${d.accountable ?? 'owner'}): ${decisionDisposition(d)}` })
+  }
+  for (const { wp, leaf } of decisionWaits.slice(0, 8)) {
+    const focus = leaf.awaitedOnDecision === true ? 'focus décision si dossier/questions non évidents; sinon trancher outcome' : 'relancer engagement/subagent puis intégrer retour'
+    actionRows.push({ scope: wp.label, subject: clean(leaf.title), recommendation: `décision (owner/subagent): ${focus}` })
+  }
+  const decisionWaitIds = new Set(decisionWaits.map(({ leaf }) => leaf.id))
   const candidates = flat
     .filter((n) => n.pct !== 100)
-    .map((n) => ({ wp: n, leaves: openLeaves(n) }))
+    .map((n) => ({ wp: n, leaves: openLeaves(n).filter((l) => !decisionWaitIds.has(l.id)) }))
     .filter((x) => x.leaves.length > 0)
-  if (candidates.length === 0) {
-    lines.push('- aucune action ouverte dans les WP actifs')
-  } else {
-    for (const { wp, leaves } of candidates) {
-      const first = leaves[0]!
-      const mode = first.awaitedOnDecision === true
-        ? 'human decision'
-        : first.engagementRef !== undefined
-          ? 'h2a/subagent'
-          : 'local/subagent'
-      const action = first.awaitedOnDecision === true
-        ? 'trancher la décision bloquante puis relancer le WP'
-        : first.engagementRef !== undefined
-          ? 'relancer l’engagement/subagent associé et suivre le retour'
-          : 'continuer le premier item ouvert puis enregistrer preuve/acceptance'
-      lines.push(`- ${wpLabel(wp)} — ${action} — mode:${mode} — cible:${title(first.title, format)}`)
-    }
+  for (const { wp, leaves } of candidates) {
+    const first = leaves[0]!
+    const mode = first.awaitedOnDecision === true ? 'human decision' : first.engagementRef !== undefined ? 'h2a/subagent' : 'local/subagent'
+    const action = first.awaitedOnDecision === true
+      ? 'trancher décision bloquante puis relancer WP'
+      : first.engagementRef !== undefined
+        ? 'relancer engagement/subagent et suivre retour'
+        : 'continuer premier item ouvert puis enregistrer preuve/acceptance'
+    actionRows.push({ scope: wpName(wp), subject: clean(first.title), recommendation: `action (${mode}): ${action}` })
   }
 
+  return {
+    kind: 'wp-conductor-report',
+    locale: 'fr',
+    tables: [
+      { id: 'done', title: 'FAIT', columns: [{ id: 'scope', label: 'scope' }, { id: 'progress', label: 'avancement' }, { id: 'lastActions', label: 'dernières actions' }], rows: doneRows },
+      { id: 'todo', title: 'À-FAIRE', columns: [{ id: 'wp', label: 'WP' }, { id: 'progress', label: 'avancement' }, { id: 'todo', label: 'à faire' }], rows: todoRows.length > 0 ? todoRows : [{ wp: '-', progress: '-', todo: 'aucun WP ouvert' }] },
+      { id: 'decisions-actions', title: 'DÉCISIONS/ACTIONS', columns: [{ id: 'scope', label: 'scope/gate' }, { id: 'subject', label: 'sujet' }, { id: 'recommendation', label: 'préconisation' }], rows: actionRows.length > 0 ? actionRows : [{ scope: '-', subject: 'aucune action ouverte dans les WP actifs', recommendation: '-' }] },
+    ],
+    generalRecommendation,
+  }
+}
+
+function renderReportView(view: ReportView, format: Format): string {
+  if (format === 'json') return JSON.stringify(view, null, 2) + '\n'
+  const h = (label: string): string => (format === 'md' ? `## ${label}` : label)
+  const lines: string[] = []
+  for (const section of view.tables) {
+    lines.push(h(section.title))
+    lines.push(...table(section.columns.map((c) => c.label), section.rows.map((row) => section.columns.map((c) => row[c.id] ?? ''))))
+    lines.push('')
+  }
+  lines.push(h('RECOMMANDATION'))
+  lines.push(view.generalRecommendation)
   return lines.join('\n').trimEnd() + '\n'
+}
+
+export function formatWpConductor(tree: readonly WpNode[], format: Format, decisions: readonly DecisionRow[] = []): string {
+  return renderReportView(buildWpConductorView(tree, decisions), format)
 }
 
 export function formatRows(rows: ReportRow[], format: Format): string {
