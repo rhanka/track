@@ -64,7 +64,7 @@ describe('workspaceActivity — pending count', () => {
     // pending = todo + dep + awaited = 3 (done + dropped excluded), with the concrete rows surfaced too.
     const act = reader.workspaceActivity('W', BASE)
     expect(act.pending).toBe(3)
-    expect(act.pendingItems.map((p) => [p.title, p.bucket])).toEqual([
+    expect(act.pendingItems!.map((p) => [p.title, p.bucket])).toEqual([
       ['todo', 'TO-DO'],
       ['dep', 'TO-DO'],
       ['awaited', 'AWAITED'],
@@ -79,9 +79,9 @@ describe('workspaceActivity — pending count', () => {
     const w = reader.workspaceActivity('W', BASE)
     const v = reader.workspaceActivity('V', BASE)
     expect(w.pending).toBe(2)
-    expect(w.pendingItems.map((p) => p.title)).toEqual(['w1', 'w2'])
+    expect(w.pendingItems!.map((p) => p.title)).toEqual(['w1', 'w2'])
     expect(v.pending).toBe(1)
-    expect(v.pendingItems.map((p) => p.title)).toEqual(['v1'])
+    expect(v.pendingItems!.map((p) => p.title)).toEqual(['v1'])
   })
 })
 

@@ -231,8 +231,12 @@ export interface WorkspaceActivity {
   workspace: string
   /** Count of items bucketed TO-DO or AWAITED for the workspace (open work; not DONE/DROPPED). */
   pending: number
-  /** The concrete open leaf items behind `pending` (same order as the folded item map; containers excluded). */
-  pendingItems: PendingItem[]
+  /**
+   * The concrete open leaf items behind `pending` (same order as the folded item map; containers excluded).
+   * OPTIONAL per the read-contract grow-rule (new fields are optional): the producer always emits it, but a
+   * versioned consumer pinned to an older contract may not see it — so it never becomes a required shape.
+   */
+  pendingItems?: PendingItem[]
   /** Items/decisions/demands stuck longer than `idleMs` — the disjunction of the staleness predicates. */
   stalled: StalledItem[]
   /** Max `event.at` scoped to the workspace (informational — h2a corroborates vs live presence). */

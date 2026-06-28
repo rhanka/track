@@ -9,6 +9,7 @@ import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 
 import { EventStore } from './events/store.js'
+import type { DecisionRow } from './report/build.js'
 import { formatWpConductor, formatWpTree } from './report/format.js'
 import { computeWpTree } from './report/rollup.js'
 import { reportText } from './read/commands.js'
@@ -174,15 +175,54 @@ describe('report-revamp — `--wp` structured view only (no flat bucket dump)', 
 
 // ---- 4. json path carries wpTree + global totals ----------------------------------------------
 
-describe('report-revamp — json path emits wpTree + global totals', () => {
-  it('--format json emits the conductor report view model', () => {
+describe('report-revamp — json path keeps the machine contract + additive view model', () => {
+  it('--format json preserves {buckets, wpTree, wpTotals} (0.19.0 contract) and adds an optional `view`', () => {
     const wp = t.createItem({ kind: 'chore', title: 'WP1', workspace: 'ws', role: 'workpackage' })
     done(t.createItem({ kind: 'chore', title: 'd', workspace: 'ws', parentId: wp }))
     t.createItem({ kind: 'chore', title: 'td', workspace: 'ws', parentId: wp })
     const json = reportText(new TrackReader(eventsPath), { ...base, wpTree: true }, 'json')
-    const parsed = JSON.parse(json) as { kind: string; tables: { id: string; rows: Record<string, string>[] }[] }
-    expect(parsed.kind).toBe('wp-conductor-report')
-    expect(parsed.tables.find((t) => t.id === 'done')!.rows[0]!['progress']).toBe('1/2 (50%)')
+    const parsed = JSON.parse(json) as {
+      buckets: Record<string, unknown[]>
+      wpTree: unknown[]
+      wpTotals: { done: number; active: number; pct: number | string }
+      view?: { kind: string; tables: { id: string; rows: Record<string, string>[] }[] }
+    }
+    // Machine contract UNCHANGED from 0.19.0.
+    expect(parsed.buckets).toBeDefined()
+    expect(parsed.wpTree).toBeDefined()
+    expect(parsed.wpTotals).toEqual({ done: 1, active: 2, dropped: 0, pct: 50 })
+    // Additive optional view model for presentation skills.
+    expect(parsed.view!.kind).toBe('wp-conductor-report')
+    expect(parsed.view!.tables.find((t) => t.id === 'done')!.rows[0]!['progress']).toBe('1/2 (50%)')
+  })
+})
+
+// ---- 4b. no silent truncation + md escaping (Codex 0.19.5 review nits) ------------------------
+
+describe('report-revamp — the conductor never truncates silently and escapes md', () => {
+  it('À-FAIRE surfaces "(+N autres)" when a WP has more than 2 open leaves', () => {
+    const wp = t.createItem({ kind: 'chore', title: 'WP1 — Many', workspace: 'ws', role: 'workpackage' })
+    for (const title of ['l1', 'l2', 'l3', 'l4']) t.createItem({ kind: 'chore', title, workspace: 'ws', parentId: wp })
+    const text = formatWpConductor(computeWpTree(t.state(), cfg), 'text')
+    expect(text).toContain('(+2 autres)') // 4 open, 2 shown ⇒ +2
+  })
+
+  it('DÉCISIONS/ACTIONS surfaces "+N entrées non listées" when more than 8 pending decisions exist', () => {
+    const wp = t.createItem({ kind: 'chore', title: 'WP1', workspace: 'ws', role: 'workpackage' })
+    t.createItem({ kind: 'chore', title: 'leaf', workspace: 'ws', parentId: wp })
+    const decisions: DecisionRow[] = Array.from({ length: 9 }, (_, i) => ({
+      id: `d${i}`, title: `dec${i}`, workspace: 'ws', decisionKind: 'commitment', realization: 'to-do', outcome: 'pending',
+    }))
+    const text = formatWpConductor(computeWpTree(t.state(), cfg), 'text', decisions)
+    expect(text).toContain('entrées non listées') // 9 pending, 8 shown ⇒ +1
+  })
+
+  it('md render escapes markdown metacharacters in a crafted item title (no injection)', () => {
+    const wp = t.createItem({ kind: 'chore', title: 'WP1', workspace: 'ws', role: 'workpackage' })
+    t.createItem({ kind: 'chore', title: '**x** [a](b)', workspace: 'ws', parentId: wp })
+    const md = formatWpConductor(computeWpTree(t.state(), cfg), 'md')
+    expect(md).toContain('\\*\\*x\\*\\*') // ** escaped
+    expect(md).toContain('\\[a\\]') // link bracket escaped
   })
 })
 

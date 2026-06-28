@@ -3,7 +3,7 @@
 // the adapter supplying `baselineCommit` (CLI from git HEAD, MCP from a tool argument). This is what
 // makes CLI≡MCP parity STRUCTURAL (one layer), not coincidental.
 
-import { formatActionReport, formatReport, formatRows, formatWpConductor, type Format } from '../report/format.js'
+import { buildWpConductorView, formatActionReport, formatReport, formatRows, formatWpConductor, wpTotals, type Format } from '../report/format.js'
 import type { QueryFilter, ReportOptions } from '../report/build.js'
 import type { StatusLevel } from '../report/status-by-level.js'
 import type { TrackReader } from './contract.js'
@@ -15,17 +15,21 @@ import type { TrackReader } from './contract.js'
  * concise action/decision fallback otherwise. Use `--flat` to force the deprecated legacy bucket dump.
  * JSON stays the flat structured contract unless `--wp` is explicit.
  *
- * The CONDUCTOR view is the 3-table FAIT / À-FAIRE(%·WP) / ATTENDUS status (the owner reports THROUGH
- * it), NOT the flat buckets too. For `json` we carry the structured `wpTree` plus the global `wpTotals`
- * so a conductor can render programmatically. If no WP forest exists, text/md falls back to legacy flat
- * buckets so unstructured repos still report useful status.
+ * The CONDUCTOR view is the 3-table FAIT / À-FAIRE(%·WP) / DÉCISIONS-ACTIONS rendered for `text`/`md`.
+ * For `json` the contract is UNCHANGED from 0.19.0: the additive `{...report, wpTotals}` flat structure
+ * (so existing machine consumers keep working), PLUS an OPTIONAL `view` field carrying the conductor view
+ * model (for presentation skills). If no WP forest exists, text/md falls back to the legacy flat buckets.
  */
 export function reportText(reader: TrackReader, options: ReportOptions, format: Format): string {
   const report = reader.report(options)
 
   if (options.wpTree && report.wpTree !== undefined) {
-    // Structured conductor view when there is an actual WP forest. JSON-first by design: presentation
-    // skills/tools consume this VM and choose language, width, labels and table rendering.
+    if (format === 'json') {
+      // Machine contract preserved (0.19.0 shape) + additive optional `view` for skill rendering.
+      const view = report.wpTree.length > 0 ? buildWpConductorView(report.wpTree, report.decisions ?? []) : undefined
+      return `${JSON.stringify({ ...report, wpTotals: wpTotals(report.wpTree), ...(view !== undefined ? { view } : {}) }, null, 2)}\n`
+    }
+    // text/md: the rendered conductor tables when there is an actual WP forest.
     if (report.wpTree.length > 0) return formatWpConductor(report.wpTree, format, report.decisions)
     // No WP containers yet: keep the report action-oriented, not an exhaustive flat dump.
     return formatActionReport(report, format)

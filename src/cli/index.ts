@@ -905,7 +905,7 @@ function cmdWorkspaceActivity(args: string[], ctx: Ctx): number {
   }
   // text: a readable summary — `pending: N`, each pending item, each stalled item, then `latestEventAt`.
   const lines = [`pending: ${activity.pending}`]
-  for (const p of activity.pendingItems) lines.push(`pending-item ${p.bucket} ${p.id} ${p.title} [${p.realization}]`)
+  for (const p of activity.pendingItems ?? []) lines.push(`pending-item ${p.bucket} ${p.id} ${p.title} [${p.realization}]`)
   for (const s of activity.stalled) lines.push(`${s.reason} ${s.id} ${s.title} (since ${s.since})`)
   lines.push(`latestEventAt: ${activity.latestEventAt ?? '-'}`)
   io.out(`${lines.join('\n')}\n`)

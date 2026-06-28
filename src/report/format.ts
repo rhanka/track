@@ -351,11 +351,13 @@ export function buildWpConductorView(tree: readonly WpNode[], decisions: readonl
     ...tree.filter((n) => n.pct === 100).map((n) => ({ scope: wpName(n), progress: `${n.done}/${n.active} (100%)`, lastActions: 'WP clos; preuve/acceptance enregistrée' })),
   ]
 
-  const todoRows = tree.filter((n) => n.pct !== 100).map((n) => ({
-    wp: wpName(n),
-    progress: `${n.done}/${n.active} (${pctStr(n.pct)})`,
-    todo: openLeaves(n).slice(0, 2).map((l) => clean(l.title)).join(' / ') || 'aucun item ouvert direct',
-  }))
+  const todoRows = tree.filter((n) => n.pct !== 100).map((n) => {
+    const open = openLeaves(n)
+    const shown = open.slice(0, 2).map((l) => clean(l.title)).join(' / ')
+    // NEVER truncate silently: surface the count of items not shown so the report can't read as complete.
+    const more = open.length > 2 ? `${shown} (+${open.length - 2} autres)` : shown
+    return { wp: wpName(n), progress: `${n.done}/${n.active} (${pctStr(n.pct)})`, todo: more || 'aucun item ouvert direct' }
+  })
 
   const attendus = flat.flatMap((n) =>
     n.leaves
@@ -373,6 +375,11 @@ export function buildWpConductorView(tree: readonly WpNode[], decisions: readonl
   for (const { wp, leaf } of decisionWaits.slice(0, 8)) {
     const focus = leaf.awaitedOnDecision === true ? 'focus décision si dossier/questions non évidents; sinon trancher outcome' : 'relancer engagement/subagent puis intégrer retour'
     actionRows.push({ scope: wp.label, subject: clean(leaf.title), recommendation: `décision (owner/subagent): ${focus}` })
+  }
+  // NEVER truncate silently: if either list was capped at 8, surface how many entries are not listed.
+  const omitted = Math.max(0, pendingDecisions.length - 8) + Math.max(0, decisionWaits.length - 8)
+  if (omitted > 0) {
+    actionRows.push({ scope: '-', subject: `+${omitted} entrées non listées`, recommendation: 'voir `track query` / `track report --flat` pour le détail complet' })
   }
   const decisionWaitIds = new Set(decisionWaits.map(({ leaf }) => leaf.id))
   const candidates = flat
@@ -404,15 +411,19 @@ export function buildWpConductorView(tree: readonly WpNode[], decisions: readonl
 
 function renderReportView(view: ReportView, format: Format): string {
   if (format === 'json') return JSON.stringify(view, null, 2) + '\n'
+  // User-originated cell content (titles) is escaped per-format: `md` escapes markdown metacharacters so a
+  // crafted item title cannot inject formatting (parity with the legacy `formatReport`/`title` path); `text`
+  // is clean. The view model itself stays RAW (escaping is a render-only concern).
+  const esc = (s: string): string => title(s, format)
   const h = (label: string): string => (format === 'md' ? `## ${label}` : label)
   const lines: string[] = []
   for (const section of view.tables) {
     lines.push(h(section.title))
-    lines.push(...table(section.columns.map((c) => c.label), section.rows.map((row) => section.columns.map((c) => row[c.id] ?? ''))))
+    lines.push(...table(section.columns.map((c) => c.label), section.rows.map((row) => section.columns.map((c) => esc(row[c.id] ?? '')))))
     lines.push('')
   }
   lines.push(h('RECOMMANDATION'))
-  lines.push(view.generalRecommendation)
+  lines.push(esc(view.generalRecommendation))
   return lines.join('\n').trimEnd() + '\n'
 }
 
