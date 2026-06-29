@@ -19,7 +19,20 @@ copie survivante (ref/reflog) — c'est exactement ce qui a sauvé graphify (eve
 de la branche, pas inventés). « Irrécupérable » seulement si aucune copie ne survit. ⇒ la garantie est
 d'abord **préventive**, avec une récupération opportuniste en second.
 
-## B0a — Prévention par construction : `.gitattributes merge=union` (le 80%, le moins cher)
+## B0a — DIFFÉRÉ (gate impl, décision Codex+Opus convergente) — `.gitattributes merge=union` + `reseal`
+**Statut : NON shippé dans ce lot.** Le build a prouvé (et le gate a confirmé) qu'un union-merge ATTEINT
+l'anti-perte (tous les events survivent, `fold` récupère tout) MAIS casse la chaîne `prevHash` au raccord →
+`validate` émet 1 finding ET le log union-mergé **n'est pas ré-appendable** (`appendCommand` fail-close
+« refusing to extend an invalid log », store.ts:125) tant qu'il n'est pas RE-SCELLÉ. Aucun verbe `reseal`
+n'existe. ⇒ shipper `union` seul gèlerait les writes sur sa propre voie nominale, sans sortie outillée
+(hand-edit interdit). **Décision : DIFFÉRER `union`, l'apparier à un futur verbe `reseal`** (re-chaîne
+prevHash/seq/contentHash, réécrit head.json, préserve les `id`, testé avant tout append) — spec'é en pair
+Codex+Opus dans un lot ultérieur. La protection N'EST PAS perdue : sans union, un merge disjoint conflicte
+sur `events.jsonl` ⇒ `check.sh` lit un candidat à marqueurs ⇒ `events-contains` rc=2 ⇒ FAIL fermé (bloqué,
+zéro perte silencieuse). `src/events/union-merge.test.ts` est CONSERVÉ : il épingle l'invariant réel du
+store (union-mergé = tous events + chaîne cassée + append gelé) et documente pourquoi `reseal` est requis.
+
+### (déféré) `.gitattributes merge=union` (le 80%, le moins cher) — revient apparié à `reseal`
 - Ajouter `.track/events.jsonl merge=union` (et le `.gitattributes` adéquat). Le store est un **NDJSON
   unique append-only** (grounded : eventsPath + head.json reconstructible) ⇒ l'union-merge réconcilie
   automatiquement des events d'aggregates DISJOINTS sur deux branches — **aurait prévenu graphify sans aucun

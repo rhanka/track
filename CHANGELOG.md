@@ -2,6 +2,34 @@
 
 All notable changes to `@sentropic/track`. Format loosely follows [Keep a Changelog](https://keepachangelog.com); this package is pre-1.0 (the **event contract** is frozen, but the library/CLI surface may still evolve additively).
 
+## [0.23.0] — merge-loss containment gate (`events-contains`) + `branch-lifecycle` skill
+
+Protects track's append-only event log from merge-time loss (the graphify incident: a squash-merge dropped
+18 committed reparent events). The gate is **event-id CONTAINMENT**, never "squash vs merge-commit" (the
+wrong predicate — too weak AND too strong). Double consensus (Codex 5.5xhigh + Opus 4.8max): design
+AMEND→locked, implementation gate CHANGES_REQUIRED→**scope split** (the `.gitattributes merge=union`
+auto-reconcile is DEFERRED, paired with a future `reseal` verb — a union-merged log keeps every event but
+breaks the positional hash-chain, so it is read-recoverable yet not re-appendable until re-chained; shipping
+union without reseal would freeze writes). The containment gate ships now and is the real protection.
+
+### Added
+- **`track events-contains --base <log> --candidate <log> [--format json|text]`** — a pure, git-free,
+  store-free containment primitive over the STABLE event `id` set. `rc=0` candidate ⊇ base (no loss);
+  `rc=1` ≥1 base id missing (loss — ids listed); `rc=2` cannot evaluate (bad flag / missing / malformed
+  log) — kept DISTINCT so a CI gate tells a real loss from a setup error and a typo'd `--base` is never a
+  vacuous pass. Compares `id` (not `contentHash`) so it survives a future re-seal.
+- **`branch-lifecycle` skill (ships via `install-skills`).** Detect-and-GUIDE, record-only, never
+  auto-repairs. Judges git ancestry in the shell; detects structural loss via `events-contains` (NOT
+  `audit.orphan`, which is blind to a reparent lost toward a valid parent); recovers OPPORTUNISTICALLY from
+  a surviving ref/reflog before declaring anything irrecoverable; re-anchors acceptance via
+  `report --require-accepted` + `consolidate`, then RE-READS to surface done-but-skipped. Bundled
+  `assets/check.sh` is a CI wrapper doing a real git trial-merge and failing closed on non-containment.
+
+### Contract
+- No event, no `READ`/`INGEST` bump (READ stays **1.16.0**): `events-contains` is a util CLI over explicit
+  file paths, outside the `TrackReader`/read-projection surface. `consolidate`/`restructure apply`/`audit`
+  unchanged.
+
 ## [0.22.1] — CLI: `track item assign-code`
 
 Exposes the A1 stable-code write on the CLI (the canonical write was facade/event-only in 0.22.0):

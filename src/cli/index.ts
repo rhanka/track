@@ -6,6 +6,7 @@ import { basename, dirname, isAbsolute, join, resolve } from 'node:path'
 import { readHead } from '../events/head.js'
 import { EventStore } from '../events/store.js'
 import { validate } from '../events/validate.js'
+import { cmdEventsContains } from './events-contains.js'
 import { cmdInstallSkills } from './install-skills.js'
 import { initTrackDir, resolveTrackDir, resolveTrackDirOrNull } from './resolve.js'
 import type { EvidenceKind, RunResult } from '../model/acceptance.js'
@@ -93,6 +94,7 @@ const USAGE = `usage: track <command>
   workspace-activity --workspace <id> [--baseline-commit <sha>] [--now <iso>] [--idle-ms <ms>] [--format json|text]
   scope validate --workspace <id> [--baseline-commit <sha>] [--content <path>] [--locator <l>] [--claimed-item <id>] [--infer-delivered-out-of-scope] [--format json|text]
   validate [--commit <sha>]
+  events-contains --base <log> --candidate <log> [--format json|text]
   audit [--format json|text]
   focus <decision-id> --workspace <w> [--format terminal|md|html] [--baseline-commit <sha>]
   branch import <BRANCH.md> [--commit <sha>]
@@ -337,6 +339,11 @@ export function runCli(rawArgv: string[], io: CliIO): number | Promise<number> {
         // io.cwd). A PURE read of git metadata — touches no `.track` store, so it dispatches here
         // alongside `init`/`install-skills`, before store resolution.
         return cmdWorkspaceId(rest, io)
+      case 'events-contains':
+        // PURE record-only event-id containment (DESIGN Lot B, B0b) over two EXPLICIT `.track` log
+        // PATHS. Git-free AND store-free: it never resolves a `.track` dir (the paths are supplied),
+        // so it dispatches here alongside install-skills/workspace-id, before store resolution.
+        return cmdEventsContains(rest, io)
       // READ commands SERVE-EMPTY (launch/serve alignment): they resolve via the non-throwing
       // `resolveTrackDirOrNull`, so an unadopted repo yields rc=0 + an honest-empty view + a stderr
       // `track init` hint, never a boot crash. NEVER creates. A bad EXPLICIT override still throws
