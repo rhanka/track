@@ -1,6 +1,13 @@
 import { BUCKETS } from './buckets.js'
 import type { DecisionRow, Report, ReportRow } from './build.js'
 import type { WpNode } from './rollup.js'
+import {
+  buildDirectives,
+  decisionNeedsFocus,
+  dispatchQueueOf,
+  type Directive,
+  type DirectiveStepCode,
+} from './directive.js'
 
 export type Format = 'json' | 'text' | 'md'
 
@@ -87,10 +94,6 @@ function actionDisposition(r: ReportRow): string {
   if (r.acceptance === 'fail' || r.acceptance === 'stale') return 'corriger puis revalider acceptance'
   if (r.realization === 'in-progress') return 'terminer ou expliciter blocage'
   return 'exécuter prochain incrément'
-}
-
-function decisionNeedsFocus(d: { optionCount?: number; openQuestionCount?: number; artifacts?: readonly unknown[]; hasRecommendation?: boolean }): boolean {
-  return (d.openQuestionCount ?? 0) >= 3 || (d.optionCount ?? 0) >= 3 || (d.artifacts?.length ?? 0) > 0 || d.hasRecommendation !== true
 }
 
 function decisionDisposition(d: { id: string; decisionKind: string; optionCount?: number; openQuestionCount?: number; artifacts?: readonly unknown[]; hasRecommendation?: boolean }): string {
@@ -329,20 +332,66 @@ export interface ReportView {
   locale: 'fr'
   tables: readonly ReportViewTable[]
   generalRecommendation: string
+  /**
+   * preconisation-actionnable (DESIGN §4) — the langue-neutre DIRECTIVES the tables are DERIVED from
+   * (machine surface). `dispatchQueue` is the flat, prioritized list of SUBAGENT directive ids (the real
+   * delegation payload). Both are additive; the rendered tables + `generalRecommendation` stay back-compat.
+   */
+  directives: readonly Directive[]
+  dispatchQueue: readonly string[]
+}
+
+/**
+ * Render ONE directive to a human FR phrase — RENDER-ONLY (no phrase is ever stored as data, DESIGN §3).
+ * Maps the langue-neutre `(mode, step, gate)` to a sentence. An UNKNOWN `step.code` (a future vocabulary
+ * entry this renderer predates) degrades to the `inspect-fallback` phrasing — forward-compat (DESIGN §7).
+ */
+export function directivePhrase(d: Directive): string {
+  if (d.mode === 'human-decision') {
+    const who = d.facts.accountable ?? 'owner'
+    return d.step.code === 'focus-decision'
+      ? `décision (${who}): focus dossier (questions/options) puis trancher outcome`
+      : `décision (${who}): trancher outcome`
+  }
+  if (d.mode === 'h2a-engagement') {
+    return 'engagement (h2a): relancer engagement puis intégrer le retour'
+  }
+  const mode = d.mode === 'local' ? 'local' : 'subagent'
+  const phrase: Record<DirectiveStepCode, string> = {
+    'focus-decision': `action (${mode}): focus dossier puis trancher outcome`,
+    'settle-decision': `action (${mode}): trancher outcome`,
+    'resume-engagement': `action (${mode}): relancer engagement puis intégrer le retour`,
+    'resolve-external-blocker': `action (${mode}): lever le blocage puis reprendre`,
+    'amend-spec': `action (${mode}): spécifier avant de démarrer`,
+    'fix-acceptance': `action (${mode}): corriger puis revalider acceptance (fail)`,
+    'rerun-acceptance': `action (${mode}): relancer acceptance (stale) sur le commit courant`,
+    'finish-increment': `action (${mode}): terminer l'incrément en cours`,
+    'start-increment': `action (${mode}): continuer le premier item ouvert puis enregistrer preuve/acceptance`,
+    'prioritize-backlog': `action (${mode}): prioriser le backlog (WSJF absent) puis reprendre`,
+    'inspect-fallback': `action (${mode}): inspecter l'état puis décider la suite`,
+  }
+  // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition — `step.code` may be an UNKNOWN
+  // future vocabulary entry (governed/additive enums): fall back rather than render `undefined`.
+  return phrase[d.step.code] ?? `action (${mode}): inspecter l'état puis décider la suite`
+}
+
+/** The `scope/gate` cell for a directive row: its gate code if any, else the WP label, else `-`. */
+function directiveScopeLabel(d: Directive): string {
+  return d.gate?.code ?? d.scope.wpLabel ?? '-'
 }
 
 export function buildWpConductorView(tree: readonly WpNode[], decisions: readonly DecisionRow[] = []): ReportView {
   const wpName = (n: WpNode): string => `${n.label} · ${clean(stripWpPrefix(n.title))}`
-  const flat: WpNode[] = []
-  const collect = (n: WpNode): void => {
-    flat.push(n)
-    for (const c of n.children) collect(c)
-  }
-  for (const n of tree) collect(n)
   const totals = wpTotals(tree)
-  const pendingDecisions = decisions.filter((d) => d.outcome === 'pending')
-  const complexDecisionCount = pendingDecisions.filter(decisionNeedsFocus).length
-  const generalRecommendation = complexDecisionCount >= 2 || pendingDecisions.length >= 4
+
+  // preconisation-actionnable (DESIGN §4): the DÉCISIONS/ACTIONS table + generalRecommendation are now
+  // DERIVED from the directive set (each directive ⇒ one row, phrase rendered, never stored). FAIT/À-FAIRE
+  // stay the same rollup-driven tables (unchanged back-compat).
+  const directives = buildDirectives(tree, decisions)
+  const dispatchQueue = dispatchQueueOf(directives)
+  const humanDecisions = directives.filter((d) => d.mode === 'human-decision')
+  const focusNeeded = humanDecisions.filter((d) => d.step.code === 'focus-decision').length
+  const generalRecommendation = focusNeeded >= 2 || humanDecisions.length >= 4
     ? 'Prévoir un temps de focus HTML pour trancher les décisions accumulées, puis reprendre les WP par premier item ouvert.'
     : 'Avancer par premier item ouvert, enregistrer preuve/acceptance, et escalader uniquement les décisions réellement bloquantes.'
 
@@ -359,42 +408,21 @@ export function buildWpConductorView(tree: readonly WpNode[], decisions: readonl
     return { wp: wpName(n), progress: `${n.done}/${n.active} (${pctStr(n.pct)})`, todo: more || 'aucun item ouvert direct' }
   })
 
-  const attendus = flat.flatMap((n) =>
-    n.leaves
-      .filter((l) => l.bucket === 'AWAITED' || (l.engagementRef !== undefined && l.bucket !== 'DONE' && l.bucket !== 'DROPPED'))
-      .map((l) => ({ wp: n, leaf: l })),
-  )
-  const decisionWaits = attendus.filter(({ leaf }) => leaf.awaitedOnDecision === true || leaf.engagementRef !== undefined)
+  // DÉCISIONS/ACTIONS rows — derived from the directives. Decisions first (capped at 8 + an omission count
+  // so the table never reads as complete when it isn't), then engagement/work directives.
   const actionRows: Record<string, string>[] = []
-  if (decisionWaits.length >= 3 || pendingDecisions.length >= 4 || complexDecisionCount >= 2) {
+  if (focusNeeded >= 2 || humanDecisions.length >= 4) {
     actionRows.push({ scope: '-', subject: 'décisions accumulées', recommendation: 'focus (humain+MCP): lancer focus HTML local; retour outcome via vue interactive/MCP' })
   }
-  for (const d of pendingDecisions.slice(0, 8)) {
-    actionRows.push({ scope: d.decisionKind, subject: clean(d.title), recommendation: `décision (${d.accountable ?? 'owner'}): ${decisionDisposition(d)}` })
+  for (const d of humanDecisions.slice(0, 8)) {
+    actionRows.push({ scope: directiveScopeLabel(d), subject: clean(d.target.title ?? d.target.id), recommendation: directivePhrase(d) })
   }
-  for (const { wp, leaf } of decisionWaits.slice(0, 8)) {
-    const focus = leaf.awaitedOnDecision === true ? 'focus décision si dossier/questions non évidents; sinon trancher outcome' : 'relancer engagement/subagent puis intégrer retour'
-    actionRows.push({ scope: wp.label, subject: clean(leaf.title), recommendation: `décision (owner/subagent): ${focus}` })
+  for (const d of directives.filter((x) => x.mode !== 'human-decision')) {
+    actionRows.push({ scope: directiveScopeLabel(d), subject: clean(d.target.title ?? d.target.id), recommendation: directivePhrase(d) })
   }
-  // NEVER truncate silently: if either list was capped at 8, surface how many entries are not listed.
-  const omitted = Math.max(0, pendingDecisions.length - 8) + Math.max(0, decisionWaits.length - 8)
+  const omitted = Math.max(0, humanDecisions.length - 8)
   if (omitted > 0) {
     actionRows.push({ scope: '-', subject: `+${omitted} entrées non listées`, recommendation: 'voir `track query` / `track report --flat` pour le détail complet' })
-  }
-  const decisionWaitIds = new Set(decisionWaits.map(({ leaf }) => leaf.id))
-  const candidates = flat
-    .filter((n) => n.pct !== 100)
-    .map((n) => ({ wp: n, leaves: openLeaves(n).filter((l) => !decisionWaitIds.has(l.id)) }))
-    .filter((x) => x.leaves.length > 0)
-  for (const { wp, leaves } of candidates) {
-    const first = leaves[0]!
-    const mode = first.awaitedOnDecision === true ? 'human decision' : first.engagementRef !== undefined ? 'h2a/subagent' : 'local/subagent'
-    const action = first.awaitedOnDecision === true
-      ? 'trancher décision bloquante puis relancer WP'
-      : first.engagementRef !== undefined
-        ? 'relancer engagement/subagent et suivre retour'
-        : 'continuer premier item ouvert puis enregistrer preuve/acceptance'
-    actionRows.push({ scope: wpName(wp), subject: clean(first.title), recommendation: `action (${mode}): ${action}` })
   }
 
   return {
@@ -406,6 +434,8 @@ export function buildWpConductorView(tree: readonly WpNode[], decisions: readonl
       { id: 'decisions-actions', title: 'DÉCISIONS/ACTIONS', columns: [{ id: 'scope', label: 'scope/gate' }, { id: 'subject', label: 'sujet' }, { id: 'recommendation', label: 'préconisation' }], rows: actionRows.length > 0 ? actionRows : [{ scope: '-', subject: 'aucune action ouverte dans les WP actifs', recommendation: '-' }] },
     ],
     generalRecommendation,
+    directives,
+    dispatchQueue,
   }
 }
 

@@ -8,10 +8,29 @@
 // Parent counts are the SUM of descendant leaves, NEVER the mean of child percentages (Simpson trap).
 // Each node's dotted display label (`WP1`, `WP1.1`) is DERIVED from tree position, never stored.
 
-import { isRoleContainer, type ItemId, type ItemKind, type ItemState } from '../model/item.js'
+import { acceptanceStatus } from '../accept/status.js'
+import type { ActorId } from '../events/types.js'
+import type { AcceptanceStatus } from '../model/acceptance.js'
+import type { BlockerKind, BlockerScope, BlockerState, ResolutionRule } from '../model/blocker.js'
+import { isRoleContainer, type BlockerId, type ItemId, type ItemKind, type ItemState, type Realization, type SpecStatus } from '../model/item.js'
 import type { State } from '../state/fold.js'
 import { bucketOf, type Bucket, type ReportConfig } from './buckets.js'
 import { effectiveOpenBlockersForItem } from './blocker-status.js'
+
+/**
+ * preconisation-actionnable (DESIGN §1) — the projection of ONE open blocker onto a leaf. `ref` =
+ * decisionId / intra-dep item; `engagementRef` = the h2a engagement of an `extra` dep. Carries enough for
+ * the directive to be DELEGABLE (a bare boolean `awaitedOnDecision` is not — it lacks the decisionId).
+ */
+export interface WpLeafBlocker {
+  blockerId: BlockerId
+  kind: BlockerKind
+  ref?: ItemId
+  scope?: BlockerScope
+  resolutionRule?: ResolutionRule
+  engagementRef?: string
+  reason: string
+}
 
 /** A rolled-up leaf under a WP — its bucket drives both the % counts and the `[x]/[ ]` checkbox. */
 export interface WpLeaf {
@@ -19,10 +38,62 @@ export interface WpLeaf {
   title: string
   bucket: Bucket
   kind: ItemKind
+  // preconisation-actionnable (DESIGN §1) — additive enrichment, all DERIVED here (acceptanceStatus +
+  // effectiveOpenBlockersForItem), so the directive selector recomputes NOTHING.
+  workspace: string
+  realization: Realization
+  acceptance: AcceptanceStatus
+  /** WSJF score of the latest priority assessment, when one exists (the value proxy). */
+  priority?: number
+  specStatus: SpecStatus | 'n/a'
+  accountable?: ActorId
+  /** Every open blocker on this leaf, projected (kind/ref/scope/resolutionRule/engagementRef/reason). */
+  openBlockers: WpLeafBlocker[]
   /** Present ⇒ an h2a ENGAGEMENT backs this leaf (report-revamp: ATTENDUS disposition signal). */
   engagementRef?: string
   /** An open blocker on this leaf is `kind:'decision'` ⇒ an owner decision is pending (ATTENDUS). */
   awaitedOnDecision?: boolean
+}
+
+/** Project an open `BlockerState` onto the leaf's `openBlockers[]` (drop-absent ⇒ minimal shape). */
+function projectBlocker(b: BlockerState): WpLeafBlocker {
+  return {
+    blockerId: b.id,
+    kind: b.kind,
+    reason: b.reason,
+    ...(b.ref !== undefined ? { ref: b.ref } : {}),
+    ...(b.scope !== undefined ? { scope: b.scope } : {}),
+    ...(b.resolutionRule !== undefined ? { resolutionRule: b.resolutionRule } : {}),
+    ...(b.engagementRef !== undefined ? { engagementRef: b.engagementRef } : {}),
+  }
+}
+
+/**
+ * Build ONE rolled-up `WpLeaf` from a non-WP item — the SINGLE place every directive fact is derived
+ * (bucket + acceptance + open blockers), shared by `computeWpTree` and `statusByLevel` so the enrichment
+ * never drifts between the two consumers. PURE over `(state, item, config)`.
+ */
+export function buildWpLeaf(state: State, item: ItemState, config: ReportConfig): WpLeaf {
+  const bucket = bucketOf(state, item, config)
+  const open = effectiveOpenBlockersForItem(state, item.id, config.baselineCommit)
+  const acceptance = acceptanceStatus(state, item.id, config.baselineCommit)
+  // An open `kind:'decision'` blocker ⇒ an OWNER decision is pending (report-revamp ATTENDUS).
+  const awaitedOnDecision = bucket === 'AWAITED' && open.some((b) => b.kind === 'decision')
+  return {
+    id: item.id,
+    title: item.title,
+    bucket,
+    kind: item.kind,
+    workspace: item.workspace,
+    realization: item.realization,
+    acceptance,
+    specStatus: item.specStatus,
+    openBlockers: open.map(projectBlocker),
+    ...(item.priority !== undefined ? { priority: item.priority.score } : {}),
+    ...(item.accountable !== undefined ? { accountable: item.accountable } : {}),
+    ...(item.engagementRef !== undefined ? { engagementRef: item.engagementRef } : {}),
+    ...(awaitedOnDecision ? { awaitedOnDecision: true } : {}),
+  }
 }
 
 /** A node in the rolled-up WP forest. `id`/`title` are identity; `label` is the derived dotted code. */
@@ -97,21 +168,7 @@ export function computeWpTree(state: State, config: ReportConfig): WpNode[] {
         if (isWp(child)) continue // a sub-WP boundary — its leaves count under IT, not here
         const grandkids = childrenOf.get(child.id) ?? []
         if (grandkids.length === 0) {
-          const bucket = bucketOf(state, child, config)
-          // An open `kind:'decision'` blocker ⇒ an OWNER decision is pending (report-revamp ATTENDUS).
-          const awaitedOnDecision =
-            bucket === 'AWAITED' &&
-            effectiveOpenBlockersForItem(state, child.id, config.baselineCommit).some(
-              (b) => b.kind === 'decision',
-            )
-          out.push({
-            id: child.id,
-            title: child.title,
-            bucket,
-            kind: child.kind,
-            ...(child.engagementRef !== undefined ? { engagementRef: child.engagementRef } : {}),
-            ...(awaitedOnDecision ? { awaitedOnDecision: true } : {}),
-          })
+          out.push(buildWpLeaf(state, child, config)) // DESIGN §1 — all directive facts derived once here
         } else walk(child.id) // non-WP container — descend
       }
     }

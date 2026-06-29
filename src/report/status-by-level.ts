@@ -15,7 +15,7 @@
 import { isRoleContainer, type ItemId, type ItemState } from '../model/item.js'
 import type { State } from '../state/fold.js'
 import { bucketOf, type Bucket, type ReportConfig } from './buckets.js'
-import { tally, type WpLeaf } from './rollup.js'
+import { buildWpLeaf, tally, type WpLeaf } from './rollup.js'
 
 export type StatusLevel = 'spec' | 'plan' | 'wp' | 'lot' | 'task'
 export const STATUS_LEVELS: readonly StatusLevel[] = ['spec', 'plan', 'wp', 'lot', 'task']
@@ -78,7 +78,7 @@ export function statusByLevel(state: State, level: StatusLevel, config: ReportCo
         }
         const grandkids = childrenOf.get(child.id) ?? []
         if (grandkids.length === 0) {
-          out.push({ id: child.id, title: child.title, bucket: bucketOf(state, child, config), kind: child.kind })
+          out.push(buildWpLeaf(state, child, config))
         } else {
           walk(child.id) // non-WP container — descend
         }
@@ -115,7 +115,7 @@ export function statusByLevel(state: State, level: StatusLevel, config: ReportCo
         }
         const grandkids = childrenOf.get(child.id) ?? []
         if (grandkids.length === 0) {
-          const leaf: WpLeaf = { id: child.id, title: child.title, bucket: bucketOf(state, child, config), kind: child.kind }
+          const leaf: WpLeaf = buildWpLeaf(state, child, config)
           const { done, active, dropped } = tally([leaf])
           out.push({
             id: child.id,

@@ -50,9 +50,9 @@ afterEach(() => {
   rmSync(dir, { recursive: true, force: true })
 })
 
-describe('READ 1.13.0 — version pin + surface', () => {
-  it('pins READ_CONTRACT_VERSION at 1.13.0 and exposes demands()/lifecycleTrace()', () => {
-    expect(READ_CONTRACT_VERSION).toBe('1.13.0')
+describe('READ 1.14.0 — version pin + surface', () => {
+  it('pins READ_CONTRACT_VERSION at 1.14.0 and exposes demands()/lifecycleTrace()', () => {
+    expect(READ_CONTRACT_VERSION).toBe('1.14.0')
     const api = reader as unknown as Record<string, unknown>
     expect(typeof api['demands']).toBe('function')
     expect(typeof api['lifecycleTrace']).toBe('function')

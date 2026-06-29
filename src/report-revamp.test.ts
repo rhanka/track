@@ -185,7 +185,12 @@ describe('report-revamp — json path keeps the machine contract + additive view
       buckets: Record<string, unknown[]>
       wpTree: unknown[]
       wpTotals: { done: number; active: number; pct: number | string }
-      view?: { kind: string; tables: { id: string; rows: Record<string, string>[] }[] }
+      view?: {
+        kind: string
+        tables: { id: string; rows: Record<string, string>[] }[]
+        directives: { id: string; step: { code: string }; mode: string }[]
+        dispatchQueue: string[]
+      }
     }
     // Machine contract UNCHANGED from 0.19.0.
     expect(parsed.buckets).toBeDefined()
@@ -194,6 +199,10 @@ describe('report-revamp — json path keeps the machine contract + additive view
     // Additive optional view model for presentation skills.
     expect(parsed.view!.kind).toBe('wp-conductor-report')
     expect(parsed.view!.tables.find((t) => t.id === 'done')!.rows[0]!['progress']).toBe('1/2 (50%)')
+    // 1.14.0 — the actionable directives + the subagent dispatch queue are carried additively.
+    expect(Array.isArray(parsed.view!.directives)).toBe(true)
+    expect(parsed.view!.directives.length).toBeGreaterThanOrEqual(1)
+    expect(Array.isArray(parsed.view!.dispatchQueue)).toBe(true)
   })
 })
 
