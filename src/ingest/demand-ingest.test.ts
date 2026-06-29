@@ -40,7 +40,7 @@ const RAISE = { type: 'feature', raw: { text: 'add X' }, source: { kind: 'human'
 
 describe('demand ingest — contract version bump (additive minor)', () => {
   it('INGEST_CONTRACT_VERSION bumped 1.2.0 → 1.3.0 (demand lifecycle additive kinds)', () => {
-    expect(INGEST_CONTRACT_VERSION).toBe('1.4.0') // bumped again to 1.4.0 by cross-workspace WP reorg (item.restructure)
+    expect(INGEST_CONTRACT_VERSION).toBe('1.5.0') // bumped again to 1.5.0 by WP-codes A1 (item.assign-code)
   })
 })
 

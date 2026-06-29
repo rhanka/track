@@ -206,6 +206,11 @@ export function mapWorkEvent(ev: WorkEvent): MappedCommand {
       // (not an arg). Scope §B(a).
       args = [p['itemId'], p['scope']]
       break
+    case 'item.assign-code':
+      // assignCode(itemId, code, clientToken?) — the role-container check + non-empty + roster-global
+      // uniqueness are re-asserted in the facade; clientToken is threaded via withClientToken (not an arg).
+      args = [p['itemId'], p['code']]
+      break
     case 'item.spec-amend':
       // amendSpec(itemId, amend, clientToken?) — the validated payload IS the amendment shape; its JsonPatch
       // + baseHash/resultHash are re-asserted (assertSpecAmend) and recorded VERBATIM in the facade.

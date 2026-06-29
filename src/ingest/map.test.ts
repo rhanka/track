@@ -54,6 +54,9 @@ describe('mapWorkEvent — valid kinds → normalized {method, settles, args}', 
       { method: 'resolveExternalDependency', settles: 'always', args: ['eng-1'] }],
     ['scope.declare ⇒ always (scope shape re-asserted in the facade)', ev('scope.declare', { itemId: 'i', scope: { allowed: ['src/**'] } }),
       { method: 'declareScope', settles: 'always', args: ['i', { allowed: ['src/**'] }] }],
+    // WP-codes A1 (DESIGN) — the additive durable display-code kind (1.5.0).
+    ['item.assign-code ⇒ always (role-container + non-empty + roster-global uniqueness re-asserted in the facade)', ev('item.assign-code', { itemId: 'i', code: 'WP1' }),
+      { method: 'assignCode', settles: 'always', args: ['i', 'WP1'] }],
     ['item.spec-amend ⇒ always (payload passthrough; patch verbatim)', ev('item.spec-amend', { itemId: 'i', baseHash: 'h0', patch: [{ op: 'add', path: '/a', value: 1 }], resultHash: 'h1' }),
       { method: 'amendSpec', settles: 'always', args: ['i', { itemId: 'i', baseHash: 'h0', patch: [{ op: 'add', path: '/a', value: 1 }], resultHash: 'h1' }] }],
     // Acceptance-freshness lifecycle — the two additive kinds (item.anchor, item.consolidate).

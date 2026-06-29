@@ -62,6 +62,14 @@ export interface ItemState {
   priority?: PriorityAssessment // latest assessment, live sort key (SPEC §2.8)
   parentId?: ItemId
   role?: ItemRole // additive container marker (Workpackages §2); present ⇒ a workpackage / spec-phase
+  /**
+   * WP-codes (DESIGN wp-codes A1) — a DURABLE, re-assignable DISPLAY label for a role-container (WP/
+   * spec-phase) that DECOUPLES stability from the derived `WP<n>` numbering. Additive/optional; set/
+   * replaced by an `item.code-assigned` event (LWW). Present ⇒ the rollup renders this code verbatim
+   * instead of the positional `WP<n>`. A code is NEVER an identity/ref (`wpRootId`/`wpRef`/objective-refs
+   * stay ULID) — it is a render label only. Absent ⇒ byte-identical to the pre-codes behavior.
+   */
+  code?: string
   scope?: ScopeDecl // Scope §B(a) — declarative INERT path globs on a WP/spec-phase (track never matches)
   sourceKey?: string
   body?: string

@@ -41,6 +41,7 @@ import {
   assertScopeDecl,
   assertSpecTransition,
   DomainError,
+  isRoleContainer,
   type BlockerId,
   type Disposition,
   type Gate,
@@ -343,6 +344,72 @@ export class Track {
     }
     if (clientToken !== undefined) this.withClientToken(clientToken, emit)
     else emit()
+  }
+
+  /**
+   * WP-codes (DESIGN A1, KEYSTONE) — assign/replace a DURABLE display `code` on a role-container (WP/
+   * spec-phase), on the EXISTING item aggregate (next seq, no recreate; existing hashes untouched),
+   * mirroring `scope.declare`→`scope.declared`. Appends `item.code-assigned`, which folds into `item.code`
+   * (LWW). The code DECOUPLES stability from the derived `WP<n>` numbering: the rollup renders it VERBATIM
+   * instead of the positional label, and the derived counter SKIPS any ordinal a `^WP\d+$` code claims. It
+   * is a DISPLAY label ONLY — NEVER an identity/ref (`wpRootId`/`wpRef`/objective-refs stay ULID). Guards
+   * (reject with DomainError BEFORE any append): the item exists; it is role∈{workpackage,spec-phase}; the
+   * code is a non-empty string; and ROSTER-GLOBAL uniqueness — no OTHER root container in the whole forest
+   * already holds this code. The uniqueness scan is NON-PURE (it folds GLOBAL state), so it is ALSO re-
+   * asserted UNDER THE LOCK (F2 — the cross-actor race the per-aggregate lock does not cover; calque the
+   * demand recheck / reparent cycle): a racing second writer that saw a stale pre-lock state is rejected
+   * here rather than appending a colliding code. Re-assignable (LWW) — a code is corrigible WITH TRACE; it
+   * just never changes on its own. Binding-gated (Settles:'always') + workspace-contained at the ingest
+   * seam; `clientToken` via `withClientToken`.
+   */
+  assignCode(itemId: ItemId, code: string, clientToken?: string): void {
+    const state = this.state()
+    const item = state.items.get(itemId)
+    if (!item) throw new DomainError(`unknown item ${itemId}`)
+    if (item.role !== 'workpackage' && item.role !== 'spec-phase') {
+      throw new DomainError(
+        `cannot assign a code to item ${itemId}: a code is only assignable to a workpackage or spec-phase (DESIGN wp-codes A1)`,
+      )
+    }
+    if (typeof code !== 'string' || code.length === 0) {
+      throw new DomainError('assignCode: code must be a non-empty string')
+    }
+    this.assertCodeUnique(itemId, code, state)
+    // F2 under-lock recheck: re-fold the existing log UNDER THE LOCK and re-assert roster-global uniqueness
+    // (the scan is non-pure ⇒ a racing writer that saw stale pre-lock state is caught here, never appended).
+    const recheck: RecheckHook = (_inputs, existing) => {
+      this.assertCodeUnique(itemId, code, fold(existing))
+    }
+    this.withDemandRecheck(recheck, () => {
+      const emit = (): void => {
+        this.emit('item', itemId, 'item.code-assigned', { code })
+      }
+      if (clientToken !== undefined) this.withClientToken(clientToken, emit)
+      else emit()
+    })
+  }
+
+  /**
+   * WP-codes (DESIGN A1) — roster-GLOBAL code uniqueness: no OTHER role-container (ANY WP/spec-phase across
+   * the WHOLE forest — root OR nested sub-node, NOT per-workspace; `computeWpTree` is global then clipped)
+   * may already hold `code`. Throws DomainError on a collision. The scan spans ALL coded containers, not only
+   * roots: a code on a SUB-WP is just as binding — `assignCode` accepts a code on any role-container and the
+   * rollup renders `child.code ?? dotted`, so two sub-nodes (or a root and a sub-node) sharing a code would
+   * collide on display; and a `^WP\d+$` code on a sub-WP reserves the ROOT ordinal (rollup's `claimed` set
+   * mirrors this widened scan). NON-PURE (folds global state); run BOTH at append (the facade) AND under the
+   * lock (F2). The derived `WP<n>` class never collides with a code (the rollup SKIPS any ordinal a code
+   * claims), so the only collision to guard is code-vs-code among coded containers. Re-assigning the SAME
+   * item is NOT a collision.
+   */
+  private assertCodeUnique(selfId: ItemId, code: string, state: State): void {
+    for (const other of state.items.values()) {
+      if (other.id === selfId) continue
+      if (other.code !== code) continue
+      if (!isRoleContainer(other)) continue
+      throw new DomainError(
+        `code "${code}" is already assigned to container ${other.id} — codes are roster-global unique (DESIGN wp-codes A1)`,
+      )
+    }
   }
 
   /**

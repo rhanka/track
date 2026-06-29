@@ -5,6 +5,10 @@
 // One WorkEvent ⇒ one Track command. This module is the SINGLE SOURCE of the write enums (so the CLI's
 // `oneOf` checks and the mapper cannot diverge on accepted values) and of the per-kind payload schema.
 
+// 1.5.0 — WP-codes (DESIGN wp-codes A1): one ADDITIVE new WorkEvent kind `item.assign-code` → the persisted
+// `item.code-assigned` event (a DURABLE display `code` on a role-container; LWW, `settles:'always'`). MINOR
+// bump (a new optional kind; no kind removed, no required field added to an existing kind, envelope keys
+// unchanged; old producers never send it and still validate).
 // 1.4.0 — cross-workspace WP reorg (DESIGN R2): one ADDITIVE new WorkEvent kind `item.restructure` — a
 // DISTINCT, DEFAULT-DENIED capability kind that maps to the SAME persisted `item.reparented` event (additive
 // `planHash`/`restructureRef` payload). MINOR bump (a new optional kind; no kind removed, no required field
@@ -18,7 +22,7 @@
 // removed, no required field added, envelope keys unchanged; old producers never send them and still validate).
 // 1.1.0 — seam v0 FREEZE: two ADDITIVE optional producer fields (artifactLocator on scope.verification,
 // caller-supplied evidenceId on acceptance.link).
-export const INGEST_CONTRACT_VERSION = '1.4.0'
+export const INGEST_CONTRACT_VERSION = '1.5.0'
 
 // --- write enums (shared with src/cli/index.ts) ------------------------------------------------------
 export const ITEM_KINDS = ['feature', 'bug', 'chore'] as const
@@ -60,6 +64,7 @@ export const WORK_EVENT_KINDS = [
   'blocker.resolve-external',
   'scope.verification', // Scope §B(c) — record a path-scope VerificationRun (evidence-only)
   'scope.declare', // Scope §B(a) — declare INERT path-scope globs on a WP/spec-phase
+  'item.assign-code', // WP-codes (DESIGN A1) — assign/replace a DURABLE display code on a WP/spec-phase
   'item.spec-amend', // M5 (canevas) — record a LIVE spec amendment (verbatim JsonPatch) on an item
   'item.anchor', // Acceptance-freshness — re-point an item's realization ANCHOR commit (→ realization.anchored)
   'item.consolidate', // Acceptance-freshness — the squash/rebase heal: re-anchor + re-stamp pass runs at mergeCommit
@@ -310,6 +315,16 @@ export const WORK_EVENT_SCHEMA: Record<WorkEventKind, KindSchema> = {
     method: 'declareScope',
     settles: 'always',
     fields: { itemId: str(true), scope: { type: 'object', required: true } },
+  },
+  'item.assign-code': {
+    // WP-codes (DESIGN A1) — assign/replace a DURABLE display `code` on a role-container (WP/spec-phase).
+    // Binding (`always`): re-pointing a stable public handle is trust-sensitive ⇒ requires auth ∈
+    // {local-user, signed} (calque item.reparent/scope.declare). The facade (Track.assignCode) re-checks
+    // the item is a role-container, the code is non-empty, AND roster-global uniqueness (no OTHER root
+    // container holds this code) — fail-closed, AND re-asserted under the lock (F2). LWW: re-assignable.
+    method: 'assignCode',
+    settles: 'always',
+    fields: { itemId: str(true), code: str(true) },
   },
   'item.spec-amend': {
     // M5 (canevas) — record ONE owner-approved LIVE spec amendment. Binding (`always`): an amendment to the

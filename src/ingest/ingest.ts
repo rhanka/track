@@ -123,6 +123,10 @@ function resolveWorkspace(cmd: MappedCommand, state: State): { create: boolean; 
       // Scope §B(a) — declareScope mutates the named item aggregate; contained by the item's workspace
       // (a W-pinned channel can't declare scope on a V item). Resolved from folded state.
       return { create: false, workspace: item(p['itemId']) }
+    case 'item.assign-code':
+      // WP-codes (DESIGN A1) — assignCode mutates the named item aggregate; contained by the item's
+      // workspace (a W-pinned channel can't code a V item). Resolved from folded state.
+      return { create: false, workspace: item(p['itemId']) }
     case 'item.spec-amend':
       // M5 (canevas) — amendSpec mutates the named item aggregate; contained by the item's workspace
       // (a W-pinned channel can't amend a V item's spec). Resolved from folded state.
@@ -323,6 +327,12 @@ function applyCommand(track: Track, cmd: MappedCommand, ctx: IngestContext): str
       // declareScope(itemId, scope) — the clientToken is already in scope via withClientToken (do not
       // double-pass); the ScopeDecl shape is re-asserted in the facade (assertScopeDecl). Scope §B(a).
       track.declareScope(a[0] as ItemId, a[1] as ScopeDecl)
+      return undefined
+    case 'item.assign-code':
+      // assignCode(itemId, code) — the clientToken is already in scope via withClientToken (do not
+      // double-pass); the role-container + non-empty + roster-global uniqueness checks (and the under-lock
+      // F2 re-assert) live in the facade. WP-codes (DESIGN A1).
+      track.assignCode(a[0] as ItemId, a[1] as string)
       return undefined
     case 'item.spec-amend':
       // amendSpec(itemId, amend) — the clientToken is already in scope via withClientToken (do not

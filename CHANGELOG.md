@@ -2,6 +2,39 @@
 
 All notable changes to `@sentropic/track`. Format loosely follows [Keep a Changelog](https://keepachangelog.com); this package is pre-1.0 (the **event contract** is frozen, but the library/CLI surface may still evolve additively).
 
+## [0.22.0] — stable workpackage codes (sub-lot A1)
+
+Gives a workpackage (or spec-phase) a **durable, re-assignable display `code`** that DECOUPLES stability from
+the derived `WP<n>` numbering: the report renders the code verbatim, while the positional counter SKIPS any
+ordinal a `^WP\d+$` code claims — so a roster reads the same labels even as items are added or reordered. A
+code is a **display label, never an identity** (`wpRootId`/`wpRef`/objective-refs stay ULID). Double consensus
+(Codex 5.5xhigh + Opus 4.8max): design AMEND→locked, implementation gate SHIP_WITH_NITS (the flagged sub-WP
+asymmetry nit is folded into this release). All additive; a no-code roster renders **byte-identical** to the
+pre-codes output.
+
+### Added
+- **`item.assign-code` → `item.code-assigned` event (LWW, `settles:'always'`).** A new additive event on the
+  EXISTING item aggregate (next seq, no recreate; existing hashes untouched), mirroring `scope.declare`. Fold
+  takes the last value (a code is corrigible WITH TRACE — it never changes on its own). Old readers ignore it
+  (fail-safe; a container never enters a flat bucket — display-only).
+- **`assignCode(itemId, code, clientToken?)` facade.** Guards fail-closed BEFORE any append: the item exists;
+  it is `role ∈ {workpackage, spec-phase}`; the code is a non-empty string; and **roster-global uniqueness** —
+  no OTHER coded role-container (root OR nested sub-WP, across the whole forest) already holds the code. The
+  uniqueness scan is NON-PURE (it folds global state), so it is RE-ASSERTED UNDER THE LOCK (F2) — a racing
+  second writer that saw a stale pre-lock state is rejected rather than appending a colliding code. Binding-
+  gated (`settles:'always'`) + workspace-contained at the ingest seam; `clientToken`-idempotent.
+- **Report label = code, else derived `WP<n>` skipping claimed ordinals.** `computeWpTree` renders a coded
+  container's label verbatim; an uncoded root takes the next `WP<n>` whose ordinal is NOT claimed by a
+  `^WP\d+$` code on ANY coded container (root or sub-WP — the same display class). A no-code roster = `WP1..WPN`
+  byte-identical; an all-coded roster = its codes exactly; a mixed roster = codes + `WP<n>` filling the gaps
+  WITHOUT collision. `WpNode.code` is surfaced drop-when-absent. Codes are display labels only — the node `id`
+  stays the ULID, and `wpRootId` is unchanged by a recode.
+
+### Contract
+- **INGEST 1.4.0 → 1.5.0** (additive: `item.assign-code` kind / `item.code-assigned` event). **READ 1.15.0 →
+  1.16.0** (additive: the `WpNode.code` field). No event removed/renamed; old readers ignore the new kind and
+  field (fail-safe).
+
 ## [0.21.0] — cross-workspace workpackage reorganization (intra-repo) + `track audit`
 
 Decouples the **workpackage tree** (`parentId`) from the immutable `workspace` field, so a workpackage can

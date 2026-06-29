@@ -56,7 +56,7 @@ import { graphExportFromState, type TrackGraphFragment } from '../graph-export.j
  * shapes it returns may only GROW (new methods / new optional fields); nothing is removed or
  * repurposed without a major bump. Consumers gate on `reader.contractVersion`.
  */
-export const READ_CONTRACT_VERSION = '1.15.0' // +track audit (auditFindings) — additif, read-only (DESIGN R4)
+export const READ_CONTRACT_VERSION = '1.16.0' // +WP-codes A1: WpNode.code? + label may be a durable code (additif)
 
 /** Provenance of the last `branch.imported` for a locator (drawn from the raw event log). */
 export interface BranchProvenance {

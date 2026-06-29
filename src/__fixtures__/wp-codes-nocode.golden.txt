@@ -1,0 +1,37 @@
+=== formatWpConductor(text) ===
+FAIT
+scope        avancement   dernières actions                       
+──────────   ──────────   ────────────────────────────────────────
+global       3/5 (60%)    3 items faits; poursuivre les WP ouverts
+
+WP2 · Beta   1/1 (100%)   WP clos; preuve/acceptance enregistrée  
+
+À-FAIRE
+WP            avancement   à faire                 
+───────────   ──────────   ────────────────────────
+WP1 · Alpha   2/4 (50%)    a-todo / s-todo         
+
+WP3 · Gamma   0/0 (n/a)    aucun item ouvert direct
+
+DÉCISIONS/ACTIONS
+scope/gate       sujet    préconisation                                 
+──────────────   ──────   ──────────────────────────────────────────────
+spec-not-ready   a-todo   action (subagent): spécifier avant de démarrer
+
+spec-not-ready   s-todo   action (subagent): spécifier avant de démarrer
+
+RECOMMANDATION
+Avancer par premier item ouvert, enregistrer preuve/acceptance, et escalader uniquement les décisions réellement bloquantes.
+
+=== formatWpTree(md) ===
+- **WP1 · Alpha** (2/4, 50%)
+  - [x] a\-done
+  - [ ] a\-todo
+  - **WP1.1 · Phase** (1/1, 100%)
+    - [x] p\-done
+  - **WP1.2 · Sub** (0/1, 0%)
+    - [ ] s\-todo
+    - [~] s\-dropped
+- **WP2 · Beta** (1/1, 100%)
+  - [x] b\-done
+- **WP3 · Gamma** (0/0, n/a)

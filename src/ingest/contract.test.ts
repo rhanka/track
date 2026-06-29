@@ -6,7 +6,7 @@ import { INGEST_CONTRACT_VERSION, WORK_EVENT_KINDS, WORK_EVENT_SCHEMA } from './
 // required field) MUST fail here — this is the contract's snapshot gate (v2.3b-DESIGN.md §6/§7).
 describe('WorkEvent contract surface', () => {
   it('pins the contract version and the kind list', () => {
-    expect(INGEST_CONTRACT_VERSION).toBe('1.4.0') // cross-workspace WP reorg (DESIGN R2) — MINOR bump (additive item.restructure)
+    expect(INGEST_CONTRACT_VERSION).toBe('1.5.0') // WP-codes A1 (DESIGN) — MINOR bump (additive item.assign-code)
     expect([...WORK_EVENT_KINDS]).toEqual([
       'item.create',
       'item.reparent',
@@ -27,6 +27,8 @@ describe('WorkEvent contract surface', () => {
       'blocker.resolve-external',
       'scope.verification',
       'scope.declare',
+      // WP-codes A1 (DESIGN) — 1.5.0 additive kind.
+      'item.assign-code',
       'item.spec-amend',
       'item.anchor',
       'item.consolidate',
@@ -93,6 +95,7 @@ describe('WorkEvent contract surface', () => {
       'blocker.resolve-external': { method: 'resolveExternalDependency', settles: 'always', required: ['engagementRef'] },
       'scope.verification': { method: 'recordVerification', settles: 'evidence', required: ['commit', 'runId', 'runner', 'verdict'] },
       'scope.declare': { method: 'declareScope', settles: 'always', required: ['itemId', 'scope'] },
+      'item.assign-code': { method: 'assignCode', settles: 'always', required: ['code', 'itemId'] },
       'item.spec-amend': { method: 'amendSpec', settles: 'always', required: ['baseHash', 'itemId', 'patch', 'resultHash'] },
       'item.anchor': { method: 'anchorRealization', settles: 'evidence', required: ['commit', 'itemId'] },
       'item.consolidate': { method: 'consolidate', settles: 'always', required: ['items', 'mergeCommit'] },

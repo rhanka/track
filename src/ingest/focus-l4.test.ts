@@ -10,7 +10,7 @@ import {
 
 describe('Focus L4 action bindings', () => {
   it('maps Focus/Canevas gestures to existing WorkEvent kinds without minting new event types', () => {
-    expect(INGEST_CONTRACT_VERSION).toBe('1.4.0')
+    expect(INGEST_CONTRACT_VERSION).toBe('1.5.0')
     expect(FOCUS_L4_ACTIONS).toEqual(['ratifyOutcome', 'amendSpec', 'addDossierArtifact'])
 
     const kinds: WorkEventKind[] = FOCUS_L4_ACTIONS.map((a) => focusL4ActionBinding(a).workEventKind)

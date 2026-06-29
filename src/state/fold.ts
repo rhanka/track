@@ -185,6 +185,17 @@ function applyEvent(state: State, event: TrackEvent): void {
       break
     }
 
+    case 'item.code-assigned': {
+      // WP-codes (DESIGN wp-codes A1) — set/replace the DURABLE display `code` on the EXISTING role-
+      // container aggregate (LWW in stream order). Legality (item exists, is a role-container, code
+      // non-empty, roster-global uniqueness) is checked at append (Track.assignCode) AND re-asserted under
+      // the lock (F2) — NEVER in the fold (the established pattern). DISPLAY-ONLY: touches no realization/
+      // bucket/ref logic. An old reader without this case hits `default` and ignores the event (fail-safe).
+      const item = state.items.get(event.aggregateId)
+      if (item) item.code = (event.payload as { code: string }).code
+      break
+    }
+
     case 'spec.amended': {
       // M5 (canevas) — append ONE record-only spec amendment to the item's specAmendments[] (in stream
       // order). RECORD-ONLY: mutates NO spec field (specStatus untouched) — the amendment trace IS the

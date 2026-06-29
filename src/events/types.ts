@@ -57,6 +57,12 @@ export const EVENT_TYPES = [
   // into `state.specAmendments` (record-only; mutates NO spec field destructively — the trace IS the value);
   // touches NO realization/bucket logic. Additive: absent on every pre-M5 event ⇒ zero hash/seq/bucket change.
   'spec.amended',
+  // WP-codes (DESIGN wp-codes A1) — assign/replace a DURABLE display `code` on a role-container (WP/
+  // spec-phase) on the EXISTING item aggregate (next seq, no recreate). Past-tense persisted name,
+  // mirroring `scope.declare`→`scope.declared` (WorkEvent kind `item.assign-code`). Folds `item.code`
+  // (LWW); DISPLAY-ONLY (touches NO realization/bucket logic, and is NEVER an identity/ref). Additive:
+  // absent on every pre-codes event ⇒ zero hash/seq/bucket change; an old reader ignores it (fail-safe).
+  'item.code-assigned',
   // Acceptance-freshness lifecycle — re-point an item's realization ANCHOR commit on the EXISTING item
   // aggregate (next seq, no realization transition; `done` stays terminal). Serves BOTH realize-time anchoring
   // (WorkEvent `item.anchor`) AND merge-time re-anchoring (WorkEvent `item.consolidate`); LAST anchor wins.

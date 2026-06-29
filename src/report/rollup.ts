@@ -100,8 +100,19 @@ export function buildWpLeaf(state: State, item: ItemState, config: ReportConfig)
 export interface WpNode {
   id: ItemId
   title: string
-  /** Derived dotted display label from tree position (e.g. "WP1", "WP1.2"). */
+  /**
+   * The display label. By DEFAULT the DERIVED dotted code from tree position (e.g. "WP1", "WP1.2"); when
+   * this node carries a durable `code` (WP-codes A1) the label IS that code VERBATIM (the derived `WP<n>`
+   * counter then SKIPS any ordinal a `^WP\d+$` code claims). The `string` type is unchanged — a label may
+   * now be an assigned code instead of a positional `WP<n>`.
+   */
   label: string
+  /**
+   * WP-codes (DESIGN A1, additive/optional) — the durable assigned `code` of this container, when present
+   * (= `ItemState.code`). Absent ⇒ the label is the derived positional `WP<n>`/dotted code (byte-identical
+   * to the pre-codes rollup). A DISPLAY label, NEVER an identity — `id` stays the ULID.
+   */
+  code?: string
   /** DONE non-WP leaf descendants (transitive). */
   done: number
   /** DONE + TO-DO + AWAITED non-WP leaf descendants — the % denominator. */
@@ -169,6 +180,8 @@ export function clipWpTreeToWorkspace(tree: readonly WpNode[], workspace: string
       id: node.id,
       title: node.title,
       label: node.label,
+      // WP-codes (DESIGN A1) — carry the code across the clip (drop-when-absent ⇒ no-code byte-identical).
+      ...(node.code !== undefined ? { code: node.code } : {}),
       done,
       active,
       dropped,
@@ -252,7 +265,10 @@ export function computeWpTree(state: State, config: ReportConfig): WpNode[] {
       for (const child of childrenOf.get(parentId) ?? []) {
         if (isWp(child)) {
           wpOrdinal++
-          children.push(build(child, `${label}.${wpOrdinal}`))
+          // WP-codes (DESIGN A1) — a coded sub-WP renders its `code` VERBATIM; else the positional dotted
+          // label. The ordinal still advances per sub-WP position, so a sibling's dotted label is unchanged
+          // (no-code ⇒ byte-identical).
+          children.push(build(child, child.code ?? `${label}.${wpOrdinal}`))
         } else {
           collectSubWps(child.id) // descend through a non-WP container to find a sub-WP beneath it
         }
@@ -270,6 +286,8 @@ export function computeWpTree(state: State, config: ReportConfig): WpNode[] {
       id: wp.id,
       title: wp.title,
       label,
+      // WP-codes (DESIGN A1) — surface the durable code (drop-when-absent ⇒ a no-code node is byte-identical).
+      ...(wp.code !== undefined ? { code: wp.code } : {}),
       done,
       active,
       dropped,
@@ -283,5 +301,29 @@ export function computeWpTree(state: State, config: ReportConfig): WpNode[] {
   const isWpById = new Map(items.map((i) => [i.id, isWp(i)]))
   const roots = items.filter((i) => isWp(i) && !(i.parentId !== undefined && isWpById.get(i.parentId)))
   roots.sort((a, b) => a.id.localeCompare(b.id))
-  return roots.map((wp, idx) => build(wp, `WP${idx + 1}`))
+  // WP-codes (DESIGN A1, the PRINCIPE PORTEUR) — DECOUPLE stability from numbering. A root with a `code`
+  // renders it VERBATIM; a root WITHOUT one takes the next DERIVED `WP<n>` whose ordinal `n` is NOT already
+  // claimed by a `^WP\d+$` code on ANY coded container (root OR nested sub-WP — the same display class). The
+  // scan spans EVERY role-container, not just roots: a `WP5` code on a SUB-WP renders `WP5` verbatim too, so
+  // it must reserve ordinal 5 against the uncoded roots or the two would collide on display (this mirrors the
+  // widened `assertCodeUnique` scan in track.ts). ⇒ a no-code roster = `WP1..WPN` BYTE-IDENTICAL (the scan
+  // finds nothing); an all-coded roster = its codes exactly; a mixed roster = codes + `WP<n>` filling the
+  // gaps WITHOUT collision. Order stays stable by ULID; a code is a display label only (a recode never
+  // re-packs the derived sequence, and the derived `WP<n>` can never collide with a code because it skips
+  // claimed ordinals).
+  const claimed = new Set<number>()
+  for (const item of items) {
+    if (!isWp(item)) continue // only role-containers carry a code; scan ALL of them, not just roots
+    const m = /^WP(\d+)$/.exec(item.code ?? '')
+    if (m) claimed.add(Number(m[1]))
+  }
+  let counter = 1
+  const rootLabel = (r: ItemState): string => {
+    if (r.code !== undefined) return r.code // verbatim; if it matches `^WP\d+$` its ordinal is reserved above
+    while (claimed.has(counter)) counter++ // SKIP every ordinal a code already claimed
+    const label = `WP${counter}`
+    counter++
+    return label
+  }
+  return roots.map((wp) => build(wp, rootLabel(wp)))
 }
