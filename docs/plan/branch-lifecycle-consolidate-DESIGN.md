@@ -1,65 +1,80 @@
-# DESIGN v2 — Skill branch-lifecycle track-aware + check pre-merge anti-perte (Lot B)
+# DESIGN v3 — Anti-perte d'events au merge : `.gitattributes union` + verbe de containment + skill (Lot B)
 
-**Status:** v2 — AMEND Codex 5.5xhigh appliqué. Opus à venir sur v2. Motivé par l'incident graphify : un
-squash-merge GitHub d'une branche `.track` a JETÉ 18 reparentages POURTANT commités ; `audit` a révélé les
-orphelins ; `restructure apply` a réparé (parce que graphify avait encore le ref de branche).
+**Status:** v3 — LOCKED. Double consensus Codex 5.5xhigh + Opus 4.8max (les deux AMEND ; un DÉSACCORD
+tranché, voir ci-dessous). Motivé par l'incident graphify (squash-merge a jeté 18 reparentages commités ;
+réparé via `restructure apply` PARCE QUE le ref de branche survivait).
 
-## Recadrage porteur (correction #1 Codex)
-**La récupération post-squash est IMPOSSIBLE** sans ref de branche ni artefact pré-capturé : `restructure
-apply` APPLIQUE/vérifie un plan, il ne l'INVENTE pas ; on ne peut pas déduire des parents perdus depuis
-l'état `.track` restant. ⇒ **la garantie se déplace AVANT le squash : prévention, pas réparation.** Le hook
-git-dogfood-guard (WP7) protège le `.track` NON-commité ; Lot B couvre le commité-perdu-au-squash (vecteur
-distinct).
+## Désaccord tranché (gate predicate)
+- **Codex** : fail si la PR `.track` n'est pas un merge-commit (squash interdit).
+- **Opus** : c'est le MAUVAIS prédicat — trop faible (un merge-commit au driver par défaut sur un log
+  divergent perd/conflite aussi) ET trop fort (un squash d'un `.track` NON-divergent ne perd RIEN → faux
+  positif qui entraîne le contournement). Le vrai invariant = **containment d'ensemble d'events**.
+- **Décision : Opus.** Le gate vérifie `events(post-merge réel) ⊇ events-net-nouveaux(branche)`, pas un
+  proxy squash-vs-merge-commit. Décidable, sans faux positif (ids ULID stables + log append-only ⇒ union
+  d'ensembles bien définie ; seul aléa = TOCTOU base-bouge, fermé par required-status-check up-to-date).
 
-## B0 — Check PRE-MERGE anti-perte d'events (la vraie garantie)
-- Un check (CI / pre-merge hook) qui **DÉTECTE qu'un squash jetterait des events `.track`** et **BLOQUE/échoue**
-  la PR (avertir ne suffit pas — Codex Q5). Mécanique : comparer les events `.track` de la branche vs ce que
-  le squash produirait ; si la branche a appendé des events absents du résultat squash ⇒ fail.
-- Recommandation de politique : **les branches qui modifient `.track` se mergent en MERGE-COMMIT** (pas
-  squash). Le check encode cette règle de façon exécutable.
-- Forme : un sous-commande/verbe ou un script CI invocable. À TRANCHER : verbe `track` (lecture git en
-  frontière, comme le CLI normalise déjà des commits) vs script de skill pur. Le CORE/READ reste record-only
-  et ne lance pas de git arbitraire ; la lecture d'ancestry vit dans la skill/CI (Codex Q2).
+## Recadrage porteur
+La récupération post-perte n'est PAS « impossible » dans l'absolu : elle est **opportuniste** depuis une
+copie survivante (ref/reflog) — c'est exactement ce qui a sauvé graphify (events RELUS depuis le `.track`
+de la branche, pas inventés). « Irrécupérable » seulement si aucune copie ne survit. ⇒ la garantie est
+d'abord **préventive**, avec une récupération opportuniste en second.
 
-## B1 — Skill `branch-lifecycle` (track-aware, ships via install-skills) — DÉTECTE + GUIDE (record-only)
-La skill ne RÉPARE pas en autonomie (Codex Q1). Au merge/branch-close :
-1. **Juge l'ancestry git** (shell, dans la skill) : fast-forward / merge-commit / squash / rebase.
-2. **Détecte la dérive** : `track audit --format json` — NB `orphan` est un **symptôme PARTIEL** (l'audit ne
-   voit que les feuilles ouvertes sans ancêtre WP), pas un détecteur complet de merge-loss. + acceptance
-   stale vs le merge commit (via `query`/`report` baseline-aware).
-3. **Guide la réparation de structure** : si dérive, propose un plan `restructure apply` — UNIQUEMENT sur un
-   plan ratifié explicite (jamais autonome), et SEULEMENT si le ref de branche/diff est encore disponible
-   (sinon : irrécupérable — le dire franchement).
-4. **Guide le rafraîchissement d'acceptance** : `track consolidate --items <doneItems> --commit <merge>`.
-   Algorithme de sélection (Codex correction 3) : items `done` dont l'acceptance est STALE vs le merge
-   commit ET encore accepted-at-own-commit ; VÉRIFIER après lecture (le `ok` de consolidate peut couvrir des
-   skips — le predicate d'éligibilité track.ts:136 SKIP certains items).
-5. **La skill ORCHESTRE le CLI existant** (`audit`, `restructure apply`, `consolidate`) — elle ne les
-   RÉIMPLÉMENTE pas (Codex correction 4).
-- Packaging (Codex correction 5) : `skills/branch-lifecycle/SKILL.md` ; `install-skills` découvre déjà les
-  skills, `package.json` embarque `skills`.
+## B0a — Prévention par construction : `.gitattributes merge=union` (le 80%, le moins cher)
+- Ajouter `.track/events.jsonl merge=union` (et le `.gitattributes` adéquat). Le store est un **NDJSON
+  unique append-only** (grounded : eventsPath + head.json reconstructible) ⇒ l'union-merge réconcilie
+  automatiquement des events d'aggregates DISJOINTS sur deux branches — **aurait prévenu graphify sans aucun
+  gate**.
+- Garantir que `validate` / la reconstruction du `head.json` TOLÈRENT un log union-mergé (ordre de tail
+  potentiellement entrelacé ; head non-autoritatif/reconstructible — déjà le cas). Ajouter un test :
+  deux branches qui appendent des events disjoints, union-merge ⇒ `validate` ok, tous les events présents.
+- Limite : l'union ne réconcilie PAS deux writes divergents sur le MÊME aggregate/seq (conflit réel) — c'est
+  le résiduel que B0b/B1 traitent.
 
-## B2 — Détecteur dédié (OPTIONNEL, hors premier incrément)
-- `audit --baseline-commit <commit>` listant les ré-ancrages que `consolidate` ferait — **PAS maintenant**
-  (Codex Q3/Q6 : `query`/`report` baseline-aware + `consolidate` suffisent ; ne pas étendre `audit`
-  prématurément ni dupliquer `consolidate`). Si un jour code : détecteur pre-merge/event-loss dédié, distinct.
+## B0b — UNE primitive record-only : containment d'ensemble d'events (sert B0 ET B2)
+- Nouveau verbe `track` **PUR, record-only, SANS git** : prend DEUX logs `.track` en entrée (ou un log + une
+  liste d'ids), fold + **diff/containment d'ids** ⇒ « ids présents dans A absents de B ». Testable sans git,
+  lisible par MCP, préserve l'invariant « core git-free » (tout read git reste à la frontière CLI/skill,
+  jamais dans le core — confirmé : `resolveCommit`/`gitHead`).
+- **Wrapper CI** (script de skill, PAS dans le core) : produit le `.track` candidat par **trial-merge git
+  RÉEL** contre la base live, puis appelle le verbe ; **FAIL si `post-merge ⊉ branche-net-nouveaux`**. C'est
+  le gate B0 — backstop précis pour le cas same-aggregate que l'union (B0a) ne couvre pas.
+- B2 (« détecteur dédié » de la v2) FUSIONNE ici : c'est le même primitif. Plus de B2 séparé.
+
+## B1 — Skill `branch-lifecycle` (detect + GUIDE, record-only) — orchestration
+Au merge/branch-close, la skill (ne répare jamais en autonomie) :
+1. **Détecte la perte structurelle via le verbe B0b** (PAS via `audit.orphan` : une perte de reparent vers
+   un parent VALIDE — le cas graphify — produit ZÉRO orphelin ; l'audit est aveugle à ce mode). 
+2. **Récupération opportuniste** : si dérive, tente d'abord de RELIRE/ré-ingérer les events perdus depuis le
+   ref/reflog SURVIVANT de la branche ; ne déclare « irrécupérable » qu'en fallback (aucune copie).
+3. **Fraîcheur d'acceptance** : `query`/`report --commit <merge> --require-accepted`, puis `consolidate
+   --items <done> --commit <merge>` ; **RE-LIRE après** et surfacer les done-mais-SKIPPÉS (critère `fail`
+   vivant / `waived`-only ⇒ inéligible) comme « NON consolidés — à traiter » (cmdConsolidate n'imprime que
+   `ok`, jamais le compte des skips — index.ts:833).
+4. **Orchestre le CLI existant** (`audit`, le verbe B0b, `restructure apply`, `consolidate`) — ne
+   réimplémente rien.
+- Sélection consolidate : donner TOUS les items done est sûr (`consolidate` self-filtre via
+  `isConsolidationEligible`, track.ts:136) ; « stale-vs-merge » n'est qu'une optimisation no-op.
+- Packaging : `skills/branch-lifecycle/SKILL.md` + `skills/branch-lifecycle/check.sh` (asset). `install-skills`
+  découvre tout dossier avec SKILL.md et copie `assets/` verbatim ; `package.json files` inclut `skills`.
+  (NB : le hook git-dogfood-guard WP7 N'EXISTE PAS dans le repo — aucune dépendance narrative dessus.)
 
 ## Contrat & versions
-- B0 + B1 = SKILL + (éventuel) verbe de check git-frontière. Si B0 reste un script de skill : AUCUN
-  changement de contrat. Si B0 devient un verbe `track` : à spécifier (lecture seule, frontière git). `consolidate`/`restructure apply`/`audit` inchangés. INGEST inchangé.
+- B0a = fichier `.gitattributes` (aucun changement de contrat code ; + test validate union). B0b = verbe
+  `track` PUR record-only (READ minor additif, ou un verbe util sans bump si hors surface read). B1 = skill
+  (aucun contrat). `consolidate`/`restructure apply`/`audit` inchangés. INGEST inchangé.
 
-## Découpage + ce qui couvre le besoin
-1. **B0 (check pre-merge anti-perte)** — la VRAIE garantie (prévention). Premier incrément.
-2. **B1 (skill branch-lifecycle detect+guide)** — orchestration au merge/branch-close. Avec B0.
-3. **B2 (détecteur dédié)** — différé, seulement si l'existant ne couvre pas.
+## Périmètre minimal (anti-perte au merge) + ordre
+1. **B0a `.gitattributes merge=union`** + test validate union — **le 80%, aurait suffi pour graphify.**
+2. **B0b verbe containment d'events** (pur) + wrapper CI trial-merge (fail si non-containment) — backstop
+   same-aggregate.
+3. **B1 skill** (detect via B0b + récupération opportuniste ref/reflog + consolidate re-read) — ergonomie.
+B1 sans B0 ne PROTÈGE pas (trop tard + aveugle) : B0 est la pièce porteuse, B1 le confort.
 
-## Questions consensus restantes (pour Opus sur v2)
-Q1. B0 : verbe `track` (lecture git en frontière) vs script CI pur ? lequel garde le mieux le contrat
-   record-only/read-only tout en étant exécutable en CI ?
-Q2. Le check « un squash jetterait des events » : faisable de façon fiable en CI (diff branche vs base) ou
-   y a-t-il des cas où c'est indécidable avant le merge ?
-Q3. Politique merge-commit-obligatoire : l'encoder dans le check (fail) ou la documenter + warning ? (Codex
-   tranche : fail.)
-Q4. La skill doit-elle pouvoir capturer un plan restructure AVANT le squash (pour rendre la réparation
-   possible) — ou est-ce hors-scope (B0 prévient, donc inutile) ?
-Q5. B1 seul (skill) suffit-il sans B0, vu que sans prévention la perte est irrécupérable ?
+## Résolutions consensus
+- Gate = containment d'events sur le merge réel (Opus), PAS proxy squash. ✓
+- `.gitattributes union` = prévention par construction (Opus). ✓
+- B0/B2 = une primitive (Opus). ✓
+- Récupération opportuniste depuis ref survivant (Opus), pas « impossible ». ✓
+- Détection via diff d'events, pas `audit.orphan` (Opus — audit aveugle au cas graphify). ✓
+- Skill record-only orchestrant le CLI, packaging assets (les deux). ✓
+- WP7 inexistant : dépendance retirée (Opus). ✓
