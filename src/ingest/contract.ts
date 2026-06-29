@@ -5,6 +5,11 @@
 // One WorkEvent ⇒ one Track command. This module is the SINGLE SOURCE of the write enums (so the CLI's
 // `oneOf` checks and the mapper cannot diverge on accepted values) and of the per-kind payload schema.
 
+// 1.4.0 — cross-workspace WP reorg (DESIGN R2): one ADDITIVE new WorkEvent kind `item.restructure` — a
+// DISTINCT, DEFAULT-DENIED capability kind that maps to the SAME persisted `item.reparented` event (additive
+// `planHash`/`restructureRef` payload). MINOR bump (a new optional kind; no kind removed, no required field
+// added to an existing kind, envelope keys unchanged; old producers never send it and still validate). The
+// authority is a CONTEXT-level grant (`authorize`'s deny-explicit branch), NOT a payload flag.
 // 1.3.0 — demand lifecycle (Mode A): six ADDITIVE new WorkEvent kinds (`demand.raise`/`demand.claim`/
 // `demand.agree`/`demand.disposition`/`spec.claim`/`spec.abandon`). MINOR bump (new optional kinds; no kind
 // removed, no required field added, envelope keys unchanged; old producers never send them and still validate).
@@ -13,7 +18,7 @@
 // removed, no required field added, envelope keys unchanged; old producers never send them and still validate).
 // 1.1.0 — seam v0 FREEZE: two ADDITIVE optional producer fields (artifactLocator on scope.verification,
 // caller-supplied evidenceId on acceptance.link).
-export const INGEST_CONTRACT_VERSION = '1.3.0'
+export const INGEST_CONTRACT_VERSION = '1.4.0'
 
 // --- write enums (shared with src/cli/index.ts) ------------------------------------------------------
 export const ITEM_KINDS = ['feature', 'bug', 'chore'] as const
@@ -65,8 +70,21 @@ export const WORK_EVENT_KINDS = [
   'demand.disposition', // → demand.disposition (qualifying → rejected|duplicate|parked)
   'spec.claim', // → spec.started (durable WHO-is-attempting fact on an item)
   'spec.abandon', // → spec.abandoned (durable explicit-abandon fact: who/why)
+  // Cross-workspace WP reorg (DESIGN R2) — a DISTINCT, DEFAULT-DENIED capability kind. Maps to the SAME
+  // persisted `item.reparented` event (additive planHash/restructureRef payload); the cross-workspace move
+  // is authorized ONLY on a channel that EXPLICITLY grants it (authorize deny-explicit branch).
+  'item.restructure', // → item.reparented (cross-workspace move, plan-scoped)
 ] as const
 export type WorkEventKind = (typeof WORK_EVENT_KINDS)[number]
+
+/**
+ * DESIGN R2 — the DEFAULT-DENIED capability kinds. `authorize` carries a DEDICATED deny-explicit branch for
+ * these: a channel may run one ONLY when `ctx.allowedKinds` EXPLICITLY grants it. We do NOT rely on the
+ * `allowedKinds` allowlist (it defaults to "permit everything" and is never set in prod) — we ADD an explicit
+ * refusal. Kept here (the single source of the write enums) but NOT re-exported from the `./ingest` barrel
+ * (the capability is internal to the seam).
+ */
+export const RESTRUCTURE_KINDS: ReadonlySet<WorkEventKind> = new Set<WorkEventKind>(['item.restructure'])
 
 export interface WorkEvent {
   /** Contract major. Unknown major ⇒ fail-closed reject; unknown minor degrades to "unknown kind". */
@@ -395,5 +413,17 @@ export const WORK_EVENT_SCHEMA: Record<WorkEventKind, KindSchema> = {
     method: 'abandonSpec',
     settles: 'always',
     fields: { itemId: str(true), handler: str(false), reason: str(true), leaseId: str(false) },
+  },
+  'item.restructure': {
+    // Cross-workspace WP reorg (DESIGN R2/R2b) — the DEFAULT-DENIED cross-workspace move. Maps to
+    // `restructureReparent`, which emits the SAME persisted `item.reparented` event (additive planHash/
+    // restructureRef). Binding (`always`): moving work between workspaces is the MOST trust-sensitive write ⇒
+    // requires auth ∈ {local-user, signed} AND the explicit `item.restructure` capability grant (authorize).
+    // `planHash` is the AUTHORIZATION SCOPE: the apply verifies each {itemId→parentId} edge against the
+    // ratified plan; at the seam the CHILD is pinned to ctx.workspace (R2b — a W-channel can only pull-into/
+    // push-out-of W, never rearrange foreign X↔Y). The PARENT may be cross-workspace (the whole point).
+    method: 'restructureReparent',
+    settles: 'always',
+    fields: { itemId: str(true), parentId: str(true), planHash: str(true), restructureRef: str(false) },
   },
 }

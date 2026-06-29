@@ -33,6 +33,7 @@ import {
   type WorkEvent,
 } from '../ingest/contract.js'
 import { ingest, type IngestContext } from '../ingest/ingest.js'
+import { applyRestructurePlan, type RestructurePlan } from './restructure-apply.js'
 import { TrackReader } from '../read/contract.js'
 import { queryText, reportText, statusText } from '../read/commands.js'
 import { STATUS_LEVELS } from '../report/status-by-level.js'
@@ -91,8 +92,10 @@ const USAGE = `usage: track <command>
   workspace-activity --workspace <id> [--baseline-commit <sha>] [--now <iso>] [--idle-ms <ms>] [--format json|text]
   scope validate --workspace <id> [--baseline-commit <sha>] [--content <path>] [--locator <l>] [--claimed-item <id>] [--infer-delivered-out-of-scope] [--format json|text]
   validate [--commit <sha>]
+  audit [--format json|text]
   focus <decision-id> --workspace <w> [--format terminal|md|html] [--baseline-commit <sha>]
   branch import <BRANCH.md> [--commit <sha>]
+  restructure apply --plan <plan.json>
   ingest <file.jsonl> --workspace <w>
   install-skills --host <claude|codex|gemini|agy|all> [--scope user|project] [--force]
   workspace-id [--cwd <path>]
@@ -343,6 +346,7 @@ export function runCli(rawArgv: string[], io: CliIO): number | Promise<number> {
       case 'validate':
       case 'scope':
       case 'focus':
+      case 'audit':
       case 'workspace-activity': {
         const trackDir = resolveTrackDirOrNull(resolveOpts)
         if (trackDir === null) {
@@ -375,6 +379,8 @@ export function runCli(rawArgv: string[], io: CliIO): number | Promise<number> {
             return cmdFocus(rest, ctx, trackDir === null)
           case 'workspace-activity':
             return cmdWorkspaceActivity(rest, ctx)
+          case 'audit':
+            return cmdAudit(rest, ctx)
         }
         io.err(USAGE)
         return 2
@@ -389,11 +395,14 @@ export function runCli(rawArgv: string[], io: CliIO): number | Promise<number> {
       case 'consolidate':
       case 'priority':
       case 'branch':
+      case 'restructure':
       case 'ingest': {
         const ctx: Ctx = { io, eventsPath: eventsPathOf(resolveTrackDir(resolveOpts)) }
         switch (cmd) {
           case 'item':
             return cmdItem(rest, ctx)
+          case 'restructure':
+            return cmdRestructure(rest, ctx)
           case 'decision':
             return cmdDecision(rest, ctx)
           case 'blocker':
@@ -578,6 +587,55 @@ function cmdItem(args: string[], ctx: Ctx): number {
   }
   io.err('usage: track item <new|reparent|scope-declare|spec-amend|spec|realize|show|ls>\n')
   return 2
+}
+
+/**
+ * DESIGN R4 — `track audit [--format json|text]`: the deterministic structural findings (read-only). Serves
+ * empty on an unadopted repo (the reader over a nonexistent log reads empty).
+ */
+function cmdAudit(args: string[], ctx: Ctx): number {
+  const { io } = ctx
+  const { flags } = parseFlags(args)
+  const findings = new TrackReader(ctx.eventsPath).audit()
+  if ((opt(flags, 'format') ?? 'text') === 'json') {
+    io.out(`${JSON.stringify(findings, null, 2)}\n`)
+    return 0
+  }
+  if (findings.length === 0) {
+    io.out('no findings\n')
+    return 0
+  }
+  for (const f of findings) {
+    const subject = f.itemId ?? f.wpRootId ?? (f.itemIds !== undefined ? f.itemIds.join(',') : f.workspace) ?? ''
+    io.out(`[${f.severity}] ${f.kind} ${subject}: ${f.detail}\n`)
+  }
+  return 0
+}
+
+/**
+ * DESIGN R5 — `track restructure apply --plan <plan.json>`: apply a RATIFIED restructuring plan (the only
+ * caller that opens an `item.restructure`-granting channel). Append-only + idempotent (clientToken dedup);
+ * the post-apply intention/closure/orphan GATE throws a DomainError (→ rc=1) on any violation.
+ */
+function cmdRestructure(args: string[], ctx: Ctx): number {
+  const { io } = ctx
+  const sub = args[0]
+  const { flags } = parseFlags(args.slice(1))
+  if (sub !== 'apply') {
+    io.err('usage: track restructure apply --plan <plan.json>\n')
+    return 2
+  }
+  const planFile = req(flags, 'plan')
+  const raw = readFileSync(isAbsolute(planFile) ? planFile : join(io.cwd, planFile), 'utf8')
+  let plan: RestructurePlan
+  try {
+    plan = JSON.parse(raw) as RestructurePlan
+  } catch {
+    throw new DomainError('restructure apply: --plan must be a valid JSON plan file')
+  }
+  const res = applyRestructurePlan(ctx.eventsPath, plan, { by: cliActor(io.cwd) })
+  io.out(`applied ${res.applied} edge(s) of ${res.edges} (${res.alreadyApplied} already applied) [plan ${res.planHash}]\n`)
+  return 0
 }
 
 function cmdDecision(args: string[], ctx: Ctx): number {

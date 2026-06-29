@@ -48,6 +48,7 @@ describe('MCP read server — tool surface', () => {
   it('exposes exactly the read-only tools', () => {
     expect(READ_TOOLS.map((t) => t.name).sort()).toEqual([
       'track_amendment_trace',
+      'track_audit',
       'track_branch_provenance',
       'track_canevas',
       'track_cursor',
@@ -86,6 +87,10 @@ describe('MCP read server — CLI≡MCP parity (same shared command layer)', () 
       cliOut(['query', '--bucket', 'AWAITED', '--format', 'json', '--commit', 'c1']),
     )
   })
+
+  it('track_audit JSON payload is byte-identical to `audit --format json` (modulo the CLI trailing newline)', () => {
+    expect(dispatchReadTool(reader, 'track_audit', {})).toBe(cliOut(['audit', '--format', 'json']).replace(/\n$/, ''))
+  })
 })
 
 describe('MCP read server — semantics', () => {
@@ -104,6 +109,7 @@ describe('MCP read server — semantics', () => {
     dispatchReadTool(reader, 'track_report', { baselineCommit: 'c1' })
     dispatchReadTool(reader, 'track_query', { baselineCommit: 'c1' })
     dispatchReadTool(reader, 'track_validate', {})
+    dispatchReadTool(reader, 'track_audit', {})
     dispatchReadTool(reader, 'track_branch_provenance', { locator: 'x' })
     dispatchReadTool(reader, 'track_freshness', { locator: 'x', content: '# y' })
     dispatchReadTool(reader, 'track_workspace_activity', {

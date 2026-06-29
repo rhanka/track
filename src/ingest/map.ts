@@ -251,6 +251,11 @@ export function mapWorkEvent(ev: WorkEvent): MappedCommand {
       // abandonSpec(itemId, {handler?, reason, leaseId?}) — durable explicit-abandon fact (Mode A).
       args = [p['itemId'], { reason: p['reason'], ...opt('handler'), ...opt('leaseId') }]
       break
+    case 'item.restructure':
+      // restructureReparent(itemId, parentId, planHash, restructureRef?) — the cross-workspace move. The
+      // clientToken (f(planHash,itemId)) is threaded by the apply via withClientToken, not an arg. DESIGN R2.
+      args = [p['itemId'], p['parentId'], p['planHash'], p['restructureRef']]
+      break
   }
 
   return { kind, method, settles, payload: p, args, ...(clientToken !== undefined ? { clientToken } : {}) }

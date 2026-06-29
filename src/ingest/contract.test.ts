@@ -6,7 +6,7 @@ import { INGEST_CONTRACT_VERSION, WORK_EVENT_KINDS, WORK_EVENT_SCHEMA } from './
 // required field) MUST fail here — this is the contract's snapshot gate (v2.3b-DESIGN.md §6/§7).
 describe('WorkEvent contract surface', () => {
   it('pins the contract version and the kind list', () => {
-    expect(INGEST_CONTRACT_VERSION).toBe('1.3.0') // demand lifecycle (Mode A) — MINOR bump (additive new kinds)
+    expect(INGEST_CONTRACT_VERSION).toBe('1.4.0') // cross-workspace WP reorg (DESIGN R2) — MINOR bump (additive item.restructure)
     expect([...WORK_EVENT_KINDS]).toEqual([
       'item.create',
       'item.reparent',
@@ -37,6 +37,8 @@ describe('WorkEvent contract surface', () => {
       'demand.disposition',
       'spec.claim',
       'spec.abandon',
+      // Cross-workspace WP reorg (DESIGN R2) — 1.4.0 additive default-denied capability kind.
+      'item.restructure',
     ])
   })
 
@@ -102,6 +104,8 @@ describe('WorkEvent contract surface', () => {
       'demand.disposition': { method: 'disposeDemand', settles: 'always', required: ['demandId', 'outcome', 'reason'] },
       'spec.claim': { method: 'startSpec', settles: 'always', required: ['itemId'] },
       'spec.abandon': { method: 'abandonSpec', settles: 'always', required: ['itemId', 'reason'] },
+      // Cross-workspace WP reorg (DESIGN R2) — default-denied capability kind; planHash is the authz scope.
+      'item.restructure': { method: 'restructureReparent', settles: 'always', required: ['itemId', 'parentId', 'planHash'] },
     })
   })
 })

@@ -113,6 +113,72 @@ export interface WpNode {
   /** The non-WP leaves attached at THIS node (descendants not under a nested sub-WP), for the checkbox view. */
   leaves: WpLeaf[]
   children: WpNode[]
+  /**
+   * DESIGN R3a — set ONLY after a workspace leaf-clip (`clipWpTreeToWorkspace`) when this node's subtree
+   * contained ≥1 leaf in ANOTHER workspace that the clip excluded. The counts/`pct` then reflect the clipped
+   * workspace's PART, never the node's true cross-workspace total. Absent ⇒ the counts are the full total
+   * (a mono-workspace tree never sets it ⇒ byte-identical to the pre-clip rollup).
+   */
+  partial?: boolean
+}
+
+/**
+ * DESIGN R1 — the wpRoot of an item: the HIGHEST ancestor (incl. self) whose `role === 'workpackage'`
+ * STRICT (NOT `isRoleContainer`, which also matches `spec-phase` — a spec-phase is NEVER a wpRoot), walking
+ * `parentId`. Nested sub-WPs ⇒ the topmost workpackage wins. Pure, O(depth), terminating (a `seen` guard
+ * defends against a malformed cycle even though append's cycle-guard already prevents one). Returns
+ * `undefined` for an unknown item or one with no workpackage ancestor.
+ */
+export function wpRootId(items: Map<ItemId, ItemState>, itemId: ItemId): ItemId | undefined {
+  let highest: ItemId | undefined
+  const seen = new Set<ItemId>()
+  let cursor: ItemId | undefined = itemId
+  while (cursor !== undefined && !seen.has(cursor)) {
+    seen.add(cursor)
+    const item = items.get(cursor)
+    if (item === undefined) break
+    if (item.role === 'workpackage') highest = cursor // keep climbing; the LAST (topmost) WP wins
+    cursor = item.parentId
+  }
+  return highest
+}
+
+/**
+ * DESIGN R3a — a TRUE leaf-clip of a rolled-up WP forest to ONE workspace. Pure over a computed tree:
+ *   - keep only the leaves with `leaf.workspace === workspace` (drop foreign leaves — no leak);
+ *   - keep a node iff ≥1 such leaf remains in its (clipped) subtree, else PRUNE it (closes the ghost-orphan
+ *     loss the old node-filter caused for W leaves under a V-rooted WP);
+ *   - RECOMPUTE done/active/dropped/pct from the clipped leaves + surviving children (never the global total);
+ *   - mark `partial` when the clip excluded any leaf from this node's subtree.
+ * Labels are preserved from the source tree (a WP keeps its global identity across per-workspace views).
+ * NON-BREAKING: a mono-workspace tree drops nothing ⇒ the output is deep-equal to the input (no `partial`).
+ */
+export function clipWpTreeToWorkspace(tree: readonly WpNode[], workspace: string): WpNode[] {
+  const clipNode = (node: WpNode): WpNode | null => {
+    const leaves = node.leaves.filter((l) => l.workspace === workspace)
+    const children = node.children.map(clipNode).filter((c): c is WpNode => c !== null)
+    const self = tally(leaves)
+    const done = self.done + children.reduce((s, c) => s + c.done, 0)
+    const active = self.active + children.reduce((s, c) => s + c.active, 0)
+    const dropped = self.dropped + children.reduce((s, c) => s + c.dropped, 0)
+    const clippedTotal = active + dropped
+    if (clippedTotal === 0) return null // no W leaf anywhere in this subtree ⇒ prune the node
+    const fullTotal = node.active + node.dropped // the node's true (pre-clip) leaf total
+    const partial = clippedTotal < fullTotal
+    return {
+      id: node.id,
+      title: node.title,
+      label: node.label,
+      done,
+      active,
+      dropped,
+      pct: active === 0 ? 'n/a' : Math.round((done / active) * 100),
+      leaves,
+      children,
+      ...(partial ? { partial: true } : {}),
+    }
+  }
+  return tree.map(clipNode).filter((n): n is WpNode => n !== null)
 }
 
 /** A CONTAINER node (workpackage OR spec-phase) — descended through, never a leaf (Scope §B(a)). */

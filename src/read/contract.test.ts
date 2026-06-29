@@ -103,12 +103,12 @@ afterEach(() => {
 
 describe('read contract — version + curated surface (snapshot gate)', () => {
   it('exposes a stable semver and the documented read methods', () => {
-    expect(READ_CONTRACT_VERSION).toBe('1.14.0') // +directives actionnables (view.directives/dispatchQueue) — additif, read-only
+    expect(READ_CONTRACT_VERSION).toBe('1.15.0') // +track audit (auditFindings) — additif, read-only (DESIGN R4)
     expect(reader.contractVersion).toBe(READ_CONTRACT_VERSION)
     expect(typeof trackObjectiveRef).toBe('function')
     expect(typeof parseTrackObjectiveRef).toBe('function')
     const api = reader as unknown as Record<string, unknown>
-    for (const m of ['report', 'query', 'validate', 'branchProvenance', 'freshness', 'requireFresh', 'externalDependencies', 'workspaceActivity', 'statusByLevel', 'verificationRuns', 'scopeValidate', 'cursor', 'changesSince', 'graphExport', 'canevas', 'amendmentTrace', 'acceptanceDetail', 'demands', 'lifecycleTrace']) {
+    for (const m of ['report', 'query', 'validate', 'branchProvenance', 'freshness', 'requireFresh', 'externalDependencies', 'workspaceActivity', 'statusByLevel', 'verificationRuns', 'scopeValidate', 'cursor', 'changesSince', 'graphExport', 'canevas', 'amendmentTrace', 'acceptanceDetail', 'demands', 'lifecycleTrace', 'audit']) {
       expect(typeof api[m]).toBe('function')
     }
   })

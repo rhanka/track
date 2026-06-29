@@ -76,6 +76,9 @@ describe('mapWorkEvent — valid kinds → normalized {method, settles, args}', 
       { method: 'startSpec', settles: 'always', args: ['i', { handler: 'h' }] }],
     ['spec.abandon ⇒ always (durable explicit-abandon fact)', ev('spec.abandon', { itemId: 'i', handler: 'h', reason: 'ctx out' }),
       { method: 'abandonSpec', settles: 'always', args: ['i', { reason: 'ctx out', handler: 'h' }] }],
+    // Cross-workspace WP reorg (DESIGN R2) — the default-denied capability kind (1.4.0).
+    ['item.restructure ⇒ always (cross-workspace move; planHash authorization scope)', ev('item.restructure', { itemId: 'i', parentId: 'p', planHash: 'h' }),
+      { method: 'restructureReparent', settles: 'always', args: ['i', 'p', 'h', undefined] }],
   ]
 
   it.each(cases)('%s', (_name, input, expected) => {

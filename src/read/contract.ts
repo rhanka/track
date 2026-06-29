@@ -28,6 +28,8 @@ import {
   type ReportOptions,
   type ReportRow,
 } from '../report/build.js'
+import { clipWpTreeToWorkspace } from '../report/rollup.js'
+import { auditFindings, type AuditFinding } from '../report/audit.js'
 import { fold, type State } from '../state/fold.js'
 import type { Dossier, Outcome } from '../model/decision.js'
 import type {
@@ -54,7 +56,7 @@ import { graphExportFromState, type TrackGraphFragment } from '../graph-export.j
  * shapes it returns may only GROW (new methods / new optional fields); nothing is removed or
  * repurposed without a major bump. Consumers gate on `reader.contractVersion`.
  */
-export const READ_CONTRACT_VERSION = '1.14.0' // +directives actionnables (view.directives/dispatchQueue) — additif, read-only
+export const READ_CONTRACT_VERSION = '1.15.0' // +track audit (auditFindings) — additif, read-only (DESIGN R4)
 
 /** Provenance of the last `branch.imported` for a locator (drawn from the raw event log). */
 export interface BranchProvenance {
@@ -689,9 +691,10 @@ export class TrackReader {
       ...(baseReport.decisions !== undefined
         ? { decisions: baseReport.decisions.filter((d) => d.workspace === workspace) }
         : {}),
-      ...(baseReport.wpTree !== undefined
-        ? { wpTree: baseReport.wpTree.filter((n) => state.items.get(n.id)?.workspace === workspace) }
-        : {}),
+      // DESIGN R3a — a TRUE leaf-clip (not the old node-filter): keep only leaves with item.workspace===W,
+      // retain a node iff ≥1 W-leaf in its subtree (so W leaves under a V-rooted WP are NOT lost), recompute
+      // W-only counts, and mark `partial`. Mono-workspace ⇒ byte-identical (no node dropped, no `partial`).
+      ...(baseReport.wpTree !== undefined ? { wpTree: clipWpTreeToWorkspace(baseReport.wpTree, workspace) } : {}),
     }
 
     // Per-aggregate prov lineage (latest write on each surfaced aggregate) + open-action affordances. We
@@ -744,6 +747,15 @@ export class TrackReader {
       }
     }
     return view
+  }
+
+  /**
+   * DESIGN R4 (Lot 2) — the DETERMINISTIC structural audit: `AuditFinding[]` over the folded log (orphan,
+   * empty-wp, duplicate, cross-workspace-subtree, singleton-workspace). PURE; no clock, no I/O. A SEPARATE
+   * producer (not inlined in the directive selector). Read-only — emits nothing.
+   */
+  audit(): AuditFinding[] {
+    return auditFindings(fold(this.events()))
   }
 
   /**

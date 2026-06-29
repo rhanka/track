@@ -63,6 +63,11 @@ export const READ_TOOLS = [
     inputSchema: { type: 'object', properties: {} },
   },
   {
+    name: 'track_audit',
+    description: 'DESIGN R4 — deterministic structural audit over the folded log, as JSON AuditFinding[] (orphan, empty-wp, duplicate, cross-workspace-subtree, singleton-workspace). PURE, read-only, no clock; byte-identical to the CLI `audit --format json`. `severity` action=resolve via the restructuration plan flow, info=expected/structural.',
+    inputSchema: { type: 'object', properties: {} },
+  },
+  {
     name: 'track_branch_provenance',
     description: 'Latest branch.imported provenance for a BRANCH.md locator (or null).',
     inputSchema: {
@@ -292,6 +297,8 @@ export function dispatchReadTool(
       return JSON.stringify(reader.amendmentTrace(reqStr(args, 'aggregateId')), null, 2)
     case 'track_validate':
       return JSON.stringify(reader.validate(), null, 2)
+    case 'track_audit':
+      return JSON.stringify(reader.audit(), null, 2)
     case 'track_external_deps':
       return JSON.stringify(reader.externalDependencies(), null, 2)
     case 'track_workspace_activity': {

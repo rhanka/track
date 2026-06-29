@@ -286,6 +286,42 @@ export class Track {
   }
 
   /**
+   * Cross-workspace WP reorg (DESIGN R2/C4) — the AUTHORIZED cross-workspace move. A SEPARATE method from
+   * `reparentItem` that skips ONLY the cross-workspace guard (track.ts:267) but STILL runs EVERY other guard:
+   * the item exists, no self-parent, the parent exists, the role-nesting invariant (276), and the cycle-walk
+   * (277-283). We do NOT conditionalize the 267 guard inside the shared `reparentItem` (the riskiest edit —
+   * it would turn the ordinary path into a trust boundary). Emits the SAME persisted `item.reparented` event
+   * (R6 — fold APPLIES the new parentId; no `item.restructured` event), with an ADDITIVE `planHash` (the
+   * authorization scope the apply verifies) + optional `restructureRef`. The CHILD's `workspace` stays
+   * IMMUTABLE — only its `parentId` moves. Capability-gated at the ingest seam (default-denied kind
+   * `item.restructure` + explicit grant); reachable by a local-user trust root directly (threat model: this
+   * defends accidental/automated crossing, NOT a malicious local process). `clientToken`-idempotent via the
+   * seam's `withClientToken` (the apply keys it on f(planHash,itemId)).
+   */
+  restructureReparent(itemId: ItemId, parentId: ItemId, planHash: string, restructureRef?: string): void {
+    const state = this.state()
+    const item = state.items.get(itemId)
+    if (!item) throw new DomainError(`unknown item ${itemId}`)
+    if (parentId === itemId) throw new DomainError(`cannot reparent item ${itemId} under itself`)
+    const parent = state.items.get(parentId)
+    if (!parent) throw new DomainError(`unknown parent item ${parentId}`)
+    // INTENTIONALLY SKIPPED: the cross-workspace guard (track.ts:267). This is the ONLY relaxation — every
+    // other reparent guard below runs unchanged. The cross-workspace move is what `item.restructure` exists for.
+    assertRoleNesting(item.role, parent.role, itemId, parentId)
+    for (let cursor: ItemId | undefined = parentId; cursor !== undefined; ) {
+      if (cursor === itemId) {
+        throw new DomainError(`cannot reparent item ${itemId} under its own descendant ${parentId} (cycle)`)
+      }
+      cursor = state.items.get(cursor)?.parentId
+    }
+    this.emit('item', itemId, 'item.reparented', {
+      parentId,
+      planHash,
+      ...(restructureRef !== undefined ? { restructureRef } : {}),
+    })
+  }
+
+  /**
    * Scope §B(a) — set/replace the declarative scope (INERT path globs) on a WP/spec-phase. Appends
    * `scope.declared` on the EXISTING item aggregate (next seq, no recreate; existing hashes untouched),
    * mirroring `item.reparent`→`item.reparented`. Fold sets/replaces `item.scope`. Guards (reject with

@@ -45,6 +45,9 @@ export {
   type TrackGraphNode,
   type TrackGraphProvenance,
 } from '../graph-export.js'
+// DESIGN R4 — the `track audit` structural-finding types (READ 1.15.0, additive), so a versioned consumer
+// of `reader.audit()` binds the shapes against `/read` ALONE.
+export { type AuditFinding, type AuditFindingKind, type AuditSeverity } from '../report/audit.js'
 // Scope §A/§B — projection/evidence types re-exported for skill consumers of the read contract.
 export { type GroupStatus, type StatusGroup, type StatusLevel } from '../report/status-by-level.js'
 export { type VerificationRun, type Verdict } from '../model/verification.js'

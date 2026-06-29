@@ -2,6 +2,36 @@
 
 All notable changes to `@sentropic/track`. Format loosely follows [Keep a Changelog](https://keepachangelog.com); this package is pre-1.0 (the **event contract** is frozen, but the library/CLI surface may still evolve additively).
 
+## [0.21.0] — cross-workspace workpackage reorganization (intra-repo) + `track audit`
+
+Decouples the **workpackage tree** (`parentId`) from the immutable `workspace` field, so a workpackage can
+group items across workspaces **within one repo** without changing their workspace — append-only, no history
+loss. Double consensus (Codex 5.5xhigh + Opus 4.8max): design AMEND→locked, implementation gate SHIP. All
+additive; `report`/`canevas` semantics for mono-workspace trees are byte-identical.
+
+### Added
+- **Cross-workspace restructuring capability (record-only, fail-closed).** A NEW default-denied ingest kind
+  `item.restructure` (mapped to the existing `item.reparented` event) is the ONLY way to reparent across
+  workspaces. Authorized by an explicit context-level grant (`ctx.allowedKinds`) the ordinary channels never
+  hold — never by a payload flag. The deny is explicit in `authorize` (it fails closed even when
+  `allowedKinds` is unset). The child stays pinned to its channel workspace; only the parent may differ.
+  Ordinary `item reparent` remains strictly intra-workspace (the guard is unconditional).
+- **`track restructure apply --plan <plan.json>`** — apply a RATIFIED `{itemId→parentId}` plan. `planHash`
+  content-addresses the complete edge map; `clientToken = f(planHash,itemId)` makes a replay a no-op. MANDATORY
+  baseline (`streamLength`+`lastContentHash`) anti-TOCTOU; a FULL dry-run of every edge (self/role-nesting/cycle
+  over the prospective graph) runs BEFORE any append (atomic: nothing is written on a bad plan). Post-apply
+  GATE: intention per edge, exact-token closure (token≡aggregate), zero out-of-plan orphan.
+- **`track audit [--format json|text]`** — deterministic structural findings (`orphan`, `empty-wp`,
+  `duplicate`, `cross-workspace-subtree`, `singleton-workspace`); read-only, no fuzzy heuristics. MCP parity:
+  the `track_audit` read tool is byte-identical to the CLI JSON.
+- **`wpRootId`** derivation (topmost `role:'workpackage'` ancestor) and a defensive **leaf-clip** for the
+  workspace-scoped canevas (a cross-workspace subtree no longer leaks foreign leaves or drops in-workspace
+  ones; the rollup is marked `partial`).
+
+### Contract
+- **INGEST 1.3.0 → 1.4.0** (additive: `item.restructure` kind). **READ 1.14.0 → 1.15.0** (additive: `audit`,
+  the `WpNode.partial` field). No event removed/renamed; old readers ignore the new kind (fail-safe).
+
 ## [0.17.0] — self-contained `@sentropic/track/read` (Focus-M1 L2 versioned binding)
 
 ### Added

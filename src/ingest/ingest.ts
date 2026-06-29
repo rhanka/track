@@ -22,7 +22,7 @@ import type { ActorId, CommandEvent, Provenance, ProvenanceAuth, TrackEvent, Uli
 import type { EventStore } from '../events/store.js'
 import { fold, type State } from '../state/fold.js'
 import { Track, type DedupeHook, type OpenBlockerInput } from '../track.js'
-import type { WorkEvent, WorkEventKind } from './contract.js'
+import { RESTRUCTURE_KINDS, type WorkEvent, type WorkEventKind } from './contract.js'
 import { IngestError, mapWorkEvent, type MappedCommand } from './map.js'
 
 export interface IngestContext {
@@ -108,6 +108,12 @@ function resolveWorkspace(cmd: MappedCommand, state: State): { create: boolean; 
       return { create: false, workspace: item(p['itemId']) ?? state.decisions.get(p['itemId'] as ItemId)?.workspace }
     case 'item.reparent':
       // The CHILD item is the mutated aggregate; the new parent is checked via affectedTargetWorkspaces.
+      return { create: false, workspace: item(p['itemId']) }
+    case 'item.restructure':
+      // DESIGN R2b — the CHILD is pinned to ctx.workspace (a W-channel can only pull-into/push-out-of W); the
+      // PARENT is INTENTIONALLY NOT gated (it may be cross-workspace — the whole point of a restructure). The
+      // planHash is the authorization scope the apply verifies edge-by-edge. So `item.restructure` does NOT
+      // appear in affectedTargetWorkspaces (unlike item.reparent, whose parent must be same-workspace).
       return { create: false, workspace: item(p['itemId']) }
     case 'item.spec':
     case 'acceptance.criterion':
@@ -210,6 +216,16 @@ function affectedTargetWorkspaces(cmd: MappedCommand, state: State): Array<strin
 
 /** Channel authorization: capability allowlist, workspace containment, binding-trust. Throws IngestError. */
 function authorize(cmd: MappedCommand, ctx: IngestContext, state: State): void {
+  // DESIGN R2 (the load-bearing correction C1) — DEFAULT-DENY the restructure capability kinds. This is a
+  // DEDICATED refusal, NOT the `allowedKinds` allowlist below: `allowedKinds` DEFAULTS to "permit everything"
+  // and is never set in prod, so relying on it would leave the capability open. A restructure kind passes
+  // ONLY when `ctx.allowedKinds` EXPLICITLY grants it (the apply opens such a channel). `?.has() !== true`
+  // throws when allowedKinds is undefined (the prod default) OR set-but-omitting — fail-closed either way.
+  if (RESTRUCTURE_KINDS.has(cmd.kind) && ctx.allowedKinds?.has(cmd.kind) !== true) {
+    throw new IngestError(
+      `kind "${cmd.kind}" is a default-denied restructure capability — it requires an EXPLICIT capability grant on this channel (DESIGN R2)`,
+    )
+  }
   if (ctx.allowedKinds && !ctx.allowedKinds.has(cmd.kind)) {
     throw new IngestError(`kind "${cmd.kind}" is not permitted by this channel's capability`)
   }
@@ -248,6 +264,11 @@ function applyCommand(track: Track, cmd: MappedCommand, ctx: IngestContext): str
       return track.createItem(a[0] as ItemCreatedPayload)
     case 'item.reparent':
       track.reparentItem(a[0] as ItemId, a[1] as ItemId | undefined)
+      return undefined
+    case 'item.restructure':
+      // DESIGN R2 — the cross-workspace move via the SEPARATE facade method (skips ONLY the 267 guard). The
+      // clientToken (f(planHash,itemId)) is already in scope via the ingest seam's withClientToken.
+      track.restructureReparent(a[0] as ItemId, a[1] as ItemId, a[2] as string, a[3] as string | undefined)
       return undefined
     case 'item.spec':
       track.setSpec(a[0] as ItemId, a[1] as SpecStatus)
