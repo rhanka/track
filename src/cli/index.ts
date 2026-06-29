@@ -69,6 +69,7 @@ const USAGE = `usage: track <command>
   item spec-amend <itemId> --base-hash <h> --result-hash <h> --patch <json> [--decision-id <id>] [--live-doc-ref <r>] [--proposal-ref <r>] [--summary <s>] [--client-token <t>]
   item spec <itemId> <to-specify|specified>
   item realize <itemId> <in-progress|done|cancelled>
+  item assign-code <itemId> --code <c> [--client-token <t>]
   item show <itemId>
   item ls [--workspace <w>] [--kind <feature|bug|chore>] [--format json|text|md]
   decision new --kind <orientation|commitment> --title <t> --workspace <w> --targets <id,id> [--context <c>] [--accountable <a>] [--engagement-ref <e>]
@@ -568,6 +569,21 @@ function cmdItem(args: string[], ctx: Ctx): number {
   if (sub === 'realize') {
     track.setRealization(positional[0]!, oneOf(positional[1], REALIZE_TARGETS, 'realize') as Realization)
     io.out('ok\n')
+    return 0
+  }
+  if (sub === 'assign-code') {
+    // A1 (wp-codes) — assign a durable, re-assignable display `code` to a workpackage/spec-phase (the
+    // canonical write; `assignCode` enforces roster-global uniqueness, re-asserted under the lock).
+    // `--client-token` gives append-once idempotency (mirrors `spec-amend`'s CLI-boundary dedup).
+    const itemId = positional[0]!
+    const code = req(flags, 'code')
+    const clientToken = opt(flags, 'client-token')
+    if (clientToken !== undefined && store(ctx).readAll().some((e) => e.clientToken === clientToken)) {
+      io.out('no-op: client-token already applied\n')
+      return 0
+    }
+    track.assignCode(itemId, code, clientToken)
+    io.out(`assigned code "${code}" to ${itemId}\n`)
     return 0
   }
   if (sub === 'show') {

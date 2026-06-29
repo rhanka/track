@@ -154,6 +154,21 @@ describe('CLI full verb surface (Lot 7) end-to-end', () => {
     expect(r(['consolidate', '--items', itemId, '--commit', 'c2', '--client-token', 'tk1']).text).toContain('no-op')
   })
 
+  it('item assign-code: renders the stable code in the report, roster-global unique', () => {
+    expect(r(['init']).code).toBe(0)
+    const wp1 = r(['item', 'new', '--kind', 'chore', '--title', 'Alpha', '--workspace', 'ws', '--role', 'workpackage']).text
+    const wp2 = r(['item', 'new', '--kind', 'chore', '--title', 'Beta', '--workspace', 'ws', '--role', 'workpackage']).text
+    r(['item', 'new', '--kind', 'chore', '--title', 'leaf', '--workspace', 'ws', '--parent', wp1])
+    // assign a stable code; the report renders it verbatim (decoupled from positional WPn)
+    expect(r(['item', 'assign-code', wp1, '--code', 'WP7']).text).toContain('WP7')
+    expect(r(['report', '--commit', 'c1']).text).toContain('WP7')
+    // roster-global uniqueness: a 2nd root reusing the code is rejected fail-closed (rc=1)
+    expect(r(['item', 'assign-code', wp2, '--code', 'WP7']).code).toBe(1)
+    // client-token idempotency: a retried assign is a no-op
+    expect(r(['item', 'assign-code', wp1, '--code', 'WP7', '--client-token', 'ac1']).code).toBe(0)
+    expect(r(['item', 'assign-code', wp1, '--code', 'WP7', '--client-token', 'ac1']).text).toContain('no-op')
+  })
+
   it('a domain error returns exit 1 with a message', () => {
     runCli(['init'], io)
     const id = (() => {

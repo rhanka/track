@@ -2,6 +2,13 @@
 
 All notable changes to `@sentropic/track`. Format loosely follows [Keep a Changelog](https://keepachangelog.com); this package is pre-1.0 (the **event contract** is frozen, but the library/CLI surface may still evolve additively).
 
+## [0.22.1] — CLI: `track item assign-code`
+
+Exposes the A1 stable-code write on the CLI (the canonical write was facade/event-only in 0.22.0):
+`track item assign-code <itemId> --code <c> [--client-token <t>]` calls `assignCode` (roster-global
+uniqueness re-asserted under lock; `--client-token` append-once idempotent). Pure CLI surface — no contract
+change (INGEST 1.5.0 / READ 1.16.0 unchanged).
+
 ## [0.22.0] — stable workpackage codes (sub-lot A1)
 
 Gives a workpackage (or spec-phase) a **durable, re-assignable display `code`** that DECOUPLES stability from
