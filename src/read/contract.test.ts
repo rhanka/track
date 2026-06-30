@@ -103,7 +103,7 @@ afterEach(() => {
 
 describe('read contract — version + curated surface (snapshot gate)', () => {
   it('exposes a stable semver and the documented read methods', () => {
-    expect(READ_CONTRACT_VERSION).toBe('1.16.0') // +WP-codes A1: WpNode.code? + label may be a durable code (additif)
+    expect(READ_CONTRACT_VERSION).toBe('1.17.0') // +WP-codes A3: WpNode.terminal? + --active-roster render option (additif)
     expect(reader.contractVersion).toBe(READ_CONTRACT_VERSION)
     expect(typeof trackObjectiveRef).toBe('function')
     expect(typeof parseTrackObjectiveRef).toBe('function')

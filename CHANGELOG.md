@@ -2,6 +2,26 @@
 
 All notable changes to `@sentropic/track`. Format loosely follows [Keep a Changelog](https://keepachangelog.com); this package is pre-1.0 (the **event contract** is frozen, but the library/CLI surface may still evolve additively).
 
+## [0.24.0] — terminal-WP roster exclusion (sub-lot A3)
+
+An opt-in `track report --active-roster` flag that OMITS terminal (DROPPED = cancelled/rejected) root
+workpackages from the human roster — **without renumbering the survivors**. Ordinals/`code` labels are
+assigned over ALL roots first, so omitting a terminal root leaves a GAP (`WP1`, `WP3`; `WP2` hidden), never
+a re-pack — stability comes from the codes (A1), the derived `WP<n>` stays positional. A DONE root is NEVER
+excluded (a delivered WP stays a WP). Default OFF ⇒ **byte-identical** (text/md AND JSON) to the pre-A3
+output. Double consensus (Codex 5.5xhigh + Opus 4.8max): SHIP_WITH_NITS.
+
+### Added
+- **`track report --active-roster`** (render-only, opt-in) — omits terminal root WPs from the text/md
+  conductor roster. The JSON view is unaffected by the flag and always carries the full forest plus a
+  per-node `terminal` flag, so a machine consumer filters itself.
+- **`WpNode.terminal?`** — DERIVED (never stored) from the container's own realization (`cancelled` /
+  `rejected`); drop-when-absent ⇒ a forest with no terminal root is byte-identical to the pre-A3 rollup.
+
+### Contract
+- **READ 1.16.0 → 1.17.0** (additive: `WpNode.terminal?` + the `--active-roster` render option). No
+  `INGEST` change; old readers ignore the new field (fail-safe).
+
 ## [0.23.0] — merge-loss containment gate (`events-contains`) + `branch-lifecycle` skill
 
 Protects track's append-only event log from merge-time loss (the graphify incident: a squash-merge dropped

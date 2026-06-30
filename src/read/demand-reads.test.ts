@@ -51,8 +51,8 @@ afterEach(() => {
 })
 
 describe('READ 1.15.0 — version pin + surface', () => {
-  it('pins READ_CONTRACT_VERSION at 1.16.0 and exposes demands()/lifecycleTrace()', () => {
-    expect(READ_CONTRACT_VERSION).toBe('1.16.0')
+  it('pins READ_CONTRACT_VERSION at 1.17.0 and exposes demands()/lifecycleTrace()', () => {
+    expect(READ_CONTRACT_VERSION).toBe('1.17.0')
     const api = reader as unknown as Record<string, unknown>
     expect(typeof api['demands']).toBe('function')
     expect(typeof api['lifecycleTrace']).toBe('function')

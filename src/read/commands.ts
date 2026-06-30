@@ -25,13 +25,18 @@ export function reportText(reader: TrackReader, options: ReportOptions, format: 
 
   if (options.wpTree && report.wpTree !== undefined) {
     if (format === 'json') {
-      // Machine contract preserved (0.19.0 shape) + additive optional `view` for skill rendering.
+      // Machine contract preserved (0.19.0 shape) + additive optional `view` for skill rendering. WP-codes
+      // A3: `--active-roster` is a HUMAN-render option only — JSON ALWAYS carries the full forest (every node
+      // + its `terminal` flag) so a machine consumer filters terminal roots itself.
       const view = report.wpTree.length > 0 ? buildWpConductorView(report.wpTree, report.decisions ?? []) : undefined
       return `${JSON.stringify({ ...report, wpTotals: wpTotals(report.wpTree), ...(view !== undefined ? { view } : {}) }, null, 2)}\n`
     }
-    // text/md: the rendered conductor tables when there is an actual WP forest.
-    if (report.wpTree.length > 0) return formatWpConductor(report.wpTree, format, report.decisions)
-    // No WP containers yet: keep the report action-oriented, not an exhaustive flat dump.
+    // text/md: the rendered conductor tables when there is an actual WP forest. WP-codes A3 (DESIGN §A3) —
+    // `--active-roster` OMITS terminal (DROPPED) ROOTS from the rendered roster. The ordinals were assigned in
+    // `computeWpTree` over ALL roots, so the survivors keep their `WP<n>`/code (a gap appears) — no re-pack.
+    const roster = options.activeRoster === true ? report.wpTree.filter((n) => n.terminal !== true) : report.wpTree
+    if (roster.length > 0) return formatWpConductor(roster, format, report.decisions)
+    // No WP containers yet (or every root filtered out): keep the report action-oriented, not a flat dump.
     return formatActionReport(report, format)
   }
 

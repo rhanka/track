@@ -125,6 +125,14 @@ export interface WpNode {
   leaves: WpLeaf[]
   children: WpNode[]
   /**
+   * WP-codes A3 (DESIGN §A3, additive/optional) — `true` iff this container's OWN realization is a DROPPED
+   * one (`cancelled`/`rejected`, buckets.ts:26). A "terminal" WP — abandoned, not delivered. A DONE root is
+   * NEVER terminal (a delivered WP stays a WP). DERIVED (never stored); drop-when-absent ⇒ a forest with no
+   * terminal container is byte-identical to the pre-A3 rollup. The `--active-roster` render option OMITS the
+   * terminal ROOTS from the human roster; a machine consumer reads this flag to filter the forest itself.
+   */
+  terminal?: boolean
+  /**
    * DESIGN R3a — set ONLY after a workspace leaf-clip (`clipWpTreeToWorkspace`) when this node's subtree
    * contained ≥1 leaf in ANOTHER workspace that the clip excluded. The counts/`pct` then reflect the clipped
    * workspace's PART, never the node's true cross-workspace total. Absent ⇒ the counts are the full total
@@ -188,6 +196,8 @@ export function clipWpTreeToWorkspace(tree: readonly WpNode[], workspace: string
       pct: active === 0 ? 'n/a' : Math.round((done / active) * 100),
       leaves,
       children,
+      // WP-codes A3 — carry the terminal flag across the clip (drop-when-absent ⇒ non-terminal byte-identical).
+      ...(node.terminal !== undefined ? { terminal: node.terminal } : {}),
       ...(partial ? { partial: true } : {}),
     }
   }
@@ -294,6 +304,9 @@ export function computeWpTree(state: State, config: ReportConfig): WpNode[] {
       pct: active === 0 ? 'n/a' : Math.round((done / active) * 100),
       leaves,
       children,
+      // WP-codes A3 (DESIGN §A3) — DERIVE the terminal flag from THIS container's own realization (DROPPED ⇒
+      // abandoned). Drop-when-absent ⇒ a non-terminal node is byte-identical to the pre-A3 rollup.
+      ...(wp.realization === 'cancelled' || wp.realization === 'rejected' ? { terminal: true } : {}),
     }
   }
 

@@ -50,6 +50,14 @@ export interface ReportOptions {
   decisions?: boolean
   /** Include the WP rollup forest on `report.wpTree` (Workpackages §2). Absent ⇒ unchanged behavior. */
   wpTree?: boolean
+  /**
+   * WP-codes A3 (DESIGN §A3) — RENDER-ONLY display option, IGNORED by `buildReport`/`computeWpTree` (which
+   * always keep ALL roots so the `WP<n>` ordinals stay POSITIONALLY stable). Consumed by the renderer
+   * (`reportText`): when `true`, the human TEXT/MD roster OMITS terminal (DROPPED) ROOTS WITHOUT renumbering
+   * the survivors (a gap appears). Absent/false ⇒ byte-identical to today. The JSON contract is UNAFFECTED —
+   * it always carries the full forest + per-node `terminal` flag for a machine consumer to filter itself.
+   */
+  activeRoster?: boolean
 }
 
 function toRow(state: State, item: ItemState, config: ReportConfig): ReportRow {

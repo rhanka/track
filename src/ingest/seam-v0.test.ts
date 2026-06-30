@@ -50,8 +50,8 @@ describe('seam v0 — contract version bumps (additive, backward-compatible)', (
   it('INGEST_CONTRACT_VERSION ≥ seam-v0 1.1.0 (now 1.5.0 — WP-codes A1 additive kind, still MINOR)', () => {
     expect(INGEST_CONTRACT_VERSION).toBe('1.5.0')
   })
-  it('READ_CONTRACT_VERSION ≥ seam-v0 1.9.0 (now 1.16.0 — WP-codes A1 additive surface, still MINOR)', () => {
-    expect(READ_CONTRACT_VERSION).toBe('1.16.0')
+  it('READ_CONTRACT_VERSION ≥ seam-v0 1.9.0 (now 1.17.0 — WP-codes A3 additive surface, still MINOR)', () => {
+    expect(READ_CONTRACT_VERSION).toBe('1.17.0')
   })
 })
 
