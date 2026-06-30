@@ -12,7 +12,7 @@ import { acceptanceStatus } from '../accept/status.js'
 import type { ActorId } from '../events/types.js'
 import type { AcceptanceStatus } from '../model/acceptance.js'
 import type { BlockerKind, BlockerScope, BlockerState, ResolutionRule } from '../model/blocker.js'
-import { isRoleContainer, type BlockerId, type ItemId, type ItemKind, type ItemState, type Realization, type SpecStatus } from '../model/item.js'
+import { isRoleContainer, type BlockerId, type ItemId, type ItemKind, type ItemRole, type ItemState, type Realization, type SpecStatus } from '../model/item.js'
 import type { State } from '../state/fold.js'
 import { bucketOf, type Bucket, type ReportConfig } from './buckets.js'
 import { effectiveOpenBlockersForItem } from './blocker-status.js'
@@ -113,6 +113,14 @@ export interface WpNode {
    * to the pre-codes rollup). A DISPLAY label, NEVER an identity — `id` stays the ULID.
    */
   code?: string
+  /**
+   * A2 (DESIGN wp-codes-and-stream-role §A2, additive/optional) — present + `'stream'` ONLY when this node is
+   * a `stream` (epic) container, so a machine consumer distinguishes a stream node (labelled `S<n>`) from a
+   * workpackage node (labelled `WP<n>`) WITHOUT parsing the label prefix (fragile once a stream carries a
+   * code). DROP-WHEN-ABSENT for a `workpackage`/`spec-phase` node ⇒ a no-stream forest is byte-identical to
+   * the pre-A2 rollup. A DISPLAY classifier, NEVER an identity (`id` stays the ULID; a stream is never a wpRoot).
+   */
+  role?: ItemRole
   /** DONE non-WP leaf descendants (transitive). */
   done: number
   /** DONE + TO-DO + AWAITED non-WP leaf descendants — the % denominator. */
@@ -190,6 +198,8 @@ export function clipWpTreeToWorkspace(tree: readonly WpNode[], workspace: string
       label: node.label,
       // WP-codes (DESIGN A1) — carry the code across the clip (drop-when-absent ⇒ no-code byte-identical).
       ...(node.code !== undefined ? { code: node.code } : {}),
+      // A2 — carry the stream classifier across the clip (drop-when-absent ⇒ no-stream byte-identical).
+      ...(node.role !== undefined ? { role: node.role } : {}),
       done,
       active,
       dropped,
@@ -298,6 +308,9 @@ export function computeWpTree(state: State, config: ReportConfig): WpNode[] {
       label,
       // WP-codes (DESIGN A1) — surface the durable code (drop-when-absent ⇒ a no-code node is byte-identical).
       ...(wp.code !== undefined ? { code: wp.code } : {}),
+      // A2 — surface the stream classifier ONLY on a stream node (drop-when-absent ⇒ a WP/spec-phase node is
+      // byte-identical to the pre-A2 rollup; a consumer reads this, never the `S`/`WP` label prefix).
+      ...(wp.role === 'stream' ? { role: wp.role } : {}),
       done,
       active,
       dropped,
@@ -324,19 +337,34 @@ export function computeWpTree(state: State, config: ReportConfig): WpNode[] {
   // gaps WITHOUT collision. Order stays stable by ULID; a code is a display label only (a recode never
   // re-packs the derived sequence, and the derived `WP<n>` can never collide with a code because it skips
   // claimed ordinals).
-  const claimed = new Set<number>()
+  // A2 (DESIGN wp-codes-and-stream-role §A2) — PARTITION the roster by container class. `workpackage` roots
+  // take the derived `WP<n>` sequence; `stream` roots take a SEPARATE derived `S<n>` sequence (the whole
+  // point — DS's 7 streams render S1..S7, never WP1..WP7). Each class SKIPS the ordinals its OWN code
+  // namespace claims (`^WP\d+$` for WP, `^S\d+$` for streams — the A1 principe porteur, applied per class).
+  // A WP directly UNDER a stream is NOT a top-level root (its parent stream is a container, so the `roots`
+  // filter excludes it) ⇒ it consumes NO `WP<n>` ordinal; it is labelled RELATIVELY by the EXISTING dotted
+  // recursion (`S1.1`, `S1.2`), NOT a `S1.WP1` grammar. ⇒ a no-stream roster numbers `WP1..WPN`
+  // BYTE-IDENTICAL (the S sequence stays empty; the WP path is the pre-A2 derivation, unchanged).
+  const claimedWp = new Set<number>()
+  const claimedStream = new Set<number>()
   for (const item of items) {
     if (!isWp(item)) continue // only role-containers carry a code; scan ALL of them, not just roots
-    const m = /^WP(\d+)$/.exec(item.code ?? '')
-    if (m) claimed.add(Number(m[1]))
+    const code = item.code ?? ''
+    const mw = /^WP(\d+)$/.exec(code)
+    if (mw) claimedWp.add(Number(mw[1]))
+    const ms = /^S(\d+)$/.exec(code)
+    if (ms) claimedStream.add(Number(ms[1]))
   }
-  let counter = 1
+  let wpCounter = 1
+  let streamCounter = 1
   const rootLabel = (r: ItemState): string => {
-    if (r.code !== undefined) return r.code // verbatim; if it matches `^WP\d+$` its ordinal is reserved above
-    while (claimed.has(counter)) counter++ // SKIP every ordinal a code already claimed
-    const label = `WP${counter}`
-    counter++
-    return label
+    if (r.code !== undefined) return r.code // verbatim; a `^WP\d+$`/`^S\d+$` code reserved its ordinal above
+    if (r.role === 'stream') {
+      while (claimedStream.has(streamCounter)) streamCounter++ // SKIP every S ordinal a code claimed
+      return `S${streamCounter++}`
+    }
+    while (claimedWp.has(wpCounter)) wpCounter++ // SKIP every WP ordinal a code claimed
+    return `WP${wpCounter++}`
   }
   return roots.map((wp) => build(wp, rootLabel(wp)))
 }

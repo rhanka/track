@@ -11,7 +11,7 @@
 
 import type { RunResult } from '../model/acceptance.js'
 import type { Dossier, DossierArtifact, Outcome } from '../model/decision.js'
-import type { Disposition, Gate, ItemId, Realization, ScopeDecl, SpecStatus } from '../model/item.js'
+import type { Disposition, Gate, ItemId, ItemRole, Realization, ScopeDecl, SpecStatus } from '../model/item.js'
 import type { ItemCreatedPayload } from '../model/item.js'
 import type { DecisionCreatedPayload } from '../model/decision.js'
 import type { WsjfInputs } from '../model/priority.js'
@@ -126,6 +126,11 @@ function resolveWorkspace(cmd: MappedCommand, state: State): { create: boolean; 
     case 'item.assign-code':
       // WP-codes (DESIGN A1) — assignCode mutates the named item aggregate; contained by the item's
       // workspace (a W-pinned channel can't code a V item). Resolved from folded state.
+      return { create: false, workspace: item(p['itemId']) }
+    case 'item.set-role':
+      // A2 — setRole mutates the named item aggregate; contained by the item's workspace (a W-pinned channel
+      // can't re-classify a V container). The re-validated children are same-workspace by construction (a
+      // child can never be in another workspace), so there is nothing extra to gate. Resolved from folded state.
       return { create: false, workspace: item(p['itemId']) }
     case 'item.spec-amend':
       // M5 (canevas) — amendSpec mutates the named item aggregate; contained by the item's workspace
@@ -333,6 +338,11 @@ function applyCommand(track: Track, cmd: MappedCommand, ctx: IngestContext): str
       // double-pass); the role-container + non-empty + roster-global uniqueness checks (and the under-lock
       // F2 re-assert) live in the facade. WP-codes (DESIGN A1).
       track.assignCode(a[0] as ItemId, a[1] as string)
+      return undefined
+    case 'item.set-role':
+      // setRole(itemId, to) — the clientToken is already in scope via withClientToken (do not double-pass);
+      // the mutable-container check + whole-neighborhood assertRoleNesting re-check live in the facade. A2.
+      track.setRole(a[0] as ItemId, a[1] as ItemRole)
       return undefined
     case 'item.spec-amend':
       // amendSpec(itemId, amend) — the clientToken is already in scope via withClientToken (do not

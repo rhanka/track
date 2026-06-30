@@ -47,11 +47,11 @@ afterEach(() => rmSync(dir, { recursive: true, force: true }))
 const VRUN = { runId: 'vr-1', runner: 'stp-scope', commit: 'c1', verdict: 'clean' as const }
 
 describe('seam v0 — contract version bumps (additive, backward-compatible)', () => {
-  it('INGEST_CONTRACT_VERSION ≥ seam-v0 1.1.0 (now 1.5.0 — WP-codes A1 additive kind, still MINOR)', () => {
-    expect(INGEST_CONTRACT_VERSION).toBe('1.5.0')
+  it('INGEST_CONTRACT_VERSION ≥ seam-v0 1.1.0 (now 1.6.0 — A2 role stream additive value+kind, still MINOR)', () => {
+    expect(INGEST_CONTRACT_VERSION).toBe('1.6.0')
   })
-  it('READ_CONTRACT_VERSION ≥ seam-v0 1.9.0 (now 1.17.0 — WP-codes A3 additive surface, still MINOR)', () => {
-    expect(READ_CONTRACT_VERSION).toBe('1.17.0')
+  it('READ_CONTRACT_VERSION ≥ seam-v0 1.9.0 (now 1.18.0 — A2 role stream additive surface, still MINOR)', () => {
+    expect(READ_CONTRACT_VERSION).toBe('1.18.0')
   })
 })
 

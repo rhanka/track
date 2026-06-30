@@ -30,6 +30,7 @@ import {
   REALIZE_TARGETS,
   RESOLUTION_RULES,
   RESULTS,
+  ROLE_CHANGE_TARGETS,
   SPEC_TARGETS,
   type WorkEvent,
 } from '../ingest/contract.js'
@@ -64,8 +65,9 @@ type Flags = Record<string, string | true>
 const USAGE = `usage: track <command>
   --version | -v
   init
-  item new --kind <feature|bug|chore> --title <t> --workspace <w> [--body <b>] [--parent <id>] [--role <workpackage|spec-phase>] [--accountable <a>] [--responsible <a,a>] [--engagement-ref <e>]
+  item new --kind <feature|bug|chore> --title <t> --workspace <w> [--body <b>] [--parent <id>] [--role <workpackage|spec-phase|stream>] [--accountable <a>] [--responsible <a,a>] [--engagement-ref <e>]
   item reparent <itemId> [--parent <pid>] [--detach]
+  item set-role <itemId> <workpackage|stream>
   item scope-declare <itemId> [--allowed <glob,glob>] [--forbidden <...>] [--conditional <...>] [--scope <json>]
   item spec-amend <itemId> --base-hash <h> --result-hash <h> --patch <json> [--decision-id <id>] [--live-doc-ref <r>] [--proposal-ref <r>] [--summary <s>] [--client-token <t>]
   item spec <itemId> <to-specify|specified>
@@ -90,7 +92,7 @@ const USAGE = `usage: track <command>
   priority assess <itemId> --ubv <n> --tc <n> --rr <n> --js <n>
   report [--decisions] [--require-accepted] [--active-roster] [--wp|--flat] [--level <spec|plan|wp|lot|task>] [--format json|text|md] [--commit <sha>]
   export-graph [--repo-key <repo:key>] [--source-id <id>] [--observed-at <iso>]
-  query [--kind <k>] [--role workpackage] [--workspace <w>] [--bucket <AWAITED|DROPPED|DONE|TO-DO>] [--realization <r>] [--acceptance <a>] [--format json|text|md] [--commit <sha>]
+  query [--kind <k>] [--role <workpackage|spec-phase|stream>] [--workspace <w>] [--bucket <AWAITED|DROPPED|DONE|TO-DO>] [--realization <r>] [--acceptance <a>] [--format json|text|md] [--commit <sha>]
   workspace-activity --workspace <id> [--baseline-commit <sha>] [--now <iso>] [--idle-ms <ms>] [--format json|text]
   scope validate --workspace <id> [--baseline-commit <sha>] [--content <path>] [--locator <l>] [--claimed-item <id>] [--infer-delivered-out-of-scope] [--format json|text]
   validate [--commit <sha>]
@@ -568,6 +570,13 @@ function cmdItem(args: string[], ctx: Ctx): number {
     io.out('ok\n')
     return 0
   }
+  if (sub === 'set-role') {
+    // A2 — BOUNDED container↔container role mutation (workpackage↔stream). `setRole` re-checks the item is a
+    // mutable container AND re-runs the whole-neighborhood nesting invariant fail-closed before any append.
+    track.setRole(positional[0]!, oneOf(positional[1], ROLE_CHANGE_TARGETS, 'set-role') as ItemRole)
+    io.out('ok\n')
+    return 0
+  }
   if (sub === 'spec') {
     track.setSpec(positional[0]!, oneOf(positional[1], SPEC_TARGETS, 'spec') as SpecStatus)
     io.out('ok\n')
@@ -608,7 +617,7 @@ function cmdItem(args: string[], ctx: Ctx): number {
     rowsOut(rows, fmt(flags), io)
     return 0
   }
-  io.err('usage: track item <new|reparent|scope-declare|spec-amend|spec|realize|show|ls>\n')
+  io.err('usage: track item <new|reparent|set-role|scope-declare|spec-amend|spec|realize|assign-code|show|ls>\n')
   return 2
 }
 

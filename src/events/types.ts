@@ -63,6 +63,13 @@ export const EVENT_TYPES = [
   // (LWW); DISPLAY-ONLY (touches NO realization/bucket logic, and is NEVER an identity/ref). Additive:
   // absent on every pre-codes event ⇒ zero hash/seq/bucket change; an old reader ignores it (fail-safe).
   'item.code-assigned',
+  // A2 (DESIGN wp-codes-and-stream-role §A2) — a BOUNDED container↔container role mutation
+  // (`workpackage↔stream`) on the EXISTING item aggregate (next seq, no recreate). Past-tense persisted
+  // name, mirroring `item.reparent`→`item.reparented` (WorkEvent kind `item.set-role`). Folds `item.role`
+  // (LWW); legality (mutable container + the whole-neighborhood `assertRoleNesting` re-check) is asserted
+  // AT APPEND in the facade, NEVER in the fold. Additive: absent on every pre-A2 event ⇒ zero
+  // hash/seq/bucket change; an old reader without this case ignores it (fail-safe).
+  'item.role-changed',
   // Acceptance-freshness lifecycle — re-point an item's realization ANCHOR commit on the EXISTING item
   // aggregate (next seq, no realization transition; `done` stays terminal). Serves BOTH realize-time anchoring
   // (WorkEvent `item.anchor`) AND merge-time re-anchoring (WorkEvent `item.consolidate`); LAST anchor wins.

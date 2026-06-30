@@ -22,7 +22,13 @@ export type ItemKind = 'feature' | 'bug' | 'chore' | 'decision' | 'defect'
  * orthogonal/optional like `accountable`/`engagementRef` ⇒ zero hash change, explicit, queryable,
  * rename-stable. (A durable public `code?` label is deferred.)
  */
-export type ItemRole = 'workpackage' | 'spec-phase'
+// A2 (DESIGN wp-codes-and-stream-role §A2) — `'stream'` is a THIRD container category: an EPIC ABOVE the
+// workpackage. Like the other two it is a CONTAINER (descended through, excluded from leaf counts/flat
+// buckets), but — UNLIKE `workpackage` — it is NOT numbered `WP<n>`: the rollup labels it on a SEPARATE
+// derived `S<n>` sequence (or its A1 `code`, verbatim, when present). So the 3 categories no longer alias
+// "isRoleContainer == WP-numbered": (a) `spec-phase` container, NOT WP-numbered; (b) `workpackage`,
+// `WP<n>`/code; (c) `stream`, `S<n>`/code. A `stream` is NEVER a `wpRoot` (that stays STRICT workpackage).
+export type ItemRole = 'workpackage' | 'spec-phase' | 'stream'
 
 /**
  * Scope §B(a) — a declarative scope on a WP/spec-phase: INERT path globs (track stores the strings,
@@ -97,12 +103,14 @@ export interface ItemState {
 }
 
 /**
- * Scope §B(a) — is this item a CONTAINER node (a `workpackage` or `spec-phase`), i.e. not a flat leaf?
- * The rollup descends through both and excludes both from leaf counts / the flat buckets. Centralized so
- * rollup/status/report/read all share ONE definition of "container vs leaf".
+ * Scope §B(a) / A2 — is this item a CONTAINER node (a `workpackage`, `spec-phase`, OR `stream`), i.e. not
+ * a flat leaf? The rollup descends through all three and excludes all three from leaf counts / the flat
+ * buckets. Centralized so rollup/status/report/read all share ONE definition of "container vs leaf".
+ * NOTE (A2): "container" is DECOUPLED from "WP-numbered" — a `stream` is a container but is numbered `S<n>`,
+ * not `WP<n>` (the numbering partition lives in `computeWpTree`/`statusByLevel`, NOT here).
  */
 export function isRoleContainer(item: { role?: ItemRole }): boolean {
-  return item.role === 'workpackage' || item.role === 'spec-phase'
+  return item.role === 'workpackage' || item.role === 'spec-phase' || item.role === 'stream'
 }
 
 export interface ItemCreatedPayload {
@@ -143,13 +151,17 @@ export class DomainError extends Error {
 }
 
 /**
- * Scope §B(a) — the role nesting invariant, checked by createItem/reparentItem BEFORE any append:
- *   - a `'workpackage'` nests only under a `'workpackage'`;
+ * Scope §B(a) / A2 — the role nesting invariant, checked by createItem/reparentItem/setRole BEFORE any
+ * append:
+ *   - a `'workpackage'` nests only under a `'workpackage'` OR a `'stream'` (A2: an epic may own WPs);
  *   - a `'spec-phase'` nests only under a `'workpackage'` or `'spec-phase'`;
+ *   - a `'stream'` nests only at ROOT or under another `'stream'` — an EPIC never nests under a
+ *     `workpackage`/`spec-phase`/leaf (A2);
  *   - a non-role leaf nests under anything (unchanged back-compat).
- * `childRole` is the moving/created item's role; `parentRole` the prospective parent's role (undefined
- * when the parent has no role, i.e. a plain leaf/feature container). Throws DomainError on violation.
- * `childId`/`parentId` are only for the message.
+ * `childRole` is the moving/created/promoted item's role; `parentRole` the prospective parent's role.
+ * This is ONLY called when a PARENT EXISTS (every caller guards `parentId !== undefined`), so here
+ * `parentRole === undefined` means "the parent is a plain leaf", NEVER "root" — a root container is legal
+ * precisely because its caller does not call this. Throws DomainError; `childId`/`parentId` are for the message.
  */
 export function assertRoleNesting(
   childRole: ItemRole | undefined,
@@ -157,14 +169,19 @@ export function assertRoleNesting(
   childId: ItemId,
   parentId: ItemId,
 ): void {
-  if (childRole === 'workpackage' && parentRole !== 'workpackage') {
+  if (childRole === 'workpackage' && parentRole !== 'workpackage' && parentRole !== 'stream') {
     throw new DomainError(
-      `cannot nest workpackage ${childId} under ${parentId}: a workpackage may only nest under a workpackage (Scope §B(a))`,
+      `cannot nest workpackage ${childId} under ${parentId}: a workpackage may only nest under a workpackage or a stream (Scope §B(a) / A2)`,
     )
   }
   if (childRole === 'spec-phase' && parentRole !== 'workpackage' && parentRole !== 'spec-phase') {
     throw new DomainError(
       `cannot nest spec-phase ${childId} under ${parentId}: a spec-phase may only nest under a workpackage or spec-phase (Scope §B(a))`,
+    )
+  }
+  if (childRole === 'stream' && parentRole !== 'stream') {
+    throw new DomainError(
+      `cannot nest stream ${childId} under ${parentId}: a stream (epic) may only nest at root or under another stream, never under a ${parentRole ?? 'leaf'} (A2)`,
     )
   }
 }

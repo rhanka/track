@@ -211,6 +211,12 @@ export function mapWorkEvent(ev: WorkEvent): MappedCommand {
       // uniqueness are re-asserted in the facade; clientToken is threaded via withClientToken (not an arg).
       args = [p['itemId'], p['code']]
       break
+    case 'item.set-role':
+      // setRole(itemId, to, clientToken?) — `to` is validated against ROLE_CHANGE_TARGETS by the schema; the
+      // mutable-container check + whole-neighborhood assertRoleNesting re-check live in the facade.
+      // clientToken is threaded via withClientToken (not an arg). A2.
+      args = [p['itemId'], p['to']]
+      break
     case 'item.spec-amend':
       // amendSpec(itemId, amend, clientToken?) — the validated payload IS the amendment shape; its JsonPatch
       // + baseHash/resultHash are re-asserted (assertSpecAmend) and recorded VERBATIM in the facade.

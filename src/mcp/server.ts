@@ -19,7 +19,7 @@ import { VERSION } from '../version.js'
 
 // Allowed enum values — the single source for BOTH the advertised schema and runtime validation.
 const KINDS = ['feature', 'bug', 'chore'] as const
-const ROLES = ['workpackage', 'spec-phase'] as const // Workpackages §2 / Scope §B(a) — container marker filter
+const ROLES = ['workpackage', 'spec-phase', 'stream'] as const // Scope §B(a) / A2 — the 3 container marker filters
 const BUCKETS = ['AWAITED', 'DROPPED', 'DONE', 'TO-DO'] as const
 const REALIZATIONS = ['to-do', 'in-progress', 'done', 'cancelled', 'rejected'] as const
 const ACCEPTANCES = ['pass', 'fail', 'unknown', 'stale', 'waived'] as const

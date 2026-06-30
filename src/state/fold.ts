@@ -21,6 +21,7 @@ import type {
   Gate,
   ItemCreatedPayload,
   ItemId,
+  ItemRole,
   ItemState,
   Realization,
   ScopeDecl,
@@ -193,6 +194,17 @@ function applyEvent(state: State, event: TrackEvent): void {
       // bucket/ref logic. An old reader without this case hits `default` and ignores the event (fail-safe).
       const item = state.items.get(event.aggregateId)
       if (item) item.code = (event.payload as { code: string }).code
+      break
+    }
+
+    case 'item.role-changed': {
+      // A2 (DESIGN wp-codes-and-stream-role §A2) — set the new container role on the EXISTING item aggregate
+      // (LWW in stream order). Legality (the item is a mutable container AND the whole-neighborhood
+      // `assertRoleNesting` re-check) is asserted AT APPEND (Track.setRole) — NEVER in the fold (the
+      // established pattern). The role-change re-numbers the rollup (`workpackage`→`WP<n>`, `stream`→`S<n>`)
+      // but touches NO realization/bucket/ref logic. An old reader without this case hits `default` (fail-safe).
+      const item = state.items.get(event.aggregateId)
+      if (item) item.role = (event.payload as { to: ItemRole }).to
       break
     }
 

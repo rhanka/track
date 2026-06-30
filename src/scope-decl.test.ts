@@ -63,8 +63,8 @@ describe('scope LOT(a) — role:"spec-phase" marker', () => {
     expect(rows[0]!.role).toBe('spec-phase')
   })
 
-  it('ITEM_ROLES enum exposes both workpackage and spec-phase', () => {
-    expect([...ITEM_ROLES]).toEqual(['workpackage', 'spec-phase'])
+  it('ITEM_ROLES enum exposes workpackage, spec-phase, and stream (A2 container)', () => {
+    expect([...ITEM_ROLES]).toEqual(['workpackage', 'spec-phase', 'stream'])
   })
 })
 

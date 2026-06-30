@@ -61,7 +61,7 @@ describe('WP-codes A1 — contract pins', () => {
   it('pins the new event-type + work-event-kind names and the INGEST minor bump', () => {
     expect(EVENT_TYPES).toContain('item.code-assigned')
     expect([...WORK_EVENT_KINDS]).toContain('item.assign-code')
-    expect(INGEST_CONTRACT_VERSION).toBe('1.5.0')
+    expect(INGEST_CONTRACT_VERSION).toBe('1.6.0')
   })
 })
 
@@ -99,7 +99,7 @@ describe('WP-codes A1 — assignCode facade', () => {
   it('rejects a non-container leaf', () => {
     const a = wp('Alpha')
     const l = leaf('leaf', a)
-    expect(() => t.assignCode(l, 'X')).toThrow(/only assignable to a workpackage or spec-phase/)
+    expect(() => t.assignCode(l, 'X')).toThrow(/only assignable to a role-container/)
   })
 
   it('rejects an empty code', () => {

@@ -2,6 +2,32 @@
 
 All notable changes to `@sentropic/track`. Format loosely follows [Keep a Changelog](https://keepachangelog.com); this package is pre-1.0 (the **event contract** is frozen, but the library/CLI surface may still evolve additively).
 
+## [0.25.0] — `role:'stream'` epic tier (sub-lot A2)
+
+A third container role, `stream` — an EPIC that owns workpackages, ABOVE the workpackage tier. A stream
+root is labelled `S<n>` (a separate sequence), NOT `WP<n>`; a workpackage placed under a stream is labelled
+relatively (`S1.1`) and does NOT consume the top-level `WP<n>` sequence — so DS's domain streams stop
+showing as `WP1..7`. A code (A1) renders verbatim on a stream too. Closes the workpackage≠workspace model
+for DS. Double consensus (Codex 5.5xhigh + Opus 4.8max): SHIP after CHANGES_REQUIRED → fix (Codex caught two
+real nesting bugs: a stream wrongly allowed under a leaf, and a `spec-phase` wrongly allowed under a stream
+by `scope validate`) → re-gate SHIP. All additive; a forest with no stream renders **byte-identical**.
+
+### Added
+- **`role:'stream'`** in `ITEM_ROLES`. `item new --role stream`. A stream is a CONTAINER everywhere
+  (buckets / `workspace-activity` never count it as a leaf); it is NEVER a `wpRootId` (that stays strictly
+  `role:'workpackage'`, rolling up to the topmost workpackage UNDER the stream).
+- **`item.role-changed` event (LWW, `settles:'always'`) + `track item set-role <id> <workpackage|stream>`.**
+  A BOUNDED container↔container mutation (`workpackage`↔`stream`, never a leaf/`spec-phase`) so DS re-tags
+  its 7 existing workpackage-streams WITHOUT recreating them (no ULID/history loss). It re-runs the nesting
+  invariant for the item under its parent AND for EVERY child — a role change re-legalizes the whole
+  neighborhood (e.g. promoting a WP with `spec-phase` children to a stream is rejected, fail-closed).
+- **Nesting rule** (`assertRoleNesting`): a workpackage nests under a workpackage OR a stream; a stream
+  nests only at root or under another stream (never under a workpackage/spec-phase/leaf).
+
+### Contract
+- **INGEST 1.5.0 → 1.6.0** (additive: `'stream'` role + `item.role-changed`). **READ 1.17.0 → 1.18.0**
+  (additive: `WpNode.role?` + the `S<n>` label class). Old readers ignore the new role/field (fail-safe).
+
 ## [0.24.0] — terminal-WP roster exclusion (sub-lot A3)
 
 An opt-in `track report --active-roster` flag that OMITS terminal (DROPPED = cancelled/rejected) root

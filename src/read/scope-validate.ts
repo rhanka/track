@@ -166,7 +166,11 @@ export function scopeValidate(state: State, input: ScopeValidateInput): ScopeVal
     }
     collect(c.id)
   }
-  roots.forEach((c, idx) => visit(c, `WP${idx + 1}`))
+  // A2 — partition the root labels by class (`workpackage`→`WP<n>`, `stream`→`S<n>`) so a WP nested under a
+  // stream is labelled relatively (`S1.1`), consistent with computeWpTree. No-stream ⇒ byte-identical.
+  let wpN = 0
+  let streamN = 0
+  roots.forEach((c) => visit(c, c.role === 'stream' ? `S${++streamN}` : `WP${++wpN}`))
 
   // Latest VerificationRun per wpRef (read, never recomputed): latest by `at` then `runId`.
   const latestRunByWp = new Map<ItemId, VerificationRun>()
@@ -178,8 +182,14 @@ export function scopeValidate(state: State, input: ScopeValidateInput): ScopeVal
     }
   }
 
+  // A2 — scope (INERT path globs) is declarable ONLY on a `workpackage`/`spec-phase` (see Track.declareScope);
+  // a `stream` (epic) is a CONTAINER but is NOT scope-declarable, so it must NOT enter this set — otherwise a
+  // realization-active stream with no scope would fire a FALSE `scope-undeclared` finding. The tree-walk
+  // helpers (isRealizationActive/allLeavesDone) still DESCEND THROUGH a stream via isRoleContainer; only the
+  // per-container scope FINDINGS exclude it.
+  const isScopeDeclarable = (i: ItemState): boolean => i.role === 'workpackage' || i.role === 'spec-phase'
   const containers = items
-    .filter((i) => isRoleContainer(i) && i.workspace === input.workspace)
+    .filter((i) => isScopeDeclarable(i) && i.workspace === input.workspace)
     .sort((a, b) => a.id.localeCompare(b.id))
 
   const findings: ScopeFinding[] = []
@@ -194,7 +204,9 @@ export function scopeValidate(state: State, input: ScopeValidateInput): ScopeVal
     // the write path forbids this, so it only fires on a hand-edited/foreign log — fail-closed surfacing).
     if (c.role === 'spec-phase' && c.parentId !== undefined) {
       const parent = state.items.get(c.parentId)
-      if (parent === undefined || !isRoleContainer(parent)) {
+      // A spec-phase's legal parents are STRICTLY workpackage|spec-phase — NOT `isRoleContainer` (which since
+      // A2 also includes `stream`; a spec-phase must never nest under a stream).
+      if (parent === undefined || (parent.role !== 'workpackage' && parent.role !== 'spec-phase')) {
         semanticStatus = 'illegal-nesting'
         findings.push({ code: 'illegal-nesting', wpId: c.id, message: `spec-phase ${c.id} is not nested under a workpackage or spec-phase` })
       }

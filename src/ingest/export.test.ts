@@ -50,7 +50,7 @@ describe('./ingest barrel — the submit-facing surface', () => {
     // The runtime VALUE exports the host needs: the function, the contract version, the error, the
     // binding-auth pre-check (predicate + decoupled frozen copy).
     expect(typeof ingest).toBe('function')
-    expect(INGEST_CONTRACT_VERSION).toBe('1.5.0')
+    expect(INGEST_CONTRACT_VERSION).toBe('1.6.0')
     expect(typeof IngestError).toBe('function')
 
     // The pre-check PREDICATE — the host's "does my channel auth admit binding writes?" question.
@@ -234,7 +234,7 @@ describe('./ingest package export — the compiled subpath resolves at runtime',
     if (!existsSync(distEntry)) execFileSync('npx', ['tsc', '-p', 'tsconfig.build.json'], { cwd: repoRoot, stdio: 'pipe' })
     const mod = (await import(pathToFileURL(distEntry).href)) as Record<string, unknown>
     expect(typeof mod['ingest']).toBe('function')
-    expect(mod['INGEST_CONTRACT_VERSION']).toBe('1.5.0')
+    expect(mod['INGEST_CONTRACT_VERSION']).toBe('1.6.0')
     expect(typeof mod['IngestError']).toBe('function')
     expect(typeof mod['isBindingAuth']).toBe('function')
     expect(Array.isArray(mod['BINDING_AUTH'])).toBe(true)

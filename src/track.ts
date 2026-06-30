@@ -47,6 +47,7 @@ import {
   type Gate,
   type ItemCreatedPayload,
   type ItemId,
+  type ItemRole,
   type ItemState,
   type Link,
   type Realization,
@@ -366,9 +367,13 @@ export class Track {
     const state = this.state()
     const item = state.items.get(itemId)
     if (!item) throw new DomainError(`unknown item ${itemId}`)
-    if (item.role !== 'workpackage' && item.role !== 'spec-phase') {
+    // A2 — a code is a DISPLAY label for ANY role-container (workpackage / spec-phase / stream). A coded
+    // `stream` renders its code VERBATIM instead of the derived `S<n>` (the A1 "code prioritaire" rule); the
+    // roster-global uniqueness scan already spans every container (isRoleContainer), so a stream code shares
+    // the one display namespace. Scope (path globs) stays narrower (WP/spec-phase only) — see declareScope.
+    if (!isRoleContainer(item)) {
       throw new DomainError(
-        `cannot assign a code to item ${itemId}: a code is only assignable to a workpackage or spec-phase (DESIGN wp-codes A1)`,
+        `cannot assign a code to item ${itemId}: a code is only assignable to a role-container (workpackage / spec-phase / stream) (DESIGN wp-codes A1 / A2)`,
       )
     }
     if (typeof code !== 'string' || code.length === 0) {
@@ -387,6 +392,51 @@ export class Track {
       if (clientToken !== undefined) this.withClientToken(clientToken, emit)
       else emit()
     })
+  }
+
+  /**
+   * A2 (DESIGN wp-codes-and-stream-role §A2) — BOUNDED container↔container role mutation. DS re-classifies a
+   * top-level workpackage as a `stream` (epic) WITHOUT recreating it (recreate = destructive: it loses the
+   * ULID and every child's `parentId`/`wpRootId`/objective-ref). Appends `item.role-changed` on the EXISTING
+   * item aggregate (next seq, no recreate; existing hashes untouched), mirroring `item.reparent`→
+   * `item.reparented`. Fold sets `item.role = to` (LWW). BOUNDED: `to ∈ {workpackage, stream}` ONLY, and the
+   * item's CURRENT role must itself be `workpackage`/`stream` — a role-change NEVER reaches a leaf (role
+   * undefined ⇒ flipping the bucket count + corrupting historic rollups) nor a `spec-phase`. Guards (reject
+   * with DomainError BEFORE any append): the item exists; `to` is a container target; the item is a mutable
+   * container; AND — the NEW obligation a create/reparent never has — `assertRoleNesting` is re-run for the
+   * item-UNDER-ITS-PARENT *and for EVERY child*: a role-change re-legalizes the WHOLE neighborhood (e.g.
+   * promoting a WP→stream that owns `spec-phase` children breaks nesting ⇒ REJECT; a stream cannot nest under
+   * a WP, so promoting a sub-WP ⇒ REJECT). No cycle risk (nothing moves). Binding-gated (Settles:'always') +
+   * workspace-contained at the ingest seam; `clientToken` via `withClientToken`.
+   */
+  setRole(itemId: ItemId, to: ItemRole, clientToken?: string): void {
+    const state = this.state()
+    const item = state.items.get(itemId)
+    if (!item) throw new DomainError(`unknown item ${itemId}`)
+    if (to !== 'workpackage' && to !== 'stream') {
+      throw new DomainError(
+        `cannot set role of item ${itemId} to "${to}": a role-change is bounded to a container target (workpackage or stream) (A2)`,
+      )
+    }
+    if (item.role !== 'workpackage' && item.role !== 'stream') {
+      throw new DomainError(
+        `cannot set role of item ${itemId}: only a workpackage or stream may change role (never a leaf or spec-phase) (A2)`,
+      )
+    }
+    // Re-legalize the WHOLE neighborhood against the NEW role (the obligation a create/reparent never has):
+    // (1) the item under its own parent; (2) EACH child under the item's new role. Any broken edge ⇒ REJECT.
+    if (item.parentId !== undefined) {
+      const parent = state.items.get(item.parentId)
+      if (parent !== undefined) assertRoleNesting(to, parent.role, itemId, item.parentId)
+    }
+    for (const child of state.items.values()) {
+      if (child.parentId === itemId) assertRoleNesting(child.role, to, child.id, itemId)
+    }
+    const emit = (): void => {
+      this.emit('item', itemId, 'item.role-changed', { to })
+    }
+    if (clientToken !== undefined) this.withClientToken(clientToken, emit)
+    else emit()
   }
 
   /**

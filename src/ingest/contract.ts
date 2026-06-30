@@ -5,6 +5,12 @@
 // One WorkEvent ⇒ one Track command. This module is the SINGLE SOURCE of the write enums (so the CLI's
 // `oneOf` checks and the mapper cannot diverge on accepted values) and of the per-kind payload schema.
 
+// 1.6.0 — A2 role:'stream' (DESIGN wp-codes-and-stream-role §A2): TWO additive changes — (1) a new ITEM_ROLES
+// value `'stream'` (a third container category, accepted on `item.create`'s `role` enum); (2) one ADDITIVE new
+// WorkEvent kind `item.set-role` → the persisted `item.role-changed` event (a BOUNDED container↔container role
+// mutation `workpackage↔stream`; LWW, `settles:'always'`). MINOR bump (a new optional enum value + a new
+// optional kind; no kind removed, no required field added to an existing kind, envelope keys unchanged; old
+// producers never send the new value/kind and still validate; an old reader ignores `item.role-changed`).
 // 1.5.0 — WP-codes (DESIGN wp-codes A1): one ADDITIVE new WorkEvent kind `item.assign-code` → the persisted
 // `item.code-assigned` event (a DURABLE display `code` on a role-container; LWW, `settles:'always'`). MINOR
 // bump (a new optional kind; no kind removed, no required field added to an existing kind, envelope keys
@@ -22,7 +28,7 @@
 // removed, no required field added, envelope keys unchanged; old producers never send them and still validate).
 // 1.1.0 — seam v0 FREEZE: two ADDITIVE optional producer fields (artifactLocator on scope.verification,
 // caller-supplied evidenceId on acceptance.link).
-export const INGEST_CONTRACT_VERSION = '1.5.0'
+export const INGEST_CONTRACT_VERSION = '1.6.0'
 
 // --- write enums (shared with src/cli/index.ts) ------------------------------------------------------
 export const ITEM_KINDS = ['feature', 'bug', 'chore'] as const
@@ -37,7 +43,10 @@ export const RESOLUTION_RULES = ['linked-done', 'linked-accepted', 'manual'] as 
 export const EVIDENCE_KINDS = ['unit', 'integration', 'e2e', 'manual'] as const
 export const RESULTS = ['pass', 'fail'] as const
 export const BLOCKER_SCOPES = ['intra', 'extra'] as const // Lot A — dependency blocker scope
-export const ITEM_ROLES = ['workpackage', 'spec-phase'] as const // Workpackages §2 / Scope §B(a) — container markers
+export const ITEM_ROLES = ['workpackage', 'spec-phase', 'stream'] as const // Scope §B(a) / A2 — the 3 container markers
+// A2 — the BOUNDED `item.set-role` target enum: a role mutation is container↔container ONLY (`workpackage↔
+// stream`), NEVER to/from a leaf (role undefined) nor `spec-phase`. The mapper rejects any other `to` value.
+export const ROLE_CHANGE_TARGETS = ['workpackage', 'stream'] as const
 export const VERDICTS = ['clean', 'violation', 'conditional'] as const // Scope §B(c) — path verdict
 // Demand lifecycle (Mode A) — the demand type (carried to the item kind) + the disposition off-ramp outcome.
 export const DEMAND_TYPES = ['feature', 'defect', 'chore'] as const
@@ -65,6 +74,7 @@ export const WORK_EVENT_KINDS = [
   'scope.verification', // Scope §B(c) — record a path-scope VerificationRun (evidence-only)
   'scope.declare', // Scope §B(a) — declare INERT path-scope globs on a WP/spec-phase
   'item.assign-code', // WP-codes (DESIGN A1) — assign/replace a DURABLE display code on a WP/spec-phase
+  'item.set-role', // A2 — BOUNDED container↔container role mutation (workpackage↔stream) → item.role-changed
   'item.spec-amend', // M5 (canevas) — record a LIVE spec amendment (verbatim JsonPatch) on an item
   'item.anchor', // Acceptance-freshness — re-point an item's realization ANCHOR commit (→ realization.anchored)
   'item.consolidate', // Acceptance-freshness — the squash/rebase heal: re-anchor + re-stamp pass runs at mergeCommit
@@ -325,6 +335,18 @@ export const WORK_EVENT_SCHEMA: Record<WorkEventKind, KindSchema> = {
     method: 'assignCode',
     settles: 'always',
     fields: { itemId: str(true), code: str(true) },
+  },
+  'item.set-role': {
+    // A2 (DESIGN wp-codes-and-stream-role §A2) — BOUNDED container↔container role mutation. `to` is enum
+    // {workpackage, stream} ONLY (a leaf/undefined and spec-phase are NOT reachable — the mapper rejects
+    // them). Binding (`always`): re-classifying a container re-numbers the roster + re-legalizes its
+    // neighborhood ⇒ trust-sensitive, requires auth ∈ {local-user, signed} (calque item.reparent). The
+    // facade (Track.setRole) re-checks the item is a mutable container AND re-runs `assertRoleNesting` for
+    // the item-under-its-parent AND for EVERY child (a role-change re-legalizes the whole neighborhood),
+    // fail-closed BEFORE any append. Folds `item.role = to` (LWW) → `item.role-changed`.
+    method: 'setRole',
+    settles: 'always',
+    fields: { itemId: str(true), to: str(true, ROLE_CHANGE_TARGETS) },
   },
   'item.spec-amend': {
     // M5 (canevas) — record ONE owner-approved LIVE spec amendment. Binding (`always`): an amendment to the

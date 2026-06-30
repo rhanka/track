@@ -57,6 +57,9 @@ describe('mapWorkEvent — valid kinds → normalized {method, settles, args}', 
     // WP-codes A1 (DESIGN) — the additive durable display-code kind (1.5.0).
     ['item.assign-code ⇒ always (role-container + non-empty + roster-global uniqueness re-asserted in the facade)', ev('item.assign-code', { itemId: 'i', code: 'WP1' }),
       { method: 'assignCode', settles: 'always', args: ['i', 'WP1'] }],
+    // A2 role:'stream' (DESIGN) — the additive bounded container↔container role mutation (1.6.0).
+    ['item.set-role ⇒ always (bounded workpackage↔stream; neighborhood nesting re-checked in the facade)', ev('item.set-role', { itemId: 'i', to: 'stream' }),
+      { method: 'setRole', settles: 'always', args: ['i', 'stream'] }],
     ['item.spec-amend ⇒ always (payload passthrough; patch verbatim)', ev('item.spec-amend', { itemId: 'i', baseHash: 'h0', patch: [{ op: 'add', path: '/a', value: 1 }], resultHash: 'h1' }),
       { method: 'amendSpec', settles: 'always', args: ['i', { itemId: 'i', baseHash: 'h0', patch: [{ op: 'add', path: '/a', value: 1 }], resultHash: 'h1' }] }],
     // Acceptance-freshness lifecycle — the two additive kinds (item.anchor, item.consolidate).
